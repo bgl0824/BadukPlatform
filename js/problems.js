@@ -8,6 +8,28 @@ const STONE = {
 
 const problems = [
   {
+    id: "사활-두집만들기-1778949030771",
+    title: "두집만들기",
+    description: "두집만들기",
+    level: "30급",
+    category: "사활",
+    stones: [
+      { x: 0, y: 10, color: STONE.white },
+      { x: 1, y: 10, color: STONE.white },
+      { x: 2, y: 10, color: STONE.white },
+      { x: 3, y: 10, color: STONE.white },
+      { x: 4, y: 10, color: STONE.white },
+      { x: 0, y: 11, color: STONE.black },
+      { x: 1, y: 11, color: STONE.black },
+      { x: 2, y: 11, color: STONE.black },
+      { x: 3, y: 11, color: STONE.black },
+      { x: 4, y: 11, color: STONE.white },
+      { x: 3, y: 12, color: STONE.black },
+      { x: 4, y: 12, color: STONE.white },
+    ],
+    correctMove: { x: 1, y: 12 },
+  },
+  {
     id: "uploaded-capture-20260516-01",
     title: "따내기 문제 1",
     description: "상대 돌을 잡는 정답 1수를 찾아보세요.",
