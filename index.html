@@ -1,0 +1,172 @@
+<!DOCTYPE html>
+<html lang="ko">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>바둑 문제풀이</title>
+    <link rel="stylesheet" href="./styles.css" />
+    <script src="./vendor/wgo.min.js"></script>
+    <script defer src="./js/problems.js"></script>
+    <script defer src="./js/ai-response.js"></script>
+    <script defer src="./js/sgf.js"></script>
+    <script defer src="./js/board.js"></script>
+    <script defer src="./js/main.js"></script>
+  </head>
+  <body>
+    <main class="app-shell">
+      <section class="hero-card" aria-labelledby="problem-title">
+        <div class="hero-copy">
+          <p id="problem-meta" class="eyebrow">Baduk Learning</p>
+          <h1 id="problem-title">문제 제목</h1>
+          <p id="problem-description" class="problem-description">문제 설명</p>
+        </div>
+        <div class="grade-badge" aria-label="현재 급수">
+          <span>현재 급수</span>
+          <strong id="problem-grade">-</strong>
+        </div>
+        <button id="admin-mode-toggle" class="admin-toggle" type="button" aria-pressed="false">
+          관리자 모드
+        </button>
+      </section>
+
+      <section id="study-layout" class="study-layout">
+        <aside class="info-panel" aria-label="학습 안내">
+          <div class="mode-toggle" aria-label="모드 선택">
+            <button id="list-mode" class="mode-button" type="button">
+              문제 목록
+            </button>
+            <button id="solve-mode" class="mode-button is-active" type="button">
+              문제 풀이
+            </button>
+            <button id="create-mode" class="mode-button" type="button">
+              문제 제작
+            </button>
+          </div>
+
+          <div>
+            <p class="panel-label">학습 목표</p>
+            <h2>정답 1수를 찾아보세요</h2>
+            <p>
+              바둑판 위 원하는 곳에 자유롭게 착수할 수 있습니다. 정답이
+              아니면 교육용 임시 AI가 한 수 응수합니다.
+            </p>
+          </div>
+
+          <div class="status-card">
+            <p class="panel-label">진행 상태</p>
+            <p id="move-status" class="move-status">흑 차례입니다.</p>
+            <p id="feedback" class="feedback">첫 수를 선택해 보세요.</p>
+          </div>
+
+          <button id="next-problem" class="primary-button" type="button">
+            다음 문제
+          </button>
+
+          <section id="creator-panel" class="creator-panel is-hidden" aria-label="문제 제작 도구">
+            <div class="creator-tools">
+              <p class="panel-label">제작 도구</p>
+              <div class="tool-grid">
+                <button class="tool-button is-active" data-tool="black" type="button">
+                  흑돌
+                </button>
+                <button class="tool-button" data-tool="white" type="button">
+                  백돌
+                </button>
+                <button class="tool-button" data-tool="answer" type="button">
+                  정답 위치
+                </button>
+              </div>
+              <div class="tool-grid">
+                <button id="undo-create" class="secondary-button" type="button">
+                  착수 취소
+                </button>
+                <button id="reset-create" class="secondary-button" type="button">
+                  전체 초기화
+                </button>
+              </div>
+              <p class="panel-label">힌트 표시</p>
+              <div class="mark-grid">
+                <button class="mark-button" data-mark="triangle" type="button">
+                  세모
+                </button>
+                <button class="mark-button" data-mark="circle" type="button">
+                  동그라미
+                </button>
+                <button class="mark-button" data-mark="square" type="button">
+                  네모
+                </button>
+                <button class="mark-button" data-mark="cross" type="button">
+                  X 표시
+                </button>
+                <button class="mark-button" data-mark="none" type="button">
+                  표시 지우기
+                </button>
+              </div>
+            </div>
+
+            <label>
+              제목
+              <input id="create-title" type="text" placeholder="예: 흑을 연결해 보세요" />
+            </label>
+            <label>
+              설명
+              <textarea id="create-description" rows="3" placeholder="문제 설명을 입력하세요."></textarea>
+            </label>
+            <label>
+              급수
+              <input id="create-level" type="text" placeholder="예: 30급" />
+            </label>
+            <label>
+              category
+              <div class="creator-category-select">
+                <button
+                  id="create-category-toggle"
+                  class="creator-category-toggle"
+                  type="button"
+                  aria-expanded="false"
+                  aria-controls="create-category-options"
+                >
+                  <span id="selected-create-category">활로</span>
+                  <span class="category-arrow" aria-hidden="true">⌄</span>
+                </button>
+                <div id="create-category-options" class="create-category-options"></div>
+              </div>
+            </label>
+            <button id="generate-json" class="primary-button" type="button">
+              JSON 출력
+            </button>
+            <textarea
+              id="problem-json"
+              class="json-output"
+              rows="12"
+              readonly
+              placeholder="생성된 문제 JSON이 여기에 표시됩니다."
+            ></textarea>
+          </section>
+        </aside>
+
+        <section class="board-card" aria-label="13줄 바둑판">
+          <div id="board" class="board"></div>
+        </section>
+      </section>
+
+      <section id="problem-list-screen" class="problem-list-screen is-hidden" aria-label="문제 목록">
+        <div class="list-header">
+          <div>
+            <p class="eyebrow">Problem Library</p>
+            <h2>문제 목록</h2>
+            <p id="list-summary">전체 문제를 확인하고 원하는 문제를 선택하세요.</p>
+          </div>
+        </div>
+        <div id="category-filters" class="category-filters" aria-label="카테고리 필터"></div>
+        <div id="admin-list-actions" class="admin-list-actions is-hidden">
+          <button id="add-problem" class="primary-button" type="button">
+            새 문제 추가
+          </button>
+        </div>
+        <section id="admin-editor" class="admin-editor is-hidden" aria-label="문제 편집"></section>
+        <div id="problem-cards" class="problem-cards"></div>
+      </section>
+    </main>
+  </body>
+</html>
