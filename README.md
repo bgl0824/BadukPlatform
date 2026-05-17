@@ -39,9 +39,48 @@ npm run build
 
 `문제 목록` 모드에서 `전체`, `활로`, `따내기`, `축`, `사활` 카테고리별로 문제를 필터링하고 카드에서 바로 문제풀이를 시작할 수 있습니다.
 
+## 아이디 기반 로그인 설정
+
+현재 인증은 외부 데이터베이스 없이 브라우저 `localStorage`만 사용합니다. 회원가입 정보는 `BADUK_AUTH_USERS`에 누적 저장되고, 로그인 세션은 `BADUK_AUTH_USER`에 저장되어 새로고침 후에도 유지됩니다.
+
+저장되는 회원 정보는 `id`, `username`, `passwordHash`, `name`, `phone`, `email`, `userType`, `academyName`, `postcode`, `address`, `addressDetail`, `createdAt`입니다. 비밀번호 원문은 저장하지 않고 브라우저 Web Crypto 기반 SHA-256 해시로 저장합니다.
+
+브라우저 콘솔에서 저장된 회원 목록을 확인하려면 아래처럼 볼 수 있습니다.
+
+```js
+JSON.parse(localStorage.getItem("BADUK_AUTH_USERS") || "[]");
+```
+
+테스트 데이터를 지우고 싶다면 아래 값을 삭제하면 됩니다.
+
+```js
+localStorage.removeItem("BADUK_AUTH_USER");
+localStorage.removeItem("BADUK_AUTH_USERS");
+```
+
+주의: `localStorage` 인증은 Vercel 정적 배포에서 즉시 테스트하기 위한 임시 저장 방식입니다. 실제 운영에서 여러 기기 간 기록 공유, 비밀번호 재설정, 관리자 권한 보호가 필요하면 서버 데이터베이스 인증으로 교체해야 합니다.
+
 ## 관리자 모드
 
 상단의 `관리자 모드` 버튼을 켜면 문제 목록에서 문제를 추가, 수정, 삭제할 수 있습니다. 변경사항은 현재 브라우저 메모리의 `problems` 배열에 즉시 반영되며 저장/export 기능을 붙일 수 있도록 UI와 상태를 분리해 두었습니다.
+
+## 외부 AI 반격 연동
+
+오답 착수 시 `window.BADUK_AI_API_URL` 또는 `localStorage.BADUK_AI_API_URL`에 설정된 API로 현재 바둑판 상태를 POST 전송합니다. API가 없거나 실패하면 기존 임시 AI 응수로 자동 fallback됩니다.
+
+```js
+localStorage.setItem("BADUK_AI_API_URL", "https://your-katago-api.example.com/analyze");
+```
+
+응답은 `{ "move": { "x": 4, "y": 9 } }`, `{ "bestMove": { "x": 4, "y": 9 } }`, `"4,9"`, `"ej"` 형식을 지원합니다.
+
+Vercel 배포에서는 `NEXT_PUBLIC_KATAGO_API_URL` 환경변수를 설정하면 빌드 시 `js/runtime-config.js`에 API 주소가 반영됩니다.
+
+```txt
+NEXT_PUBLIC_KATAGO_API_URL=https://your-katago-adapter.onrender.com/counter-move
+```
+
+`backend/katago-api`에는 Render/AWS에 올릴 수 있는 Node.js API 어댑터 템플릿이 들어 있습니다. 이 어댑터는 프론트엔드 요청을 받아 실제 KataGo 서버로 전달하고 `{ move: { x, y } }` 형태로 응답을 정규화합니다.
 
 ## GitHub 업로드
 
@@ -70,7 +109,8 @@ git push -u origin main
 4. Project Name을 `BadukPlatform`으로 입력합니다.
 5. Framework Preset은 `Other` 또는 자동 감지 상태로 둡니다.
 6. Build Command는 `npm run build`, Output Directory는 `.`로 설정됩니다. `vercel.json`에 이미 포함되어 있습니다.
-7. `Deploy`를 누릅니다.
+7. KataGo 어댑터를 배포했다면 Environment Variables에 `NEXT_PUBLIC_KATAGO_API_URL`을 추가합니다. 로그인 테스트만 할 때는 별도 환경변수가 필요 없습니다.
+8. `Deploy`를 누릅니다.
 
 배포가 끝나면 Vercel 무료 공유 주소가 생성됩니다. 프로젝트명이 사용 가능하면 `https://badukplatform.vercel.app` 형태로 접근할 수 있습니다. Vercel URL은 보통 소문자로 표시되며, 같은 이름이 이미 사용 중이면 뒤에 식별자가 붙을 수 있습니다.
 

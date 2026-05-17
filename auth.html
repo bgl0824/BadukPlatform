@@ -1,0 +1,43 @@
+<!DOCTYPE html>
+<html lang="ko">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>바둑 문제풀이 로그인</title>
+    <link rel="stylesheet" href="./styles.css" />
+    <script defer src="./js/runtime-config.js"></script>
+    <script defer src="./js/auth.js"></script>
+  </head>
+  <body data-page="auth">
+    <main class="auth-page">
+      <section class="auth-entry-card" aria-labelledby="auth-entry-title">
+        <p class="eyebrow">Baduk Learning</p>
+        <h1 id="auth-entry-title">바둑 문제풀이</h1>
+        <p>기록 저장을 위해 로그인하거나 새 아이디를 만들어 주세요.</p>
+        <div id="auth-status-bar" class="auth-status-bar auth-entry-actions" aria-live="polite"></div>
+        <button id="admin-entry" class="secondary-button admin-entry-button" type="button">
+          관리자 입장
+        </button>
+      </section>
+
+      <div id="login-modal" class="auth-modal is-hidden" role="dialog" aria-modal="true" aria-labelledby="login-title">
+        <form id="login-form" class="auth-modal-card">
+          <button class="auth-close" type="button" data-auth-close aria-label="로그인 창 닫기">×</button>
+          <p class="eyebrow">Login</p>
+          <h2 id="login-title">로그인</h2>
+          <label>
+            아이디
+            <input id="login-username" name="username" type="text" autocomplete="username" required />
+          </label>
+          <label>
+            비밀번호
+            <input id="login-password" name="password" type="password" autocomplete="current-password" required />
+          </label>
+          <p id="login-message" class="auth-message" aria-live="polite"></p>
+          <button class="primary-button" type="submit">로그인</button>
+        </form>
+      </div>
+
+    </main>
+  </body>
+</html>

@@ -1,11 +1,37 @@
 (function () {
-const { getTemporaryAiResponse } = window.BadukAi;
+const { getAiCounterMove } = window.BadukAi;
 const { BoardController } = window.BadukBoard;
 const { BOARD_SIZE, problems, STONE } = window.BadukProblems;
 const { createProblemSgf } = window.BadukSgf;
 
-const CATEGORY_FILTERS = ["전체", "활로", "따내기", "축", "사활"];
-const CREATOR_CATEGORIES = CATEGORY_FILTERS.filter((category) => category !== "전체");
+const CREATOR_CATEGORIES = [
+  "활로",
+  "돌따내기",
+  "돌살리기",
+  "서로단수",
+  "착수금지",
+  "패",
+  "연결",
+  "끊음",
+  "단수쳐서잡기",
+  "양단수",
+  "촉촉수",
+  "축",
+  "장문",
+  "환격",
+  "수상전",
+  "먹여치기",
+  "옥집",
+  "두집만들기",
+  "두집없애기",
+  "빅",
+  "끝내기",
+  "공배",
+];
+const STORAGE_KEYS = {
+  problems: "BADUK_PLATFORM_PROBLEMS",
+  categories: "BADUK_PLATFORM_CATEGORIES",
+};
 const CAPTURE_DIRECTIONS = [
   [1, 0],
   [-1, 0],
@@ -17,6 +43,7 @@ const elements = {
   meta: document.querySelector("#problem-meta"),
   title: document.querySelector("#problem-title"),
   description: document.querySelector("#problem-description"),
+  learningObjective: document.querySelector("#learning-objective"),
   grade: document.querySelector("#problem-grade"),
   board: document.querySelector("#board"),
   status: document.querySelector("#move-status"),
@@ -31,7 +58,16 @@ const elements = {
   categoryFilters: document.querySelector("#category-filters"),
   listSummary: document.querySelector("#list-summary"),
   problemCards: document.querySelector("#problem-cards"),
+  printSelectionCount: document.querySelector("#print-selection-count"),
+  printMonochrome: document.querySelector("#print-monochrome"),
+  printSelectedButton: document.querySelector("#print-selected-problems"),
+  printArea: document.querySelector("#print-area"),
+  answerModal: document.querySelector("#answer-modal"),
+  answerModalMessage: document.querySelector("#answer-modal-message"),
+  wrongModal: document.querySelector("#wrong-modal"),
   adminListActions: document.querySelector("#admin-list-actions"),
+  adminNewCategory: document.querySelector("#admin-new-category"),
+  addCategoryButton: document.querySelector("#add-category"),
   addProblemButton: document.querySelector("#add-problem"),
   adminEditor: document.querySelector("#admin-editor"),
   creatorPanel: document.querySelector("#creator-panel"),
@@ -57,18 +93,24 @@ if (!window.WGo) {
 
 const appState = {
   mode: "solve",
-  selectedCategory: "전체",
+  selectedCategory: "",
   currentProblemIndex: 0,
+  solvedAnswerKeys: new Set(),
   isSolved: false,
   isAiThinking: false,
   pendingAiTimeout: null,
+  autoNextTimeout: null,
+  wrongModalTimeout: null,
+  wrongResetTimeout: null,
+  canDismissAnswerModal: false,
+  selectedPrintProblemIds: new Set(),
   playedMoves: [],
 };
 
 const creatorState = {
   activeTool: STONE.black,
   activeMark: "triangle",
-  selectedCategory: CREATOR_CATEGORIES[0],
+  selectedCategory: CREATOR_CATEGORIES[0] ?? "",
   isCategoryOpen: false,
   stones: [],
   correctMove: null,
@@ -79,6 +121,8 @@ const adminState = {
   isEnabled: false,
   editingIndex: null,
   draft: null,
+  activeTool: STONE.black,
+  activeMark: "triangle",
 };
 
 const boardController = new BoardController(elements.board, {
@@ -91,7 +135,9 @@ elements.solveModeButton.addEventListener("click", showSolveMode);
 elements.createModeButton.addEventListener("click", showCreateMode);
 elements.nextButton.addEventListener("click", showNextProblem);
 elements.adminModeToggle.addEventListener("click", toggleAdminMode);
+elements.addCategoryButton.addEventListener("click", addAdminCategory);
 elements.addProblemButton.addEventListener("click", startAddingProblem);
+elements.printSelectedButton.addEventListener("click", printSelectedProblems);
 elements.toolButtons.forEach((button) => {
   button.addEventListener("click", () => setCreatorTool(button.dataset.tool));
 });
@@ -102,31 +148,79 @@ elements.undoCreateButton.addEventListener("click", undoCreatorAction);
 elements.resetCreateButton.addEventListener("click", resetCreatorBoard);
 elements.generateJsonButton.addEventListener("click", generateProblemJson);
 elements.createCategoryToggle.addEventListener("click", toggleCreatorCategoryOptions);
+elements.answerModal.addEventListener("click", () => {
+  if (appState.canDismissAnswerModal) {
+    hideAnswerModal();
+  }
+});
 
+restoreAdminData();
 renderCategoryFilters();
 renderCreatorCategoryOptions();
 renderProblemList();
-loadProblem(0);
+if (problems.length > 0) {
+  loadProblem(0);
+} else {
+  showEmptyProblemState();
+}
 
 function loadProblem(index) {
   const problem = problems[index];
 
+  if (!problem) {
+    showEmptyProblemState();
+    return;
+  }
+
   clearPendingAiMove();
+  clearAutoNext();
+  clearWrongTimers();
+  hideAnswerModal();
+  hideWrongModal();
   setMode("solve");
   appState.currentProblemIndex = index;
+  appState.solvedAnswerKeys = new Set();
   appState.isSolved = false;
   appState.isAiThinking = false;
   appState.playedMoves = [];
 
   elements.title.textContent = problem.title;
-  elements.description.textContent = problem.description;
+  elements.description.textContent = "";
+  elements.description.classList.add("is-hidden");
+  elements.learningObjective.textContent = problem.description || "정답 1수를 찾아보세요";
   elements.grade.textContent = problem.level;
   elements.meta.textContent = `문제 ${index + 1} / ${problems.length} · ${problem.category}`;
   setStatus(`${getStoneLabel(STONE.black)} 차례입니다.`);
-  setFeedback("첫 수를 선택해 보세요.");
+  setFeedback(getProblemStartFeedback(problem));
 
   boardController.clearAnswerMarker();
   boardController.loadPosition(problem.stones);
+}
+
+function showEmptyProblemState() {
+  clearPendingAiMove();
+  clearAutoNext();
+  clearWrongTimers();
+  hideAnswerModal();
+  hideWrongModal();
+  setMode("list");
+  appState.currentProblemIndex = 0;
+  appState.solvedAnswerKeys = new Set();
+  appState.isSolved = false;
+  appState.isAiThinking = false;
+  appState.playedMoves = [];
+
+  elements.meta.textContent = "No Problems";
+  elements.title.textContent = "등록된 문제가 없습니다";
+  elements.description.textContent = "관리자 모드나 문제 제작 모드에서 새 문제를 추가해 주세요.";
+  elements.description.classList.remove("is-hidden");
+  elements.learningObjective.textContent = "새 문제를 추가해 주세요";
+  elements.grade.textContent = "0문제";
+  setStatus("문제 없음");
+  setFeedback("현재 등록된 문제가 없습니다.");
+  boardController.clearAnswerMarker();
+  boardController.loadPosition([]);
+  renderProblemList();
 }
 
 function handleBoardClick(point) {
@@ -147,7 +241,12 @@ function handleUserMove(point) {
   }
 
   if (appState.isAiThinking) {
-    setFeedback("임시 AI 응수 후 다시 착수할 수 있습니다.", "wrong");
+    setFeedback(
+      appState.wrongResetTimeout || appState.wrongModalTimeout
+        ? "오답 처리 중입니다. 잠시 후 다시 착수해 보세요."
+        : "임시 AI 응수 후 다시 착수할 수 있습니다.",
+      "wrong",
+    );
     return;
   }
 
@@ -161,24 +260,31 @@ function handleUserMove(point) {
   removeCapturedStonesAfterMove(userMove);
   appState.playedMoves.push(userMove);
 
-  if (isCorrectMove(point, problem.correctMove)) {
-    appState.isSolved = true;
-    setStatus("정답입니다.");
-    setFeedback("좋습니다! 핵심 급소를 정확히 찾았습니다.", "correct");
-    logSgfForExtension(problem);
+  if (isCorrectUserMove(point, problem)) {
+    if (advanceCorrectSequence(problem)) {
+      appState.playedMoves.push(userMove);
+      return;
+    }
+
+    completeProblem(problem);
     return;
   }
 
-  setStatus("임시 AI가 응수합니다.");
-  setFeedback("아쉬워요. 임시 AI가 한 수 응수합니다.", "wrong");
+  if (problem.category === "활로") {
+    resetCurrentProblemAfterWrongMove(problem);
+    return;
+  }
+
+  setStatus("AI가 반격 수를 분석합니다.");
+  setFeedback("아쉬워요. AI가 오답을 응징할 반격 수를 찾고 있습니다.", "wrong");
   appState.isAiThinking = true;
   appState.pendingAiTimeout = window.setTimeout(
-    () => playTemporaryAiMove(userMove, problem.id),
+    () => playAiCounterMove(userMove, problem.id),
     450,
   );
 }
 
-function playTemporaryAiMove(lastMove, problemId) {
+async function playAiCounterMove(lastMove, problemId) {
   const problem = getCurrentProblem();
 
   appState.pendingAiTimeout = null;
@@ -188,13 +294,21 @@ function playTemporaryAiMove(lastMove, problemId) {
     return;
   }
 
-  const aiMove = getTemporaryAiResponse({
+  const aiMove = await getAiCounterMove({
     lastMove,
     stones: boardController.getStones(),
     boardSize: BOARD_SIZE,
+    problem,
+    playedMoves: appState.playedMoves,
+    sgf: createProblemSgf(problem, appState.playedMoves),
   });
 
-  if (!aiMove) {
+  if (appState.isSolved || getCurrentProblem().id !== problemId) {
+    appState.isAiThinking = false;
+    return;
+  }
+
+  if (!aiMove || boardController.hasStone(aiMove)) {
     appState.isAiThinking = false;
     setStatus("더 둘 수 있는 자리가 없습니다.");
     return;
@@ -204,6 +318,11 @@ function playTemporaryAiMove(lastMove, problemId) {
   removeCapturedStonesAfterMove(aiMove);
   appState.playedMoves.push(aiMove);
   appState.isAiThinking = false;
+  setFeedback(
+    aiMove.source === "external-ai"
+      ? "AI가 반격 수를 두었습니다. 다시 응수해 보세요."
+      : "임시 AI가 반격 수를 두었습니다. 다시 응수해 보세요.",
+  );
   setStatus(`${getStoneLabel(STONE.black)} 차례입니다.`);
 }
 
@@ -213,6 +332,11 @@ function showNextProblem() {
   }
 
   const filteredProblems = getFilteredProblems();
+  if (filteredProblems.length === 0) {
+    showEmptyProblemState();
+    return;
+  }
+
   const currentFilteredIndex = filteredProblems.findIndex(
     ({ index }) => index === appState.currentProblemIndex,
   );
@@ -234,6 +358,11 @@ function clearPendingAiMove() {
 }
 
 function showSolveMode() {
+  if (problems.length === 0) {
+    showEmptyProblemState();
+    return;
+  }
+
   setMode("solve");
   loadProblem(appState.currentProblemIndex);
 }
@@ -249,6 +378,8 @@ function showListMode() {
   elements.title.textContent = "문제 목록";
   elements.description.textContent =
     "카테고리별로 문제를 살펴보고 학습할 문제를 선택하세요.";
+  elements.description.classList.remove("is-hidden");
+  elements.learningObjective.textContent = "학습할 문제를 선택하세요";
   elements.grade.textContent = `${getFilteredProblems().length}문제`;
   renderProblemList();
 }
@@ -264,6 +395,8 @@ function showCreateMode() {
   elements.title.textContent = "문제 제작 모드";
   elements.description.textContent =
     "돌을 배치하고 정답 위치를 지정한 뒤 JSON을 출력하세요.";
+  elements.description.classList.remove("is-hidden");
+  elements.learningObjective.textContent = "문제도를 직접 만들어 보세요";
   elements.grade.textContent = "제작";
   setStatus("흑돌 배치 도구가 선택되었습니다.");
   setFeedback("바둑판을 눌러 문제도를 만들어 보세요.");
@@ -287,7 +420,7 @@ function setMode(mode) {
 function renderCategoryFilters() {
   elements.categoryFilters.innerHTML = "";
 
-  CATEGORY_FILTERS.forEach((category) => {
+  getCategoryFilters().forEach((category) => {
     const button = document.createElement("button");
     button.type = "button";
     button.className = "category-button";
@@ -297,6 +430,10 @@ function renderCategoryFilters() {
     button.addEventListener("click", () => selectCategory(category));
     elements.categoryFilters.append(button);
   });
+}
+
+function getCategoryFilters() {
+  return ["전체", ...CREATOR_CATEGORIES];
 }
 
 function renderCreatorCategoryOptions() {
@@ -343,7 +480,9 @@ function selectCategory(category) {
 function renderProblemList() {
   const filteredProblems = getFilteredProblems();
   elements.problemCards.innerHTML = "";
-  elements.listSummary.textContent = `${appState.selectedCategory} 카테고리에서 ${filteredProblems.length}개 문제를 표시합니다.`;
+  const categoryLabel = appState.selectedCategory || "전체";
+  elements.listSummary.textContent = `${categoryLabel} 카테고리에서 ${filteredProblems.length}개 문제를 표시합니다.`;
+  updatePrintSelectionControls();
 
   if (filteredProblems.length === 0) {
     const emptyMessage = document.createElement("p");
@@ -357,7 +496,12 @@ function renderProblemList() {
     const card = document.createElement("article");
     card.className = "problem-card";
     card.dataset.problemId = problem.id;
+    card.classList.toggle("is-selected", appState.selectedPrintProblemIds.has(problem.id));
     card.innerHTML = `
+      <label class="problem-print-select">
+        <input type="checkbox" data-print-select />
+        <span>인쇄 선택</span>
+      </label>
       <button class="problem-card-main" type="button">
         <span class="problem-card-meta">
           <span>문제 ${index + 1}</span>
@@ -373,6 +517,13 @@ function renderProblemList() {
         </span>
       </button>
     `;
+    const printSelect = card.querySelector("[data-print-select]");
+    printSelect.checked = appState.selectedPrintProblemIds.has(problem.id);
+    printSelect.addEventListener("click", (event) => event.stopPropagation());
+    printSelect.addEventListener("change", () => {
+      togglePrintProblemSelection(problem.id, printSelect.checked);
+      card.classList.toggle("is-selected", printSelect.checked);
+    });
     card.querySelector(".problem-card-main").addEventListener("click", () => selectProblemById(problem.id));
 
     if (adminState.isEnabled) {
@@ -394,6 +545,8 @@ function renderProblemList() {
     elements.problemCards.append(card);
     renderProblemPreviewBoard(card.querySelector(".problem-preview-board"), problem);
   });
+
+  updatePrintSelectionControls();
 }
 
 function selectProblemById(problemId) {
@@ -403,6 +556,139 @@ function selectProblemById(problemId) {
   }
 
   loadProblem(problemIndex);
+}
+
+function togglePrintProblemSelection(problemId, isSelected) {
+  if (isSelected) {
+    appState.selectedPrintProblemIds.add(problemId);
+  } else {
+    appState.selectedPrintProblemIds.delete(problemId);
+  }
+
+  updatePrintSelectionControls();
+}
+
+function updatePrintSelectionControls() {
+  pruneMissingPrintSelections();
+  const selectedCount = getSelectedPrintProblems().length;
+  elements.printSelectionCount.textContent = `선택 ${selectedCount}개`;
+  elements.printSelectedButton.disabled = selectedCount === 0;
+}
+
+function pruneMissingPrintSelections() {
+  const existingIds = new Set(problems.map((problem) => problem.id));
+  appState.selectedPrintProblemIds.forEach((problemId) => {
+    if (!existingIds.has(problemId)) {
+      appState.selectedPrintProblemIds.delete(problemId);
+    }
+  });
+}
+
+function getSelectedPrintProblems() {
+  return problems
+    .map((problem, index) => ({ problem, index }))
+    .filter(({ problem }) => appState.selectedPrintProblemIds.has(problem.id));
+}
+
+function printSelectedProblems() {
+  const selectedProblems = getSelectedPrintProblems();
+
+  if (selectedProblems.length === 0) {
+    setFeedback("인쇄할 문제를 먼저 선택해 주세요.", "wrong");
+    return;
+  }
+
+  renderPrintProblems(selectedProblems, elements.printMonochrome.checked);
+  setFeedback(`선택한 ${selectedProblems.length}개 문제를 인쇄합니다.`, "correct");
+  window.requestAnimationFrame(() => {
+    window.requestAnimationFrame(() => window.print());
+  });
+}
+
+function renderPrintProblems(selectedProblems, isMonochromePrint) {
+  elements.printArea.innerHTML = "";
+  elements.printArea.classList.toggle("is-monochrome", isMonochromePrint);
+
+  chunkArray(selectedProblems, 8).forEach((pageProblems) => {
+    const page = document.createElement("section");
+    page.className = "print-page";
+    page.innerHTML = `
+      <div class="print-header">
+        <p class="eyebrow">Baduk Learning</p>
+        <h1>선택 문제 인쇄</h1>
+      </div>
+      <div class="print-problems"></div>
+    `;
+
+    const printProblems = page.querySelector(".print-problems");
+    pageProblems.forEach(({ problem, index }) => {
+      const article = document.createElement("article");
+      article.className = "print-problem";
+      article.innerHTML = `
+        <div>
+          <p class="problem-card-meta">
+            <span>문제 ${index + 1}</span>
+            <span class="problem-category-badge">${escapeHtml(problem.category)}</span>
+            <span>${escapeHtml(problem.level ?? "")}</span>
+          </p>
+          <h2>${escapeHtml(problem.title)}</h2>
+          <p>${escapeHtml(problem.description)}</p>
+        </div>
+        <div class="print-problem-board" aria-hidden="true"></div>
+      `;
+      printProblems.append(article);
+      renderProblemPrintBoard(
+        article.querySelector(".print-problem-board"),
+        problem,
+        isMonochromePrint,
+      );
+    });
+
+    elements.printArea.append(page);
+  });
+}
+
+function chunkArray(items, chunkSize) {
+  const chunks = [];
+  for (let index = 0; index < items.length; index += chunkSize) {
+    chunks.push(items.slice(index, index + chunkSize));
+  }
+
+  return chunks;
+}
+
+function renderProblemPrintBoard(element, problem, isMonochromePrint) {
+  renderProblemPreviewBoard(element, problem);
+  replaceBoardCanvasWithImage(
+    element,
+    isMonochromePrint ? "#ffffff" : "#f3d08a",
+  );
+}
+
+function replaceBoardCanvasWithImage(element, backgroundColor) {
+  const canvases = [...element.querySelectorAll("canvas")];
+  const baseCanvas = canvases[0];
+  if (!baseCanvas) {
+    return;
+  }
+
+  const exportCanvas = document.createElement("canvas");
+  exportCanvas.width = baseCanvas.width;
+  exportCanvas.height = baseCanvas.height;
+
+  const context = exportCanvas.getContext("2d");
+  context.fillStyle = backgroundColor;
+  context.fillRect(0, 0, exportCanvas.width, exportCanvas.height);
+  canvases.forEach((canvas) => {
+    context.drawImage(canvas, 0, 0, exportCanvas.width, exportCanvas.height);
+  });
+
+  const image = document.createElement("img");
+  image.src = exportCanvas.toDataURL("image/png");
+  image.alt = "인쇄용 바둑판";
+  image.decoding = "sync";
+
+  element.replaceChildren(image);
 }
 
 function renderProblemPreviewBoard(element, problem) {
@@ -453,7 +739,11 @@ function getFilteredProblems() {
   return problems
     .map((problem, index) => ({ problem, index }))
     .filter(({ problem }) => {
-      return appState.selectedCategory === "전체" || problem.category === appState.selectedCategory;
+      return (
+        !appState.selectedCategory ||
+        appState.selectedCategory === "전체" ||
+        problem.category === appState.selectedCategory
+      );
     });
 }
 
@@ -489,16 +779,71 @@ function updateAdminVisibility() {
   }
 }
 
+function restoreAdminData() {
+  const savedCategories = readStorageJson(STORAGE_KEYS.categories, []);
+  savedCategories.forEach((category) => {
+    if (category && !CREATOR_CATEGORIES.includes(category)) {
+      CREATOR_CATEGORIES.push(category);
+    }
+  });
+
+  const savedProblems = readStorageJson(STORAGE_KEYS.problems, null);
+  if (Array.isArray(savedProblems)) {
+    problems.splice(0, problems.length, ...savedProblems);
+  }
+}
+
+function persistAdminData() {
+  try {
+    window.localStorage?.setItem(STORAGE_KEYS.problems, JSON.stringify(problems));
+    window.localStorage?.setItem(STORAGE_KEYS.categories, JSON.stringify(CREATOR_CATEGORIES));
+  } catch (error) {
+    console.warn("Failed to persist admin data.", error);
+  }
+}
+
+function readStorageJson(key, fallbackValue) {
+  try {
+    const storedValue = window.localStorage?.getItem(key);
+    return storedValue ? JSON.parse(storedValue) : fallbackValue;
+  } catch (error) {
+    console.warn(`Failed to read ${key} from localStorage.`, error);
+    return fallbackValue;
+  }
+}
+
+function addAdminCategory() {
+  const category = elements.adminNewCategory.value.trim();
+  if (!category) {
+    setFeedback("추가할 카테고리 이름을 입력해 주세요.", "wrong");
+    return;
+  }
+
+  if (category === "전체" || CREATOR_CATEGORIES.includes(category)) {
+    setFeedback("이미 존재하는 카테고리입니다.", "wrong");
+    return;
+  }
+
+  CREATOR_CATEGORIES.push(category);
+  persistAdminData();
+  elements.adminNewCategory.value = "";
+  renderCategoryFilters();
+  renderCreatorCategoryOptions();
+  renderProblemList();
+  setFeedback(`${category} 카테고리를 추가했습니다.`, "correct");
+}
+
 function startAddingProblem() {
   adminState.editingIndex = null;
   adminState.draft = {
-    id: createProblemId("새 문제", CREATOR_CATEGORIES[0]),
+    id: createProblemId("새 문제", CREATOR_CATEGORIES[0] ?? "미분류"),
     title: "",
     description: "",
     level: "",
-    category: CREATOR_CATEGORIES[0],
+    category: CREATOR_CATEGORIES[0] ?? "미분류",
     stones: [],
     correctMove: { x: 0, y: 0 },
+    correctSequence: [],
   };
   renderAdminEditor();
 }
@@ -516,6 +861,8 @@ function deleteProblem(index) {
   }
 
   problems.splice(index, 1);
+  appState.selectedPrintProblemIds.delete(problem.id);
+  persistAdminData();
   if (appState.currentProblemIndex >= problems.length) {
     appState.currentProblemIndex = Math.max(0, problems.length - 1);
   } else if (index < appState.currentProblemIndex) {
@@ -551,85 +898,230 @@ function renderAdminEditor() {
         category
         <select id="admin-category">${renderCategoryOptions(draft.category)}</select>
       </label>
-      <label>
-        정답 x
-        <input id="admin-correct-x" type="number" min="0" max="${BOARD_SIZE - 1}" value="${draft.correctMove.x}" />
-      </label>
-      <label>
-        정답 y
-        <input id="admin-correct-y" type="number" min="0" max="${BOARD_SIZE - 1}" value="${draft.correctMove.y}" />
-      </label>
     </div>
-    <div>
-      <p class="panel-label">stones</p>
-      <div id="admin-stones" class="stone-editor-list">
-        ${draft.stones.map(renderStoneEditorRow).join("")}
+    <div class="admin-board-tools">
+      <p class="panel-label">바둑판 편집 도구</p>
+      <p class="admin-answer-status">
+        현재 정답:
+        <strong id="admin-answer-label">(${draft.correctMove.x}, ${draft.correctMove.y})</strong>
+      </p>
+      <p class="admin-answer-status">
+        활로 정답 수순:
+        <strong id="admin-sequence-label">${formatCorrectSequence(draft)}</strong>
+      </p>
+      <div class="tool-grid">
+        <button class="admin-board-tool is-active" data-admin-tool="black" type="button">흑돌</button>
+        <button class="admin-board-tool" data-admin-tool="white" type="button">백돌</button>
+        <button class="admin-board-tool" data-admin-tool="answer" type="button">정답 수정</button>
+        <button class="admin-board-tool" data-admin-tool="sequence" type="button">활로 정답 추가</button>
+        <button class="admin-board-tool" data-admin-tool="clear-sequence" type="button">수순 초기화</button>
+      </div>
+      <div class="mark-grid">
+        <button class="admin-board-tool" data-admin-tool="mark" data-admin-mark="triangle" type="button">세모</button>
+        <button class="admin-board-tool" data-admin-tool="mark" data-admin-mark="circle" type="button">동그라미</button>
+        <button class="admin-board-tool" data-admin-tool="mark" data-admin-mark="square" type="button">네모</button>
+        <button class="admin-board-tool" data-admin-tool="mark" data-admin-mark="cross" type="button">X 표시</button>
+        <button class="admin-board-tool" data-admin-tool="mark" data-admin-mark="none" type="button">표시 지우기</button>
       </div>
     </div>
+    <div id="admin-board" class="admin-board" aria-label="관리자 문제 편집 바둑판"></div>
+    <p class="admin-board-help">활로 문제는 활로 정답 추가로 여러 흑 수순을 순서대로 찍을 수 있습니다. 일반 문제는 정답 수정만 사용하면 됩니다.</p>
     <div class="admin-editor-actions">
-      <button id="admin-add-stone" class="secondary-button" type="button">돌 추가</button>
       <button id="admin-cancel" class="secondary-button" type="button">취소</button>
       <button id="admin-save" class="primary-button" type="button">저장</button>
     </div>
   `;
 
-  elements.adminEditor.querySelector("#admin-add-stone").addEventListener("click", addAdminStone);
   elements.adminEditor.querySelector("#admin-cancel").addEventListener("click", closeAdminEditor);
   elements.adminEditor.querySelector("#admin-save").addEventListener("click", saveAdminProblem);
-  elements.adminEditor.querySelectorAll("[data-remove-stone]").forEach((button) => {
-    button.addEventListener("click", () => removeAdminStone(Number(button.dataset.removeStone)));
+  elements.adminEditor.querySelectorAll("[data-admin-tool]").forEach((button) => {
+    button.addEventListener("click", () => setAdminBoardTool(button));
   });
-}
-
-function renderStoneEditorRow(stone, index) {
-  return `
-    <div class="stone-editor-row" data-stone-index="${index}">
-      <label>
-        x
-        <input data-stone-field="x" type="number" min="0" max="${BOARD_SIZE - 1}" value="${stone.x}" />
-      </label>
-      <label>
-        y
-        <input data-stone-field="y" type="number" min="0" max="${BOARD_SIZE - 1}" value="${stone.y}" />
-      </label>
-      <label>
-        color
-        <select data-stone-field="color">
-          <option value="${STONE.black}" ${stone.color === STONE.black ? "selected" : ""}>black</option>
-          <option value="${STONE.white}" ${stone.color === STONE.white ? "selected" : ""}>white</option>
-        </select>
-      </label>
-      <label>
-        mark
-        <select data-stone-field="mark">
-          <option value="" ${stone.mark ? "" : "selected"}>없음</option>
-          <option value="triangle" ${stone.mark === "triangle" ? "selected" : ""}>triangle</option>
-          <option value="circle" ${stone.mark === "circle" ? "selected" : ""}>circle</option>
-          <option value="square" ${stone.mark === "square" ? "selected" : ""}>square</option>
-          <option value="cross" ${stone.mark === "cross" ? "selected" : ""}>cross</option>
-        </select>
-      </label>
-      <button class="danger-button" type="button" data-remove-stone="${index}">삭제</button>
-    </div>
-  `;
+  renderAdminBoard();
 }
 
 function renderCategoryOptions(selectedCategory) {
-  return CREATOR_CATEGORIES.map((category) => {
+  const categories = CREATOR_CATEGORIES.length > 0 ? CREATOR_CATEGORIES : ["미분류"];
+  return categories.map((category) => {
     return `<option value="${category}" ${category === selectedCategory ? "selected" : ""}>${category}</option>`;
   }).join("");
 }
 
-function addAdminStone() {
-  syncAdminDraftFromForm();
-  adminState.draft.stones.push({ x: 0, y: 0, color: STONE.black });
-  renderAdminEditor();
+function formatCorrectSequence(problem) {
+  if (problem.category !== "활로" || !Array.isArray(problem.correctSequence) || problem.correctSequence.length === 0) {
+    return "없음";
+  }
+
+  return problem.correctSequence
+    .map((move, index) => `${index + 1}.(${move.x}, ${move.y})`)
+    .join(" → ");
 }
 
-function removeAdminStone(index) {
-  syncAdminDraftFromForm();
-  adminState.draft.stones.splice(index, 1);
-  renderAdminEditor();
+function setAdminBoardTool(button) {
+  adminState.activeTool = button.dataset.adminTool;
+  adminState.activeMark = button.dataset.adminMark || adminState.activeMark;
+
+  if (adminState.activeTool === "clear-sequence") {
+    adminState.draft.correctSequence = [];
+    renderAdminBoard();
+    setFeedback("활로 정답 수순을 초기화했습니다.");
+    return;
+  }
+
+  elements.adminEditor.querySelectorAll("[data-admin-tool]").forEach((toolButton) => {
+    toolButton.classList.toggle("is-active", toolButton === button);
+  });
+}
+
+function renderAdminBoard() {
+  const boardElement = elements.adminEditor.querySelector("#admin-board");
+  if (!boardElement || !adminState.draft) {
+    return;
+  }
+
+  updateAdminAnswerLabel();
+  boardElement.innerHTML = "";
+  const adminBoard = new WGo.Board(boardElement, {
+    size: BOARD_SIZE,
+    width: boardElement.clientWidth || 360,
+    section: {
+      top: 0,
+      right: 0,
+      bottom: 0,
+      left: 0,
+    },
+  });
+
+  adminState.draft.stones.forEach((stone) => {
+    adminBoard.addObject({
+      x: stone.x,
+      y: stone.y,
+      c: stone.color === STONE.black ? WGo.B : WGo.W,
+    });
+
+    const markType = getWgoMarkType(stone.mark);
+    if (markType) {
+      adminBoard.addObject({ x: stone.x, y: stone.y, type: markType });
+    }
+  });
+
+  adminBoard.addObject({
+    x: adminState.draft.correctMove.x,
+    y: adminState.draft.correctMove.y,
+    type: "TR",
+  });
+
+  if (adminState.draft.category === "활로" && Array.isArray(adminState.draft.correctSequence)) {
+    adminState.draft.correctSequence.forEach((move) => {
+      adminBoard.addObject({ x: move.x, y: move.y, type: "CR" });
+    });
+  }
+
+  adminBoard.addEventListener("click", handleAdminBoardClick);
+}
+
+function updateAdminAnswerLabel() {
+  const answerLabel = elements.adminEditor.querySelector("#admin-answer-label");
+  if (!answerLabel || !adminState.draft) {
+    return;
+  }
+
+  answerLabel.textContent = `(${adminState.draft.correctMove.x}, ${adminState.draft.correctMove.y})`;
+  const sequenceLabel = elements.adminEditor.querySelector("#admin-sequence-label");
+  if (sequenceLabel) {
+    sequenceLabel.textContent = formatCorrectSequence(adminState.draft);
+  }
+}
+
+function handleAdminBoardClick(x, y) {
+  const point = { x, y };
+  if (!adminState.draft) {
+    return;
+  }
+
+  if (adminState.activeTool === "answer") {
+    if (adminState.draft.stones.some((stone) => isSamePoint(stone, point))) {
+      setFeedback("정답 위치는 돌이 없는 곳에 지정해 주세요.", "wrong");
+      return;
+    }
+    adminState.draft.correctMove = point;
+    renderAdminBoard();
+    setFeedback(`정답 좌표를 (${point.x}, ${point.y})로 수정했습니다.`, "correct");
+    return;
+  }
+
+  if (adminState.activeTool === "mark") {
+    updateAdminStoneMark(point);
+    return;
+  }
+
+  if (adminState.activeTool === "sequence") {
+    addAdminSequenceMove(point);
+    return;
+  }
+
+  updateAdminStone(point, adminState.activeTool);
+}
+
+function addAdminSequenceMove(point) {
+  if (adminState.draft.category !== "활로") {
+    setFeedback("여러 정답 수순은 활로 카테고리에서만 사용할 수 있습니다.", "wrong");
+    return;
+  }
+
+  if (adminState.draft.stones.some((stone) => isSamePoint(stone, point))) {
+    setFeedback("정답 수순은 빈 곳에만 지정해 주세요.", "wrong");
+    return;
+  }
+
+  adminState.draft.correctSequence = [
+    ...(adminState.draft.correctSequence ?? []),
+    point,
+  ];
+  adminState.draft.correctMove = adminState.draft.correctSequence[0];
+  renderAdminBoard();
+  setFeedback(`활로 정답 ${adminState.draft.correctSequence.length}수를 추가했습니다.`, "correct");
+}
+
+function updateAdminStone(point, color) {
+  const existingStone = adminState.draft.stones.find((stone) => isSamePoint(stone, point));
+  if (existingStone?.color === color) {
+    adminState.draft.stones = adminState.draft.stones.filter((stone) => !isSamePoint(stone, point));
+  } else {
+    adminState.draft.stones = [
+      ...adminState.draft.stones.filter((stone) => !isSamePoint(stone, point)),
+      { ...point, color },
+    ];
+  }
+
+  if (isSamePoint(adminState.draft.correctMove, point)) {
+    adminState.draft.correctMove = { x: 0, y: 0 };
+  }
+
+  renderAdminBoard();
+}
+
+function updateAdminStoneMark(point) {
+  const targetStone = adminState.draft.stones.find((stone) => isSamePoint(stone, point));
+  if (!targetStone) {
+    setFeedback("표시는 바둑알 위에만 추가할 수 있습니다.", "wrong");
+    return;
+  }
+
+  adminState.draft.stones = adminState.draft.stones.map((stone) => {
+    if (!isSamePoint(stone, point)) {
+      return stone;
+    }
+
+    if (adminState.activeMark === "none") {
+      const { mark, ...stoneWithoutMark } = stone;
+      return stoneWithoutMark;
+    }
+
+    return { ...stone, mark: adminState.activeMark };
+  });
+
+  renderAdminBoard();
 }
 
 function saveAdminProblem() {
@@ -649,6 +1141,7 @@ function saveAdminProblem() {
     }
   }
 
+  persistAdminData();
   closeAdminEditor();
   renderCategoryFilters();
   renderProblemList();
@@ -666,22 +1159,13 @@ function syncAdminDraftFromForm() {
   adminState.draft.description =
     editor.querySelector("#admin-description").value.trim() || "문제 설명을 입력하세요.";
   adminState.draft.category = editor.querySelector("#admin-category").value;
-  adminState.draft.correctMove = {
-    x: clampBoardCoordinate(editor.querySelector("#admin-correct-x").value),
-    y: clampBoardCoordinate(editor.querySelector("#admin-correct-y").value),
-  };
-  adminState.draft.stones = [...editor.querySelectorAll(".stone-editor-row")].map((row) => {
-    const mark = row.querySelector('[data-stone-field="mark"]').value;
-    const stone = {
-      x: clampBoardCoordinate(row.querySelector('[data-stone-field="x"]').value),
-      y: clampBoardCoordinate(row.querySelector('[data-stone-field="y"]').value),
-      color: row.querySelector('[data-stone-field="color"]').value,
-    };
-    if (mark) {
-      stone.mark = mark;
-    }
-    return stone;
-  });
+  if (adminState.draft.category !== "활로") {
+    delete adminState.draft.correctSequence;
+  } else if (!Array.isArray(adminState.draft.correctSequence)) {
+    adminState.draft.correctSequence = adminState.draft.correctMove
+      ? [{ ...adminState.draft.correctMove }]
+      : [];
+  }
 }
 
 function validateAdminDraft(problem) {
@@ -709,11 +1193,17 @@ function closeAdminEditor() {
 }
 
 function cloneProblem(problem) {
-  return {
+  const clonedProblem = {
     ...problem,
     correctMove: { ...problem.correctMove },
     stones: problem.stones.map((stone) => ({ ...stone })),
   };
+
+  if (Array.isArray(problem.correctSequence)) {
+    clonedProblem.correctSequence = problem.correctSequence.map((move) => ({ ...move }));
+  }
+
+  return clonedProblem;
 }
 
 function clampBoardCoordinate(value) {
@@ -869,7 +1359,7 @@ function generateProblemJson() {
   }
 
   const title = elements.createTitle.value.trim() || "새 바둑 문제";
-  const category = creatorState.selectedCategory;
+  const category = creatorState.selectedCategory || "미분류";
   const problem = {
     id: createProblemId(title, category),
     title,
@@ -886,6 +1376,153 @@ function generateProblemJson() {
 
 function isCorrectMove(move, answer) {
   return move.x === answer.x && move.y === answer.y;
+}
+
+function completeProblem(problem) {
+  appState.isSolved = true;
+  setStatus("정답입니다.");
+  setFeedback("좋습니다! 핵심 급소를 정확히 찾았습니다.", "correct");
+  logSgfForExtension(problem);
+
+  const nextProblem = getNextProblemInCurrentCategory();
+  showAnswerModal(
+    nextProblem
+      ? "정답입니다. 1초 후 다음 문제로 이동합니다."
+      : "정답입니다. 이 카테고리의 마지막 문제입니다.",
+    !nextProblem,
+  );
+
+  if (nextProblem) {
+    appState.autoNextTimeout = window.setTimeout(() => {
+      hideAnswerModal();
+      loadProblem(nextProblem.index);
+    }, 1000);
+  }
+}
+
+function resetCurrentProblemAfterWrongMove(problem) {
+  appState.isAiThinking = true;
+  setStatus("오답입니다.");
+  setFeedback("오답 착수를 확인한 뒤 문제가 초기 상태로 돌아갑니다.", "wrong");
+
+  clearWrongTimers();
+  appState.wrongResetTimeout = window.setTimeout(() => {
+    appState.wrongResetTimeout = null;
+    showWrongModal(() => restoreProblemInitialStateAfterWrong(problem));
+  }, 150);
+}
+
+function restoreProblemInitialStateAfterWrong(problem) {
+  appState.solvedAnswerKeys = new Set();
+  appState.playedMoves = [];
+  appState.isAiThinking = false;
+  boardController.clearAnswerMarker();
+  boardController.loadPosition(problem.stones);
+  setStatus(`${getStoneLabel(STONE.black)} 차례입니다.`);
+  setFeedback("오답입니다. 문제를 초기 상태로 되돌렸습니다.", "wrong");
+}
+
+function getNextProblemInCurrentCategory() {
+  const filteredProblems = getFilteredProblems();
+  const currentIndex = filteredProblems.findIndex(
+    ({ index }) => index === appState.currentProblemIndex,
+  );
+
+  if (currentIndex === -1 || currentIndex >= filteredProblems.length - 1) {
+    return null;
+  }
+
+  return filteredProblems[currentIndex + 1];
+}
+
+function showAnswerModal(message, canDismiss = false) {
+  elements.answerModalMessage.textContent = message;
+  appState.canDismissAnswerModal = canDismiss;
+  elements.answerModal.classList.remove("is-hidden");
+}
+
+function hideAnswerModal() {
+  appState.canDismissAnswerModal = false;
+  elements.answerModal.classList.add("is-hidden");
+}
+
+function showWrongModal(onHidden) {
+  elements.wrongModal.classList.remove("is-hidden");
+  appState.wrongModalTimeout = window.setTimeout(() => {
+    appState.wrongModalTimeout = null;
+    hideWrongModal();
+    onHidden?.();
+  }, 1000);
+}
+
+function hideWrongModal() {
+  elements.wrongModal.classList.add("is-hidden");
+}
+
+function clearWrongTimers() {
+  if (appState.wrongModalTimeout) {
+    window.clearTimeout(appState.wrongModalTimeout);
+    appState.wrongModalTimeout = null;
+  }
+
+  if (appState.wrongResetTimeout) {
+    window.clearTimeout(appState.wrongResetTimeout);
+    appState.wrongResetTimeout = null;
+  }
+}
+
+function clearAutoNext() {
+  if (appState.autoNextTimeout) {
+    window.clearTimeout(appState.autoNextTimeout);
+    appState.autoNextTimeout = null;
+  }
+}
+
+function isCorrectUserMove(move, problem) {
+  const sequence = getProblemCorrectSequence(problem);
+  if (sequence.length > 0) {
+    return sequence.some((answer) => {
+      return isCorrectMove(move, answer) && !appState.solvedAnswerKeys.has(pointKey(answer));
+    });
+  }
+
+  return problem.correctMove ? isCorrectMove(move, problem.correctMove) : false;
+}
+
+function getProblemCorrectSequence(problem) {
+  if (problem.category !== "활로" || !Array.isArray(problem.correctSequence)) {
+    return [];
+  }
+
+  return problem.correctSequence;
+}
+
+function advanceCorrectSequence(problem) {
+  const sequence = getProblemCorrectSequence(problem);
+  if (sequence.length <= 1) {
+    return false;
+  }
+
+  const latestMove = appState.playedMoves[appState.playedMoves.length - 1];
+  appState.solvedAnswerKeys.add(pointKey(latestMove));
+
+  if (appState.solvedAnswerKeys.size >= sequence.length) {
+    return false;
+  }
+
+  const remainingMoves = sequence.length - appState.solvedAnswerKeys.size;
+  setStatus(`${getStoneLabel(STONE.black)} 차례입니다.`);
+  setFeedback(`좋아요. 활로 정답이 ${remainingMoves}수 남았습니다.`, "correct");
+  return true;
+}
+
+function getProblemStartFeedback(problem) {
+  const sequence = getProblemCorrectSequence(problem);
+  if (sequence.length > 1) {
+    return `활로 문제입니다. 흑 정답 수순 ${sequence.length}수를 이어서 두세요.`;
+  }
+
+  return "첫 수를 선택해 보세요.";
 }
 
 function removeCapturedStonesAfterMove(move) {

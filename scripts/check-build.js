@@ -5,21 +5,28 @@ const { execFileSync } = require("child_process");
 const root = path.resolve(__dirname, "..");
 
 const requiredFiles = [
+  "auth.html",
   "index.html",
+  "signup.html",
   "styles.css",
   "vendor/wgo.min.js",
+  "js/runtime-config.js",
   "js/problems.js",
   "js/ai-response.js",
   "js/sgf.js",
   "js/board.js",
+  "js/auth.js",
   "js/main.js",
+  "backend/katago-api/server.js",
 ];
 
 const scriptFiles = [
   "js/problems.js",
+  "js/runtime-config.js",
   "js/ai-response.js",
   "js/sgf.js",
   "js/board.js",
+  "js/auth.js",
   "js/main.js",
 ];
 

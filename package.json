@@ -4,7 +4,7 @@
   "private": true,
   "description": "WGo.js based baduk problem solving and authoring platform.",
   "scripts": {
-    "build": "node scripts/check-build.js",
+    "build": "node scripts/generate-runtime-config.js && node scripts/check-build.js",
     "check": "node scripts/check-build.js",
     "start": "node scripts/serve-static.js"
   },
