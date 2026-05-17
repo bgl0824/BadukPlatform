@@ -29,6 +29,7 @@ const elements = {
   loginMessage: document.querySelector("#login-message"),
   signupMessage: document.querySelector("#signup-message"),
   adminEntry: document.querySelector("#admin-entry"),
+  adminModeToggle: document.querySelector("#admin-mode-toggle"),
 };
 
 let currentUser = readStoredUser();
@@ -49,6 +50,7 @@ if ((isAuthPage || isSignupPage) && currentUser) {
 }
 
 renderAuthStatus();
+updateAdminModeVisibility();
 bindAuthEvents();
 
 function bindAuthEvents() {
@@ -110,6 +112,7 @@ function renderAuthStatus() {
     const logoutButton = createAuthButton("로그아웃", () => {
       currentUser = null;
       localStorage.removeItem(AUTH_STORAGE_KEY);
+      updateAdminModeVisibility();
       if (requiresAuth) {
         window.location.href = "./auth.html";
       } else {
@@ -127,6 +130,15 @@ function renderAuthStatus() {
       window.location.href = "./signup.html";
     }),
   );
+}
+
+function updateAdminModeVisibility() {
+  if (!elements.adminModeToggle) {
+    return;
+  }
+
+  const canUseAdminMode = currentUser?.role === "admin";
+  elements.adminModeToggle.classList.toggle("is-hidden", !canUseAdminMode);
 }
 
 function createAuthButton(label, onClick) {
@@ -408,6 +420,7 @@ function storeUser(user) {
     loggedInAt: new Date().toISOString(),
   };
   localStorage.setItem(AUTH_STORAGE_KEY, JSON.stringify(currentUser));
+  updateAdminModeVisibility();
 }
 
 function readStoredUser() {

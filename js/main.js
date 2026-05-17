@@ -789,8 +789,20 @@ function restoreAdminData() {
 
   const savedProblems = readStorageJson(STORAGE_KEYS.problems, null);
   if (Array.isArray(savedProblems)) {
-    problems.splice(0, problems.length, ...savedProblems);
+    const mergedProblems = mergeProblemsById(problems, savedProblems);
+    problems.splice(0, problems.length, ...mergedProblems);
   }
+}
+
+function mergeProblemsById(baseProblems, savedProblems) {
+  const problemMap = new Map();
+  baseProblems.forEach((problem) => {
+    problemMap.set(problem.id, problem);
+  });
+  savedProblems.forEach((problem) => {
+    problemMap.set(problem.id, problem);
+  });
+  return [...problemMap.values()];
 }
 
 function persistAdminData() {
