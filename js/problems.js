@@ -6,7 +6,7 @@ const STONE = {
   white: "white",
 };
 
-const problems = [
+const DEFAULT_PROBLEMS = [
   {
     id: "활로-새-문제-1778978691561",
     title: "활로 줄이기",
@@ -97,9 +97,179 @@ const problems = [
   },
 ];
 
+const problems = [];
+const SUPABASE_PROBLEMS_TABLE = "problems";
+
+const ProblemStore = {
+  getDefaultProblems,
+  loadProblems,
+  saveProblem,
+  deleteProblem,
+  subscribe,
+  isConfigured,
+};
+
+let supabaseClient = null;
+let realtimeChannel = null;
+
+function getDefaultProblems() {
+  return DEFAULT_PROBLEMS.map(cloneProblem);
+}
+
+async function loadProblems({ seedDefaults = true } = {}) {
+  const client = getSupabaseClient();
+  const { data, error } = await client
+    .from(SUPABASE_PROBLEMS_TABLE)
+    .select("*")
+    .order("created_at", { ascending: true });
+
+  if (error) {
+    throw error;
+  }
+
+  if (data.length === 0 && seedDefaults && DEFAULT_PROBLEMS.length > 0) {
+    await saveProblems(DEFAULT_PROBLEMS);
+    return loadProblems({ seedDefaults: false });
+  }
+
+  return data.map(fromSupabaseRow);
+}
+
+async function saveProblems(problemList) {
+  const client = getSupabaseClient();
+  const { error } = await client
+    .from(SUPABASE_PROBLEMS_TABLE)
+    .upsert(problemList.map(toSupabaseRow), { onConflict: "id" });
+
+  if (error) {
+    throw error;
+  }
+}
+
+async function saveProblem(problem) {
+  const client = getSupabaseClient();
+  const { data, error } = await client
+    .from(SUPABASE_PROBLEMS_TABLE)
+    .upsert(toSupabaseRow(problem), { onConflict: "id" })
+    .select()
+    .single();
+
+  if (error) {
+    throw error;
+  }
+
+  return fromSupabaseRow(data);
+}
+
+async function deleteProblem(problemId) {
+  const client = getSupabaseClient();
+  const { error } = await client
+    .from(SUPABASE_PROBLEMS_TABLE)
+    .delete()
+    .eq("id", problemId);
+
+  if (error) {
+    throw error;
+  }
+}
+
+function subscribe(onProblemsChanged) {
+  const client = getSupabaseClient();
+
+  if (realtimeChannel) {
+    client.removeChannel(realtimeChannel);
+  }
+
+  realtimeChannel = client
+    .channel("baduk-problems-realtime")
+    .on(
+      "postgres_changes",
+      { event: "*", schema: "public", table: SUPABASE_PROBLEMS_TABLE },
+      async () => {
+        try {
+          const latestProblems = await loadProblems({ seedDefaults: false });
+          onProblemsChanged(latestProblems);
+        } catch (error) {
+          console.error("Failed to refresh realtime problem data.", error);
+        }
+      },
+    )
+    .subscribe();
+
+  return realtimeChannel;
+}
+
+function isConfigured() {
+  const config = window.BadukConfig ?? {};
+  return Boolean(config.supabaseUrl && config.supabaseKey && window.supabase?.createClient);
+}
+
+function getSupabaseClient() {
+  if (supabaseClient) {
+    return supabaseClient;
+  }
+
+  const config = window.BadukConfig ?? {};
+  if (!window.supabase?.createClient) {
+    throw new Error("Supabase 라이브러리를 불러오지 못했습니다.");
+  }
+
+  if (!config.supabaseUrl || !config.supabaseKey) {
+    throw new Error("Supabase URL 또는 KEY가 설정되지 않았습니다.");
+  }
+
+  supabaseClient = window.supabase.createClient(config.supabaseUrl, config.supabaseKey);
+  return supabaseClient;
+}
+
+function toSupabaseRow(problem) {
+  return {
+    id: problem.id,
+    title: problem.title,
+    description: problem.description,
+    level: problem.level ?? "",
+    category: problem.category,
+    stones: problem.stones ?? [],
+    correct_move: problem.correctMove ?? null,
+    correct_sequence: problem.correctSequence ?? null,
+  };
+}
+
+function fromSupabaseRow(row) {
+  const problem = {
+    id: row.id,
+    title: row.title,
+    description: row.description,
+    level: row.level ?? "",
+    category: row.category,
+    stones: row.stones ?? [],
+    correctMove: row.correct_move,
+  };
+
+  if (Array.isArray(row.correct_sequence)) {
+    problem.correctSequence = row.correct_sequence;
+  }
+
+  return problem;
+}
+
+function cloneProblem(problem) {
+  return {
+    ...problem,
+    correctMove: problem.correctMove ? { ...problem.correctMove } : null,
+    correctSequence: Array.isArray(problem.correctSequence)
+      ? problem.correctSequence.map((move) => ({ ...move }))
+      : undefined,
+    stones: Array.isArray(problem.stones)
+      ? problem.stones.map((stone) => ({ ...stone }))
+      : [],
+  };
+}
+
 window.BadukProblems = {
   BOARD_SIZE,
   STONE,
   problems,
+  ProblemStore,
 };
 })();

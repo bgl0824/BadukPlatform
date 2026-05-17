@@ -62,7 +62,82 @@ localStorage.removeItem("BADUK_AUTH_USERS");
 
 ## 관리자 모드
 
-상단의 `관리자 모드` 버튼을 켜면 문제 목록에서 문제를 추가, 수정, 삭제할 수 있습니다. 변경사항은 현재 브라우저 메모리의 `problems` 배열에 즉시 반영되며 저장/export 기능을 붙일 수 있도록 UI와 상태를 분리해 두었습니다.
+상단의 `관리자 모드` 버튼을 켜면 문제 목록에서 문제를 추가, 수정, 삭제할 수 있습니다. 문제 데이터는 Supabase `problems` 테이블에 저장되고, 다른 브라우저에서 변경해도 실시간 구독으로 목록이 갱신됩니다.
+
+## Supabase 문제 데이터 설정
+
+문제 데이터는 Supabase의 `public.problems` 테이블에서 읽고 씁니다. Supabase SQL Editor에서 아래 SQL을 실행해 주세요.
+
+```sql
+create table if not exists public.problems (
+  id text primary key,
+  title text not null,
+  description text not null default '',
+  level text not null default '',
+  category text not null,
+  stones jsonb not null default '[]'::jsonb,
+  correct_move jsonb,
+  correct_sequence jsonb,
+  created_at timestamptz not null default now(),
+  updated_at timestamptz not null default now()
+);
+
+create or replace function public.set_problem_updated_at()
+returns trigger
+language plpgsql
+as $$
+begin
+  new.updated_at = now();
+  return new;
+end;
+$$;
+
+drop trigger if exists set_problem_updated_at on public.problems;
+create trigger set_problem_updated_at
+before update on public.problems
+for each row
+execute function public.set_problem_updated_at();
+
+alter table public.problems enable row level security;
+
+drop policy if exists "Allow public read problems" on public.problems;
+create policy "Allow public read problems"
+on public.problems
+for select
+to anon
+using (true);
+
+drop policy if exists "Allow public insert problems" on public.problems;
+create policy "Allow public insert problems"
+on public.problems
+for insert
+to anon
+with check (true);
+
+drop policy if exists "Allow public update problems" on public.problems;
+create policy "Allow public update problems"
+on public.problems
+for update
+to anon
+using (true)
+with check (true);
+
+drop policy if exists "Allow public delete problems" on public.problems;
+create policy "Allow public delete problems"
+on public.problems
+for delete
+to anon
+using (true);
+```
+
+실시간 반영을 쓰려면 Supabase Dashboard의 `Database` → `Replication`에서 `problems` 테이블의 Realtime을 켜 주세요.
+
+Vercel 배포에서는 기본으로 아래 Supabase 프로젝트가 `js/runtime-config.js`에 설정되어 있습니다. 다른 프로젝트를 쓰려면 환경변수로 덮어쓸 수 있습니다.
+
+```txt
+NEXT_PUBLIC_SUPABASE_URL=https://biprcqrqnizwpxolkfyi.supabase.co
+NEXT_PUBLIC_SUPABASE_KEY=your-publishable-or-anon-key
+```
 
 ## 외부 AI 반격 연동
 

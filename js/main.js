@@ -1,7 +1,7 @@
 (function () {
 const { getAiCounterMove } = window.BadukAi;
 const { BoardController } = window.BadukBoard;
-const { BOARD_SIZE, problems, STONE } = window.BadukProblems;
+const { BOARD_SIZE, ProblemStore, problems, STONE } = window.BadukProblems;
 const { createProblemSgf } = window.BadukSgf;
 
 const CREATOR_CATEGORIES = [
@@ -28,10 +28,6 @@ const CREATOR_CATEGORIES = [
   "끝내기",
   "공배",
 ];
-const STORAGE_KEYS = {
-  problems: "BADUK_PLATFORM_PROBLEMS",
-  categories: "BADUK_PLATFORM_CATEGORIES",
-};
 const CAPTURE_DIRECTIONS = [
   [1, 0],
   [-1, 0],
@@ -154,14 +150,32 @@ elements.answerModal.addEventListener("click", () => {
   }
 });
 
-restoreAdminData();
-renderCategoryFilters();
-renderCreatorCategoryOptions();
-renderProblemList();
-if (problems.length > 0) {
-  loadProblem(0);
-} else {
-  showEmptyProblemState();
+initializeApp();
+
+async function initializeApp() {
+  setStatus("문제 데이터를 불러옵니다.");
+  setFeedback("Supabase에서 문제 목록을 불러오는 중입니다.");
+
+  try {
+    const loadedProblems = await ProblemStore.loadProblems();
+    replaceProblemList(loadedProblems);
+    ProblemStore.subscribe(handleRealtimeProblemUpdate);
+  } catch (error) {
+    console.error("Failed to load Supabase problems.", error);
+    replaceProblemList(ProblemStore.getDefaultProblems());
+    setFeedback("Supabase 문제 데이터를 불러오지 못해 기본 문제를 표시합니다.", "wrong");
+  }
+
+  syncCategoriesFromProblems();
+  renderCategoryFilters();
+  renderCreatorCategoryOptions();
+  renderProblemList();
+
+  if (problems.length > 0) {
+    loadProblem(0);
+  } else {
+    showEmptyProblemState();
+  }
 }
 
 function loadProblem(index) {
@@ -779,48 +793,38 @@ function updateAdminVisibility() {
   }
 }
 
-function restoreAdminData() {
-  const savedCategories = readStorageJson(STORAGE_KEYS.categories, []);
-  savedCategories.forEach((category) => {
-    if (category && !CREATOR_CATEGORIES.includes(category)) {
-      CREATOR_CATEGORIES.push(category);
+function replaceProblemList(nextProblems) {
+  problems.splice(0, problems.length, ...nextProblems);
+}
+
+function syncCategoriesFromProblems() {
+  problems.forEach((problem) => {
+    if (problem.category && !CREATOR_CATEGORIES.includes(problem.category)) {
+      CREATOR_CATEGORIES.push(problem.category);
     }
   });
+}
 
-  const savedProblems = readStorageJson(STORAGE_KEYS.problems, null);
-  if (Array.isArray(savedProblems)) {
-    const mergedProblems = mergeProblemsById(problems, savedProblems);
-    problems.splice(0, problems.length, ...mergedProblems);
+function handleRealtimeProblemUpdate(nextProblems) {
+  const currentProblemId = problems[appState.currentProblemIndex]?.id;
+  replaceProblemList(nextProblems);
+  syncCategoriesFromProblems();
+  renderCategoryFilters();
+  renderCreatorCategoryOptions();
+  renderProblemList();
+
+  if (problems.length === 0) {
+    showEmptyProblemState();
+    return;
   }
-}
 
-function mergeProblemsById(baseProblems, savedProblems) {
-  const problemMap = new Map();
-  baseProblems.forEach((problem) => {
-    problemMap.set(problem.id, problem);
-  });
-  savedProblems.forEach((problem) => {
-    problemMap.set(problem.id, problem);
-  });
-  return [...problemMap.values()];
-}
+  const nextIndex = problems.findIndex((problem) => problem.id === currentProblemId);
+  appState.currentProblemIndex = nextIndex === -1 ? 0 : nextIndex;
 
-function persistAdminData() {
-  try {
-    window.localStorage?.setItem(STORAGE_KEYS.problems, JSON.stringify(problems));
-    window.localStorage?.setItem(STORAGE_KEYS.categories, JSON.stringify(CREATOR_CATEGORIES));
-  } catch (error) {
-    console.warn("Failed to persist admin data.", error);
-  }
-}
-
-function readStorageJson(key, fallbackValue) {
-  try {
-    const storedValue = window.localStorage?.getItem(key);
-    return storedValue ? JSON.parse(storedValue) : fallbackValue;
-  } catch (error) {
-    console.warn(`Failed to read ${key} from localStorage.`, error);
-    return fallbackValue;
+  if (appState.mode === "solve") {
+    loadProblem(appState.currentProblemIndex);
+  } else {
+    elements.grade.textContent = `${getFilteredProblems().length}문제`;
   }
 }
 
@@ -837,7 +841,6 @@ function addAdminCategory() {
   }
 
   CREATOR_CATEGORIES.push(category);
-  persistAdminData();
   elements.adminNewCategory.value = "";
   renderCategoryFilters();
   renderCreatorCategoryOptions();
@@ -866,25 +869,31 @@ function startEditingProblem(index) {
   renderAdminEditor();
 }
 
-function deleteProblem(index) {
+async function deleteProblem(index) {
   const problem = problems[index];
   if (!problem || !window.confirm(`"${problem.title}" 문제를 삭제할까요?`)) {
     return;
   }
 
-  problems.splice(index, 1);
-  appState.selectedPrintProblemIds.delete(problem.id);
-  persistAdminData();
-  if (appState.currentProblemIndex >= problems.length) {
-    appState.currentProblemIndex = Math.max(0, problems.length - 1);
-  } else if (index < appState.currentProblemIndex) {
-    appState.currentProblemIndex -= 1;
-  }
+  try {
+    await ProblemStore.deleteProblem(problem.id);
+    problems.splice(index, 1);
+    appState.selectedPrintProblemIds.delete(problem.id);
+    if (appState.currentProblemIndex >= problems.length) {
+      appState.currentProblemIndex = Math.max(0, problems.length - 1);
+    } else if (index < appState.currentProblemIndex) {
+      appState.currentProblemIndex -= 1;
+    }
 
-  closeAdminEditor();
-  renderCategoryFilters();
-  renderProblemList();
-  elements.grade.textContent = `${getFilteredProblems().length}문제`;
+    closeAdminEditor();
+    renderCategoryFilters();
+    renderProblemList();
+    elements.grade.textContent = `${getFilteredProblems().length}문제`;
+    setFeedback("Supabase에서 문제를 삭제했습니다.", "correct");
+  } catch (error) {
+    console.error("Failed to delete problem.", error);
+    setFeedback("Supabase 문제 삭제에 실패했습니다.", "wrong");
+  }
 }
 
 function renderAdminEditor() {
@@ -1136,7 +1145,7 @@ function updateAdminStoneMark(point) {
   renderAdminBoard();
 }
 
-function saveAdminProblem() {
+async function saveAdminProblem() {
   syncAdminDraftFromForm();
   const validationError = validateAdminDraft(adminState.draft);
   if (validationError) {
@@ -1144,21 +1153,35 @@ function saveAdminProblem() {
     return;
   }
 
-  if (adminState.editingIndex === null) {
-    problems.push(cloneProblem(adminState.draft));
-  } else {
-    problems[adminState.editingIndex] = cloneProblem(adminState.draft);
-    if (appState.mode === "solve" && appState.currentProblemIndex === adminState.editingIndex) {
-      loadProblem(adminState.editingIndex);
+  const savedProblemDraft = cloneProblem(adminState.draft);
+
+  try {
+    const savedProblem = await ProblemStore.saveProblem(savedProblemDraft);
+
+    if (adminState.editingIndex === null) {
+      problems.push(savedProblem);
+    } else {
+      problems[adminState.editingIndex] = savedProblem;
+      if (appState.mode === "solve" && appState.currentProblemIndex === adminState.editingIndex) {
+        loadProblem(adminState.editingIndex);
+      }
     }
+  } catch (error) {
+    console.error("Failed to save problem.", error);
+    setFeedback("Supabase 문제 저장에 실패했습니다.", "wrong");
+    return;
   }
 
-  persistAdminData();
+  if (adminState.editingIndex === null) {
+    appState.currentProblemIndex = problems.length - 1;
+  }
+
   closeAdminEditor();
+  syncCategoriesFromProblems();
   renderCategoryFilters();
   renderProblemList();
   elements.grade.textContent = `${getFilteredProblems().length}문제`;
-  setFeedback("관리자 변경사항을 문제 목록에 반영했습니다.", "correct");
+  setFeedback("Supabase에 문제를 저장했습니다.", "correct");
 }
 
 function syncAdminDraftFromForm() {

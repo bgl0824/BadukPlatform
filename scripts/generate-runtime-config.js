@@ -7,10 +7,19 @@ const katagoApiUrl =
   process.env.NEXT_PUBLIC_KATAGO_API_URL ||
   process.env.BADUK_AI_API_URL ||
   "";
+const supabaseUrl =
+  process.env.NEXT_PUBLIC_SUPABASE_URL ||
+  "https://biprcqrqnizwpxolkfyi.supabase.co";
+const supabaseKey =
+  process.env.NEXT_PUBLIC_SUPABASE_KEY ||
+  process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY ||
+  "sb_publishable_YuonJkHovfeQhOGE3xikIw_P4zbhQqM";
 
 const contents = `(function () {
   window.BadukConfig = {
     katagoApiUrl: ${JSON.stringify(katagoApiUrl)},
+    supabaseUrl: ${JSON.stringify(supabaseUrl)},
+    supabaseKey: ${JSON.stringify(supabaseKey)},
   };
 })();
 `;
