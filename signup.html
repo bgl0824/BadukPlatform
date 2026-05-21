@@ -6,6 +6,7 @@
     <title>바둑 문제풀이 회원가입</title>
     <link rel="stylesheet" href="./styles.css" />
     <script defer src="./js/runtime-config.js"></script>
+    <script defer src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
     <script defer src="https://t1.daumcdn.net/mapjsapi/bundle/postcode/prod/postcode.v2.js"></script>
     <script type="module" src="./js/auth.js"></script>
   </head>
@@ -14,12 +15,26 @@
       <form id="signup-form" class="auth-modal-card auth-signup-card auth-page-signup" aria-labelledby="signup-title">
         <p class="eyebrow">Sign Up</p>
         <h1 id="signup-title">회원가입</h1>
-        <p id="signup-description" class="auth-page-description">아이디와 학습 기록 저장에 필요한 기본 정보를 입력해 주세요.</p>
+        <p id="signup-description" class="auth-page-description signup-full-only">
+          아이디와 학습 기록 저장에 필요한 기본 정보를 입력해 주세요.
+        </p>
+        <p id="signup-description-invite" class="auth-page-description signup-invite-only is-hidden">
+          학원 초대 링크로 접속했습니다. 아이디와 비밀번호만 입력하면 학원에 연결됩니다.
+        </p>
 
         <div class="auth-inline-field">
           <label>
             <span id="signup-username-label">아이디</span>
-            <input id="signup-username" name="username" type="text" autocomplete="username" minlength="2" maxlength="24" placeholder="아이디는 최소 2글자 이상" required />
+            <input
+              id="signup-username"
+              name="username"
+              type="text"
+              autocomplete="username"
+              minlength="2"
+              maxlength="24"
+              placeholder="아이디는 최소 2글자 이상"
+              required
+            />
             <span id="signup-username-message" class="auth-field-message" aria-live="polite"></span>
           </label>
           <button id="check-username-duplicate" class="secondary-button" type="button">중복확인</button>
@@ -27,17 +42,35 @@
 
         <label>
           비밀번호
-          <input id="signup-password" name="password" type="password" autocomplete="new-password" minlength="4" placeholder="비밀번호는 최소 4글자 이상" required />
+          <input
+            id="signup-password"
+            name="password"
+            type="password"
+            autocomplete="new-password"
+            minlength="6"
+            maxlength="64"
+            placeholder="비밀번호는 최소 6자리 이상 입력해 주세요."
+            required
+          />
         </label>
-        <p class="auth-help">비밀번호는 최소 4글자 이상 입력해 주세요.</p>
+        <p class="auth-help">비밀번호는 최소 6자리 이상 입력해 주세요.</p>
 
-        <label>
+        <label class="signup-full-only">
           가입 코드
-          <input id="signup-invite-code" name="invite_code" type="text" placeholder="선생님/학생 초대 코드를 받은 경우 입력" />
+          <input
+            id="signup-invite-code"
+            name="invite_code"
+            type="text"
+            placeholder="선생님/학생 초대 코드를 받은 경우 입력"
+          />
         </label>
-        <p id="signup-invite-help" class="auth-help">초대 링크로 들어온 경우 아이디와 비밀번호만 입력하면 가입됩니다.</p>
+        <p id="signup-invite-help" class="auth-help signup-full-only">
+          초대 링크로 들어온 경우에는 별도 입력 없이 자동 적용됩니다.
+        </p>
 
-        <div class="auth-form-grid invite-optional-field">
+        <input id="signup-invite-code-hidden" name="invite_code_locked" type="hidden" class="signup-invite-only" />
+
+        <div class="auth-form-grid signup-full-only">
           <label>
             이름
             <input id="signup-name" name="name" type="text" autocomplete="name" required />
@@ -46,13 +79,9 @@
             연락처
             <input id="signup-phone" name="phone" type="tel" autocomplete="tel" required />
           </label>
-          <label class="full-span">
-            이메일
-            <input id="signup-email" name="email" type="email" autocomplete="email" required />
-          </label>
         </div>
 
-        <fieldset class="auth-fieldset invite-optional-field">
+        <fieldset class="auth-fieldset signup-full-only">
           <legend>회원 유형</legend>
           <label class="auth-radio">
             <input type="radio" name="user_type" value="individual" checked />
@@ -64,23 +93,23 @@
           </label>
         </fieldset>
 
-        <label id="academy-name-field" class="is-hidden invite-optional-field">
+        <label id="academy-name-field" class="is-hidden signup-full-only">
           학원명 또는 방과후선생님 성함
           <input id="signup-academy-name" name="academy_name" type="text" />
         </label>
 
-        <div class="auth-inline-field invite-optional-field">
+        <div class="auth-inline-field signup-full-only">
           <label>
             우편번호
             <input id="signup-postcode" name="postcode" type="text" readonly />
           </label>
           <button id="search-address" class="secondary-button" type="button">주소 검색</button>
         </div>
-        <label class="invite-optional-field">
+        <label class="signup-full-only">
           주소
           <input id="signup-address" name="address" type="text" readonly />
         </label>
-        <label class="invite-optional-field">
+        <label class="signup-full-only">
           상세주소
           <input id="signup-address-detail" name="address_detail" type="text" />
         </label>

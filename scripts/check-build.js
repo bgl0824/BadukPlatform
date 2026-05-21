@@ -16,6 +16,9 @@ const requiredFiles = [
   "js/sgf.js",
   "js/board.js",
   "js/auth.js",
+  "js/services/auth-service.js",
+  "js/services/supabase-client.js",
+  "js/permissions/permission-service.js",
   "js/main.js",
   "backend/katago-api/server.js",
 ];
@@ -26,8 +29,16 @@ const scriptFiles = [
   "js/ai-response.js",
   "js/sgf.js",
   "js/board.js",
+  "js/services/auth-service.js",
+  "js/services/supabase-client.js",
   "js/auth.js",
   "js/main.js",
+];
+
+const authMarkers = [
+  { file: "js/services/auth-service.js", includes: 'USERNAME_AUTH_EMAIL_DOMAIN = "baduk.app"' },
+  { file: "js/services/auth-service.js", includes: "usernameToAuthEmail" },
+  { file: "js/services/auth-service.js", includes: "is_auth_username_available" },
 ];
 
 function readProjectFile(relativePath) {
@@ -57,4 +68,12 @@ if (!wgoBundle.includes("WGo")) {
   throw new Error("vendor/wgo.min.js does not look like a WGo.js bundle.");
 }
 
+for (const marker of authMarkers) {
+  const source = readProjectFile(marker.file);
+  if (!source.includes(marker.includes)) {
+    throw new Error(`Auth deploy marker missing in ${marker.file}: ${marker.includes}`);
+  }
+}
+
 console.log("BadukPlatform static build check passed.");
+console.log("Auth bundle ready for Vercel (baduk.app virtual email).");

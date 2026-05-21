@@ -489,10 +489,19 @@ const categoryCompleteModal = createCategoryCompleteModalController({
   onAction: handleCategoryCompleteAction,
 });
 
-applyInitialListScreen();
+startApplication();
 
-runApplicationBootstrap();
-initializeApp();
+async function startApplication() {
+  try {
+    await window.BadukAuth?.authReady;
+  } catch (error) {
+    console.error("Auth initialization failed before app bootstrap.", error);
+  }
+
+  applyInitialListScreen();
+  runApplicationBootstrap();
+  await initializeApp();
+}
 
 function runApplicationBootstrap() {
   const boot = createBootLogger("Bootstrap");

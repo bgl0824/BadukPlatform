@@ -6,7 +6,9 @@
   "scripts": {
     "build": "node scripts/generate-runtime-config.js && node scripts/check-build.js",
     "check": "node scripts/check-build.js",
-    "start": "node scripts/serve-static.js"
+    "start": "node scripts/serve-static.js",
+    "create-admin": "node scripts/create-admin-user.mjs",
+    "create-admin:dry-run": "node scripts/create-admin-user.mjs --dry-run"
   },
   "engines": {
     "node": ">=18"

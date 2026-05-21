@@ -94,58 +94,52 @@ for each row
 execute function public.set_problem_updated_at();
 
 alter table public.problems enable row level security;
-
-drop policy if exists "Allow public read problems" on public.problems;
-create policy "Allow public read problems"
-on public.problems
-for select
-to anon
-using (true);
-
-drop policy if exists "Allow public insert problems" on public.problems;
-create policy "Allow public insert problems"
-on public.problems
-for insert
-to anon
-with check (true);
-
-drop policy if exists "Allow public update problems" on public.problems;
-create policy "Allow public update problems"
-on public.problems
-for update
-to anon
-using (true)
-with check (true);
-
-drop policy if exists "Allow public delete problems" on public.problems;
-create policy "Allow public delete problems"
-on public.problems
-for delete
-to anon
-using (true);
-
-create or replace function public.delete_problem(problem_id text)
-returns boolean
-language plpgsql
-security definer
-set search_path = public
-as $$
-declare
-  deleted_count integer;
-begin
-  delete from public.problems
-  where id = problem_id;
-
-  get diagnostics deleted_count = row_count;
-  return deleted_count > 0;
-end;
-$$;
-
-revoke all on function public.delete_problem(text) from public;
-grant execute on function public.delete_problem(text) to anon;
 ```
 
+문제 테이블 RLS(읽기 공개 / 쓰기는 admin·academy_owner·teacher만)는 **`scripts/supabase-problems-rls.sql`** 을 SQL Editor에서 실행하세요. `user_metadata.role`(또는 `userType`)이 JWT에 포함되어야 합니다.
+
 실시간 반영을 쓰려면 Supabase Dashboard의 `Database` → `Replication`에서 `problems` 테이블의 Realtime을 켜 주세요.
+
+## Supabase Auth (회원가입·로그인 — 우선 적용)
+
+1. **SQL Editor**에서 아래 파일 **전체를 한 번만** 실행합니다.  
+   **`scripts/supabase-is-auth-email-available.sql`**  
+   - `public.is_auth_username_available`  
+   - `public.is_auth_email_available`  
+   - 여러 번 실행해도 안전합니다 (`drop if exists` + `create or replace`).
+
+2. **Authentication → Providers → Email**
+   - **Minimum password length = 6**
+   - **Confirm email = OFF** (필수 — ON이면 `signUp`마다 확인 메일 발송 → 429 `email rate limit exceeded`)
+   - 자세한 Dashboard 경로: `scripts/supabase-auth-dashboard-setup.md`
+
+3. 로그인/가입 시 Supabase에는 `user_{해시}@baduk.app` 영문 가상 이메일만 저장되고, 화면 아이디(`user_metadata.username`)는 한글 그대로 유지됩니다.
+
+4. signUp 디버그: `js/runtime-config.js`에 `debugAuth: true` 추가 시 콘솔에 signUp payload 로그(비밀번호 제외).
+
+5. 중복확인 RPC 404 시: Database → Functions 에 두 함수 존재 여부 확인 → API 스키마 reload 후 재시도.
+
+### 기본 관리자 계정 (admin)
+
+Dashboard **Project Settings → API → service_role** 키를 복사한 뒤:
+
+```powershell
+# Dashboard → Project Settings → API → service_role (publishable 키 아님!)
+$env:SUPABASE_SERVICE_ROLE_KEY="eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9...."
+npm run create-admin:dry-run
+npm run create-admin
+```
+
+성공 시 콘솔에 `[SUCCESS] admin user created` 와 auth email / user id 가 출력됩니다.  
+`[ERROR] SUPABASE_SERVICE_ROLE_KEY가 없습니다` 가 나오면 환경변수가 설정되지 않은 것입니다.
+
+- 화면 로그인: 아이디 `admin` / 비밀번호 `000000`
+- 내부 email: `user_{해시}@baduk.app` (`create-admin:dry-run` 출력값과 동일)
+- metadata: `role`, `userType`, `username` 모두 `admin`
+
+수동 metadata 보정만 필요하면 `scripts/create-admin-user.sql` 참고.
+
+문제 테이블 RLS는 **`scripts/supabase-problems-rls.sql`** — 로그인/가입 안정화 **이후** 적용을 권장합니다.
 
 Vercel 배포에서는 기본으로 아래 Supabase 프로젝트가 `js/runtime-config.js`에 설정되어 있습니다. 다른 프로젝트를 쓰려면 환경변수로 덮어쓸 수 있습니다.
 
@@ -193,16 +187,20 @@ git push -u origin main
 
 ## Vercel 무료 배포
 
-1. [Vercel](https://vercel.com/)에 GitHub 계정으로 로그인합니다.
-2. `Add New...` → `Project`를 누릅니다.
-3. GitHub의 `BadukPlatform` repository를 선택합니다.
-4. Project Name을 `BadukPlatform`으로 입력합니다.
-5. Framework Preset은 `Other` 또는 자동 감지 상태로 둡니다.
-6. Build Command는 `npm run build`, Output Directory는 `.`로 설정됩니다. `vercel.json`에 이미 포함되어 있습니다.
-7. KataGo 어댑터를 배포했다면 Environment Variables에 `NEXT_PUBLIC_KATAGO_API_URL`을 추가합니다. 로그인 테스트만 할 때는 별도 환경변수가 필요 없습니다.
-8. `Deploy`를 누릅니다.
+**상세 절차(최신 Auth·admin 로그인 포함):** [`docs/vercel-deploy-auth.md`](docs/vercel-deploy-auth.md)
 
-배포가 끝나면 Vercel 무료 공유 주소가 생성됩니다. 프로젝트명이 사용 가능하면 `https://badukplatform.vercel.app` 형태로 접근할 수 있습니다. Vercel URL은 보통 소문자로 표시되며, 같은 이름이 이미 사용 중이면 뒤에 식별자가 붙을 수 있습니다.
+요약:
+
+1. 로컬에서 `npm run build` 통과 확인
+2. `js/auth.js`, `js/services/auth-service.js` 등 **Git push** (`main` 브랜치)
+3. Vercel Environment Variables: `NEXT_PUBLIC_SUPABASE_URL`, `NEXT_PUBLIC_SUPABASE_KEY`
+4. **Redeploy + Clear build cache**
+5. 배포 URL에서 signup email이 `user_*@baduk.app` 인지 Network 탭으로 확인
+6. Supabase에 `npm run create-admin` 으로 admin 계정 생성 후 로그인 테스트
+
+기본 설정은 `vercel.json`에 있습니다 (`buildCommand`: `npm run build`, `outputDirectory`: `.`).
+
+배포 URL 예: `https://badukplatform.vercel.app` (프로젝트명에 따라 다름)
 
 ## 확장 포인트
 

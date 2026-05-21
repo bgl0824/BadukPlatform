@@ -6,6 +6,7 @@
     <title>바둑 문제풀이 로그인</title>
     <link rel="stylesheet" href="./styles.css" />
     <script defer src="./js/runtime-config.js"></script>
+    <script defer src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
     <script type="module" src="./js/auth.js"></script>
   </head>
   <body data-page="auth">
@@ -15,7 +16,7 @@
         <h1 id="auth-entry-title">바둑 문제풀이</h1>
         <p>기록 저장을 위해 로그인하거나 새 아이디를 만들어 주세요.</p>
         <div id="auth-status-bar" class="auth-status-bar auth-entry-actions" aria-live="polite"></div>
-        <button id="admin-entry" class="secondary-button admin-entry-button" type="button">
+        <button id="admin-entry" class="secondary-button admin-entry-button is-hidden" type="button" aria-hidden="true" hidden>
           관리자 입장
         </button>
       </section>
@@ -27,11 +28,11 @@
           <h2 id="login-title">로그인</h2>
           <label>
             아이디
-            <input id="login-username" name="username" type="text" autocomplete="username" required />
+            <input id="login-username" name="username" type="text" autocomplete="username" placeholder="예: 내친구바둑" required />
           </label>
           <label>
             비밀번호
-            <input id="login-password" name="password" type="password" autocomplete="current-password" required />
+            <input id="login-password" name="password" type="password" autocomplete="current-password" placeholder="비밀번호 6자리 이상" required />
           </label>
           <p id="login-message" class="auth-message" aria-live="polite"></p>
           <button class="primary-button" type="submit">로그인</button>
