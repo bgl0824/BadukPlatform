@@ -7,18 +7,18 @@
     <link rel="stylesheet" href="./styles.css" />
     <script defer src="./js/runtime-config.js"></script>
     <script defer src="https://t1.daumcdn.net/mapjsapi/bundle/postcode/prod/postcode.v2.js"></script>
-    <script defer src="./js/auth.js"></script>
+    <script type="module" src="./js/auth.js"></script>
   </head>
   <body data-page="signup">
     <main class="auth-page">
       <form id="signup-form" class="auth-modal-card auth-signup-card auth-page-signup" aria-labelledby="signup-title">
         <p class="eyebrow">Sign Up</p>
         <h1 id="signup-title">회원가입</h1>
-        <p class="auth-page-description">아이디와 학습 기록 저장에 필요한 기본 정보를 입력해 주세요.</p>
+        <p id="signup-description" class="auth-page-description">아이디와 학습 기록 저장에 필요한 기본 정보를 입력해 주세요.</p>
 
         <div class="auth-inline-field">
           <label>
-            아이디
+            <span id="signup-username-label">아이디</span>
             <input id="signup-username" name="username" type="text" autocomplete="username" minlength="2" maxlength="24" placeholder="아이디는 최소 2글자 이상" required />
             <span id="signup-username-message" class="auth-field-message" aria-live="polite"></span>
           </label>
@@ -31,7 +31,13 @@
         </label>
         <p class="auth-help">비밀번호는 최소 4글자 이상 입력해 주세요.</p>
 
-        <div class="auth-form-grid">
+        <label>
+          가입 코드
+          <input id="signup-invite-code" name="invite_code" type="text" placeholder="선생님/학생 초대 코드를 받은 경우 입력" />
+        </label>
+        <p id="signup-invite-help" class="auth-help">초대 링크로 들어온 경우 아이디와 비밀번호만 입력하면 가입됩니다.</p>
+
+        <div class="auth-form-grid invite-optional-field">
           <label>
             이름
             <input id="signup-name" name="name" type="text" autocomplete="name" required />
@@ -46,7 +52,7 @@
           </label>
         </div>
 
-        <fieldset class="auth-fieldset">
+        <fieldset class="auth-fieldset invite-optional-field">
           <legend>회원 유형</legend>
           <label class="auth-radio">
             <input type="radio" name="user_type" value="individual" checked />
@@ -58,23 +64,23 @@
           </label>
         </fieldset>
 
-        <label id="academy-name-field" class="is-hidden">
+        <label id="academy-name-field" class="is-hidden invite-optional-field">
           학원명 또는 방과후선생님 성함
           <input id="signup-academy-name" name="academy_name" type="text" />
         </label>
 
-        <div class="auth-inline-field">
+        <div class="auth-inline-field invite-optional-field">
           <label>
             우편번호
             <input id="signup-postcode" name="postcode" type="text" readonly />
           </label>
           <button id="search-address" class="secondary-button" type="button">주소 검색</button>
         </div>
-        <label>
+        <label class="invite-optional-field">
           주소
           <input id="signup-address" name="address" type="text" readonly />
         </label>
-        <label>
+        <label class="invite-optional-field">
           상세주소
           <input id="signup-address-detail" name="address_detail" type="text" />
         </label>
@@ -84,5 +90,18 @@
         <a class="auth-secondary-link" href="./auth.html">로그인 페이지로 돌아가기</a>
       </form>
     </main>
+    <div id="postcode-layer" class="postcode-layer is-hidden" aria-label="주소 검색 결과">
+      <div class="postcode-layer-panel">
+        <div class="postcode-layer-actions">
+          <button id="open-postcode-popup" class="postcode-layer-button" type="button">
+            새 창으로 열기
+          </button>
+          <button id="close-postcode-layer" class="postcode-layer-button" type="button" aria-label="주소 검색 닫기">
+            닫기
+          </button>
+        </div>
+        <div id="postcode-layer-content" class="postcode-layer-content"></div>
+      </div>
+    </div>
   </body>
 </html>

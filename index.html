@@ -13,41 +13,44 @@
     <script defer src="./js/ai-response.js"></script>
     <script defer src="./js/sgf.js"></script>
     <script defer src="./js/board.js"></script>
-    <script defer src="./js/auth.js"></script>
-    <script defer src="./js/main.js"></script>
+    <script type="module" src="./js/auth.js"></script>
+    <script type="module" src="./js/main.js"></script>
   </head>
   <body data-require-auth="true">
     <main class="app-shell">
+      <nav id="main-menu" class="main-menu" aria-label="주 메뉴">
+        <button class="main-menu-button is-active" type="button" data-main-menu="list">문제은행</button>
+        <button class="main-menu-button" type="button" data-main-menu="study">학습중</button>
+        <button class="main-menu-button learning-only-menu is-hidden" type="button" data-main-menu="learning">
+          학습관리
+        </button>
+        <button class="main-menu-button academy-owner-only-menu is-hidden" type="button" data-main-menu="academy">
+          학원관리
+        </button>
+        <button class="main-menu-button academy-owner-only-menu is-hidden" type="button" data-main-menu="attendance">
+          출결관리
+        </button>
+        <button class="main-menu-button academy-owner-only-menu is-hidden" type="button" data-main-menu="payments">
+          결재확인
+        </button>
+      </nav>
+
       <section class="hero-card" aria-labelledby="problem-title">
         <div class="hero-copy">
           <p id="problem-meta" class="eyebrow">Baduk Learning</p>
-          <h1 id="problem-title">문제 제목</h1>
-          <p id="problem-description" class="problem-description">문제 설명</p>
+          <h1 id="problem-title">문제은행</h1>
+          <p id="problem-description" class="problem-description">
+            카테고리별로 문제를 살펴보고 학습할 문제를 선택하세요.
+          </p>
         </div>
-        <div class="grade-badge" aria-label="현재 급수">
-          <span>현재 급수</span>
-          <strong id="problem-grade">-</strong>
-        </div>
-        <button id="admin-mode-toggle" class="admin-toggle" type="button" aria-pressed="false">
+        <button id="admin-mode-toggle" class="admin-toggle is-hidden" type="button" aria-pressed="false">
           관리자 모드
         </button>
         <div id="auth-status-bar" class="auth-status-bar" aria-live="polite"></div>
       </section>
 
-      <section id="study-layout" class="study-layout">
+      <section id="study-layout" class="study-layout is-hidden">
         <aside class="info-panel" aria-label="학습 안내">
-          <div class="mode-toggle" aria-label="모드 선택">
-            <button id="list-mode" class="mode-button" type="button">
-              문제 목록
-            </button>
-            <button id="solve-mode" class="mode-button is-active" type="button">
-              문제 풀이
-            </button>
-            <button id="create-mode" class="mode-button" type="button">
-              문제 제작
-            </button>
-          </div>
-
           <div>
             <p class="panel-label">학습 목표</p>
             <h2 id="learning-objective">정답 1수를 찾아보세요</h2>
@@ -56,6 +59,13 @@
           <div class="status-card">
             <p class="panel-label">진행 상태</p>
             <p id="move-status" class="move-status">흑 차례입니다.</p>
+            <div id="ox-solve-panel" class="ox-solve-panel is-hidden" aria-label="O/X 판정">
+              <p class="panel-label">판정</p>
+              <div class="ox-solve-actions">
+                <button class="ox-solve-button" type="button" data-ox-answer="true">O</button>
+                <button class="ox-solve-button" type="button" data-ox-answer="false">X</button>
+              </div>
+            </div>
             <p id="feedback" class="feedback">첫 수를 선택해 보세요.</p>
           </div>
 
@@ -64,8 +74,32 @@
           </button>
 
           <section id="creator-panel" class="creator-panel is-hidden" aria-label="문제 제작 도구">
+            <label>
+              category
+              <div class="creator-category-select">
+                <button
+                  id="create-category-toggle"
+                  class="creator-category-toggle"
+                  type="button"
+                  aria-expanded="false"
+                  aria-controls="create-category-options"
+                >
+                  <span id="selected-create-category">활로</span>
+                  <span class="category-arrow" aria-hidden="true">⌄</span>
+                </button>
+                <div id="create-category-options" class="create-category-options"></div>
+              </div>
+            </label>
+            <label>
+              문제 타입
+              <select id="create-problem-type">
+                <option value="board">바둑판 착수 (board)</option>
+                <option value="ox">O/X 판정 (ox)</option>
+              </select>
+            </label>
             <div class="creator-tools">
-              <p class="panel-label">제작 도구</p>
+              <p class="panel-label">바둑판 배치</p>
+              <p class="creator-placement-hint">좌클릭=흑 · 우클릭=백 · 같은 돌 다시 클릭=제거</p>
               <div class="tool-grid">
                 <button class="tool-button is-active" data-tool="black" type="button">
                   흑돌
@@ -117,22 +151,6 @@
               급수
               <input id="create-level" type="text" placeholder="예: 30급" />
             </label>
-            <label>
-              category
-              <div class="creator-category-select">
-                <button
-                  id="create-category-toggle"
-                  class="creator-category-toggle"
-                  type="button"
-                  aria-expanded="false"
-                  aria-controls="create-category-options"
-                >
-                  <span id="selected-create-category">활로</span>
-                  <span class="category-arrow" aria-hidden="true">⌄</span>
-                </button>
-                <div id="create-category-options" class="create-category-options"></div>
-              </div>
-            </label>
             <button id="generate-json" class="primary-button" type="button">
               JSON 출력
             </button>
@@ -148,56 +166,466 @@
 
         <section class="board-card" aria-label="13줄 바둑판">
           <div id="board" class="board"></div>
+          <section
+            id="create-ox-answer-panel"
+            class="create-ox-answer-panel ox-choice-panel is-hidden"
+            aria-label="O/X 정답"
+          >
+            <p class="panel-label">정답 판정</p>
+            <p class="ox-choice-hint">바둑판을 본 뒤 정답을 선택하세요.</p>
+            <div class="ox-choice-actions" role="radiogroup" aria-label="O/X 정답">
+              <button
+                class="ox-choice-button is-selected"
+                type="button"
+                data-create-ox-answer="true"
+                aria-pressed="true"
+              >
+                <span class="ox-choice-symbol">O</span>
+                <span class="ox-choice-label">둘 수 있음</span>
+              </button>
+              <button
+                class="ox-choice-button"
+                type="button"
+                data-create-ox-answer="false"
+                aria-pressed="false"
+              >
+                <span class="ox-choice-symbol">X</span>
+                <span class="ox-choice-label">둘 수 없음</span>
+              </button>
+            </div>
+          </section>
         </section>
       </section>
 
-      <section id="problem-list-screen" class="problem-list-screen is-hidden" aria-label="문제 목록">
+      <section id="study-screen" class="study-screen is-hidden" aria-label="학습중">
+        <div id="study-curriculum-accordion" class="study-curriculum-accordion" aria-label="단계별 학습 흐름"></div>
+      </section>
+
+      <section id="problem-list-screen" class="problem-list-screen" aria-label="문제은행">
         <div class="list-header">
           <div>
             <p class="eyebrow">Problem Library</p>
-            <h2>문제 목록</h2>
+            <h2>문제은행</h2>
             <p id="list-summary">전체 문제를 확인하고 원하는 문제를 선택하세요.</p>
           </div>
-          <div class="print-selection-actions" aria-label="선택 문제 인쇄">
-            <p id="print-selection-count">선택 0개</p>
-            <label class="print-mode-toggle">
-              <input id="print-monochrome" type="checkbox" />
-              흑백 인쇄
-            </label>
-            <button id="print-selected-problems" class="secondary-button" type="button" disabled>
-              선택 문제 인쇄
+        </div>
+        <div class="category-filter-stack">
+          <div id="level-group-filters" class="level-group-filters" aria-label="단계 필터"></div>
+          <div id="category-filters" class="category-filters" aria-label="카테고리 필터"></div>
+        </div>
+        <section id="print-panel" class="print-panel" aria-label="인쇄">
+          <div class="print-panel-primary print-toolbar">
+            <p
+              id="print-selection-count"
+              class="print-toolbar-summary is-empty"
+              aria-live="polite"
+            >
+              인쇄할 문제를 선택하세요
+            </p>
+            <div class="print-toolbar-actions">
+              <button
+                id="print-clear-selection"
+                class="ghost-button ghost-button--compact ghost-button--tooltip print-toolbar-end-session"
+                type="button"
+                data-print-action="clear-all"
+                title="선택 상태를 초기화합니다"
+              >
+                인쇄 종료
+                <span class="ghost-button-tooltip" aria-hidden="true">선택 상태를 초기화합니다</span>
+              </button>
+              <label class="print-mode-toggle print-mode-toggle--compact">
+                <input id="print-monochrome" type="checkbox" />
+                흑백
+              </label>
+              <button id="print-selected-problems" class="secondary-button" type="button" disabled>
+                인쇄
+              </button>
+            </div>
+          </div>
+          <details id="print-builder" class="print-builder print-panel-advanced">
+          <summary class="print-builder-summary">인쇄 문제 구성</summary>
+          <div class="print-builder-body">
+            <p class="print-builder-hint">문제 카드에서 개별 선택하거나, 아래 범위·자동 구성으로 세트를 만듭니다.</p>
+            <details class="print-builder-panel" data-print-panel="range">
+              <summary>범위 선택</summary>
+              <form id="print-range-form" class="print-builder-form print-builder-form--range">
+                <div class="print-range-inline">
+                  <label class="print-field print-field--category">
+                    <span class="print-field-label">카테고리</span>
+                    <select id="print-range-category" name="category"></select>
+                  </label>
+                  <label class="print-field print-field--number">
+                    <span class="print-field-label">시작</span>
+                    <input
+                      id="print-range-from"
+                      type="number"
+                      min="1"
+                      step="1"
+                      inputmode="numeric"
+                      value="1"
+                    />
+                  </label>
+                  <span class="print-range-separator" aria-hidden="true">~</span>
+                  <label class="print-field print-field--number">
+                    <span class="print-field-label">끝</span>
+                    <input
+                      id="print-range-to"
+                      type="number"
+                      min="1"
+                      step="1"
+                      inputmode="numeric"
+                      value="1"
+                    />
+                  </label>
+                </div>
+                <div class="print-range-footer">
+                  <label class="print-field print-field--mode">
+                    <span class="print-field-label">적용</span>
+                    <select id="print-range-mode" name="mode">
+                      <option value="add">추가</option>
+                      <option value="set">교체</option>
+                    </select>
+                  </label>
+                  <button class="secondary-button print-builder-submit" type="submit">범위 적용</button>
+                </div>
+              </form>
+            </details>
+            <details class="print-builder-panel" data-print-panel="compose">
+              <summary>자동 구성</summary>
+              <form id="print-compose-form" class="print-builder-form print-builder-form--compose">
+                <div id="print-compose-fields" class="print-compose-fields"></div>
+                <div class="print-compose-footer">
+                  <label class="print-field print-field--inline">
+                    <span class="print-field-label">정렬</span>
+                    <select id="print-compose-order" name="order">
+                      <option value="asc">번호순</option>
+                      <option value="random">랜덤</option>
+                    </select>
+                  </label>
+                  <label class="print-field print-field--inline">
+                    <span class="print-field-label">적용</span>
+                    <select id="print-compose-mode" name="mode">
+                      <option value="set">교체</option>
+                      <option value="add">추가</option>
+                    </select>
+                  </label>
+                  <button class="primary-button print-builder-submit" type="submit">세트 생성</button>
+                </div>
+              </form>
+            </details>
+          </div>
+          </details>
+        </section>
+        <div id="admin-workspace" class="admin-workspace is-hidden" aria-label="관리자 작업 영역">
+          <nav id="admin-panel-tabs" class="admin-panel-tabs" aria-label="관리자 메뉴">
+            <button id="admin-problems-tab" class="admin-panel-tab is-active" type="button" data-admin-panel="problems">
+              문제 관리
             </button>
+            <button id="admin-curriculum-tab" class="admin-panel-tab" type="button" data-admin-panel="curriculum">
+              커리큘럼 관리
+            </button>
+          </nav>
+          <div id="admin-problems-panel" class="admin-panel">
+            <div id="admin-problems-toolbar" class="admin-problems-toolbar">
+              <p class="admin-panel-summary">문제 추가·수정·삭제를 빠르게 처리합니다.</p>
+              <button id="add-problem" class="primary-button" type="button">새 문제 추가</button>
+            </div>
+            <section id="admin-editor" class="admin-editor is-hidden" aria-label="문제 편집"></section>
+          </div>
+          <div id="admin-curriculum-panel" class="admin-panel is-hidden">
+            <div class="admin-curriculum-toolbar">
+              <div>
+                <h3>커리큘럼 흐름</h3>
+                <p>아래 순서가 학습중·이어하기·다음 카테고리 추천의 공식 순서입니다.</p>
+              </div>
+              <label class="admin-category-add">
+                새 카테고리
+                <input id="admin-new-category" type="text" placeholder="예: 궁도" />
+              </label>
+              <button id="add-category" class="secondary-button" type="button">카테고리 추가</button>
+            </div>
+            <section id="category-manager" class="category-manager" aria-label="커리큘럼 카테고리 관리">
+              <ol id="category-manager-list" class="category-manager-list"></ol>
+            </section>
           </div>
         </div>
-        <div id="category-filters" class="category-filters" aria-label="카테고리 필터"></div>
-        <div id="admin-list-actions" class="admin-list-actions is-hidden">
-          <label class="admin-category-add">
-            새 카테고리
-            <input id="admin-new-category" type="text" placeholder="예: 궁도" />
-          </label>
-          <button id="add-category" class="secondary-button" type="button">
-            카테고리 추가
-          </button>
-          <button id="add-problem" class="primary-button" type="button">
-            새 문제 추가
-          </button>
-        </div>
-        <section id="admin-editor" class="admin-editor is-hidden" aria-label="문제 편집"></section>
         <div id="problem-cards" class="problem-cards"></div>
       </section>
-      <div id="answer-modal" class="answer-modal is-hidden" role="dialog" aria-live="polite" aria-modal="true">
-        <div class="answer-modal-card">
-          <p class="eyebrow">Correct</p>
-          <h2>정답입니다!</h2>
-          <p id="answer-modal-message">좋습니다. 다음 문제로 이동합니다.</p>
+      <section id="academy-menu-screen" class="academy-menu-screen is-hidden" aria-label="학원 관리">
+        <div class="academy-menu-card">
+          <p id="academy-menu-eyebrow" class="eyebrow">Academy</p>
+          <h2 id="academy-menu-title">학원 관리</h2>
+          <p id="academy-menu-description">학원장 계정 전용 메뉴입니다.</p>
+        </div>
+        <nav id="academy-management-submenu" class="academy-management-submenu is-hidden" aria-label="학원관리 하위 메뉴">
+          <button
+            class="academy-submenu-button is-active"
+            type="button"
+            data-academy-section="students"
+          >
+            원생관리
+          </button>
+          <button class="academy-submenu-button" type="button" data-academy-section="invites">
+            초대코드
+          </button>
+          <button class="academy-submenu-button" type="button" data-academy-section="teachers">
+            선생님 관리
+          </button>
+          <button class="academy-submenu-button" type="button" data-academy-section="accounts">
+            학생 계정 관리
+          </button>
+        </nav>
+        <section
+          id="academy-students-panel"
+          class="academy-section-panel academy-member-panel"
+          data-academy-section-panel="students"
+          aria-label="원생 학습 관리"
+        >
+          <div>
+            <p class="eyebrow">Student Learning</p>
+            <h3 id="academy-students-title">원생 운영 현황</h3>
+            <p id="academy-students-description">담당 배정과 진도 요약 중심의 운영 관리 카드입니다. 학습 분석은 학습관리 메뉴를 이용해 주세요.</p>
+          </div>
+          <div id="student-management-toolbar" class="student-management-toolbar">
+            <label>
+              이름 검색
+              <input id="student-name-search" type="search" placeholder="학생 이름" autocomplete="off" />
+            </label>
+            <label>
+              급수
+              <select id="student-level-filter">
+                <option value="all">전체</option>
+                <option value="급수 미정">급수 미정</option>
+              </select>
+            </label>
+            <label>
+              정렬
+              <select id="student-sort-order">
+                <option value="name-asc">가나다순</option>
+                <option value="joined-desc">최근 가입순</option>
+                <option value="progress-asc">진도 낮은 순</option>
+                <option value="progress-desc">진도 높은 순</option>
+              </select>
+            </label>
+            <div class="filter-toggle-item is-hidden" id="show-inactive-students-wrap">
+              <span class="filter-toggle-field-label">표시</span>
+              <button
+                id="show-inactive-students"
+                class="filter-toggle-chip"
+                type="button"
+                aria-pressed="false"
+              >
+                비활성 학생 보기
+              </button>
+            </div>
+          </div>
+          <div id="student-teacher-filter" class="student-teacher-filter is-hidden" aria-label="담당 선생님 필터"></div>
+          <div id="academy-student-list" class="academy-member-list"></div>
+        </section>
+        <section
+          id="academy-invite-panel"
+          class="academy-section-panel academy-invite-panel is-hidden"
+          data-academy-section-panel="invites"
+          aria-label="초대 코드 관리"
+        >
+          <div>
+            <p class="eyebrow">Invite Codes</p>
+            <h3>선생님/학생 가입 코드</h3>
+            <p>코드를 전달하면 회원가입 시 해당 학원 소속 계정으로 연결됩니다.</p>
+          </div>
+          <div class="invite-actions">
+            <button id="create-teacher-code" class="secondary-button" type="button">선생님 코드 만들기</button>
+            <button id="create-student-code" class="secondary-button" type="button">학생 코드 만들기</button>
+          </div>
+          <div id="invite-code-list" class="invite-code-list"></div>
+        </section>
+        <section
+          id="academy-teachers-panel"
+          class="academy-section-panel academy-member-panel is-hidden"
+          data-academy-section-panel="teachers"
+          aria-label="선생님 관리"
+        >
+          <div class="academy-teacher-section-head">
+            <div>
+              <p class="eyebrow">Teachers</p>
+              <h3 id="academy-teachers-title">선생님 관리</h3>
+              <p id="academy-teachers-description">담당 학생 수, 활성 상태, 계정 운영을 관리합니다.</p>
+            </div>
+            <div class="filter-toggle-item is-hidden" id="show-inactive-teachers-wrap">
+              <button
+                id="show-inactive-teachers"
+                class="filter-toggle-chip"
+                type="button"
+                aria-pressed="false"
+              >
+                비활성 선생님 보기
+              </button>
+            </div>
+          </div>
+          <div id="academy-teacher-list" class="academy-member-list academy-teacher-list"></div>
+        </section>
+        <section
+          id="academy-student-accounts-panel"
+          class="academy-section-panel academy-member-panel is-hidden"
+          data-academy-section-panel="accounts"
+          aria-label="학생 계정 관리"
+        >
+          <div>
+            <p class="eyebrow">Student Accounts</p>
+            <h3 id="academy-accounts-title">학생 계정 관리</h3>
+            <p id="academy-accounts-description">
+              학생 계정을 한눈에 확인하는 운영 목록입니다. 상세 작업은 각 행의 관리에서 펼쳐 주세요.
+            </p>
+          </div>
+          <div class="student-management-toolbar student-management-toolbar--accounts">
+            <label>
+              이름 검색
+              <input
+                id="student-account-name-search"
+                type="search"
+                placeholder="학생 이름 또는 아이디"
+                autocomplete="off"
+              />
+            </label>
+            <label>
+              정렬
+              <select id="student-account-sort-order">
+                <option value="name-asc">가나다순</option>
+                <option value="joined-desc">최근 가입순</option>
+              </select>
+            </label>
+            <div class="filter-toggle-item is-hidden" id="show-inactive-student-accounts-wrap">
+              <span class="filter-toggle-field-label">표시</span>
+              <button
+                id="show-inactive-student-accounts"
+                class="filter-toggle-chip"
+                type="button"
+                aria-pressed="false"
+              >
+                비활성 학생 보기
+              </button>
+            </div>
+          </div>
+          <div id="academy-student-account-list" class="academy-account-list"></div>
+        </section>
+      <div
+        id="category-complete-modal"
+        class="category-complete-modal is-hidden"
+        role="dialog"
+        aria-labelledby="category-complete-title"
+        aria-modal="true"
+        aria-describedby="category-complete-summary"
+      >
+        <div class="category-complete-backdrop" data-category-complete-backdrop aria-hidden="true"></div>
+        <div class="category-complete-dialog">
+          <div id="category-complete-panel" class="category-complete-panel" role="document">
+            <header
+              id="category-complete-drag-handle"
+              class="category-complete-drag-handle"
+              title="드래그해서 위치를 옮길 수 있습니다"
+            >
+              <p class="category-complete-eyebrow">카테고리 완료</p>
+              <h2 id="category-complete-title">카테고리 완료</h2>
+              <span class="category-complete-drag-hint" aria-hidden="true">⠿</span>
+            </header>
+            <div class="category-complete-panel-body">
+              <p id="category-complete-summary" class="category-complete-summary">문제를 모두 완료했어요.</p>
+          <section id="category-complete-review-section" class="category-complete-section is-hidden" aria-label="복습 추천">
+            <p class="category-complete-section-label">복습 추천</p>
+            <p id="category-complete-review-meta" class="category-complete-section-meta">복습 추천 0문제</p>
+          </section>
+          <section id="category-complete-next-section" class="category-complete-section is-hidden" aria-label="다음 추천">
+            <p class="category-complete-section-label">다음 추천</p>
+            <p id="category-complete-next-meta" class="category-complete-section-meta">-</p>
+          </section>
+          <div class="category-complete-actions" role="group" aria-label="다음 학습 선택">
+            <button
+              id="category-complete-next-button"
+              class="category-complete-button is-cta-primary"
+              type="button"
+              data-category-complete-action="next"
+            >
+              다음 커리큘럼
+            </button>
+            <button
+              id="category-complete-review-button"
+              class="category-complete-button is-cta-secondary"
+              type="button"
+              data-category-complete-action="review"
+            >
+              복습 시작
+            </button>
+            <button
+              id="category-complete-later-button"
+              class="category-complete-button is-cta-ghost"
+              type="button"
+              data-category-complete-action="later"
+            >
+              나중에 하기
+            </button>
+          </div>
+            </div>
+          </div>
         </div>
       </div>
-      <div id="wrong-modal" class="answer-modal is-hidden" role="dialog" aria-live="polite" aria-modal="true">
-        <div class="answer-modal-card wrong-modal-card">
-          <p class="eyebrow">Try Again</p>
-          <h2>오답입니다</h2>
-          <p>문제가 초기 상태로 돌아갑니다. 다시 시도해 보세요.</p>
+      <div id="student-review-modal" class="answer-modal is-hidden" role="dialog" aria-live="polite" aria-modal="true">
+        <div class="answer-modal-card student-review-modal-card">
+          <button id="close-student-review-modal" class="auth-close" type="button" aria-label="오답노트 닫기">×</button>
+          <div id="student-review-drag-handle" class="student-review-drag-handle">
+            <p class="eyebrow">Review Notes</p>
+            <h2 id="student-review-title">오답노트</h2>
+          </div>
+          <div class="student-review-toolbar">
+            <button
+              id="toggle-archived-review-notes"
+              class="secondary-button student-review-toolbar-button"
+              type="button"
+              aria-pressed="false"
+            >
+              보관된 오답 보기
+            </button>
+          </div>
+          <div id="student-review-list" class="student-review-list"></div>
         </div>
+      </div>
+      <div id="account-settings-modal" class="auth-modal is-hidden" role="dialog" aria-modal="true" aria-labelledby="account-settings-title">
+        <form id="account-settings-form" class="auth-modal-card">
+          <button class="auth-close" type="button" data-auth-close aria-label="계정 설정 닫기">×</button>
+          <p class="eyebrow">Account</p>
+          <h2 id="account-settings-title">계정 설정</h2>
+          <dl class="account-settings-summary">
+            <div>
+              <dt>이름</dt>
+              <dd id="account-settings-name">-</dd>
+            </div>
+            <div>
+              <dt>역할</dt>
+              <dd id="account-settings-role">-</dd>
+            </div>
+            <div id="account-settings-academy-row" class="is-hidden">
+              <dt>학원명</dt>
+              <dd id="account-settings-academy">-</dd>
+            </div>
+          </dl>
+          <fieldset class="account-password-fields">
+            <legend>비밀번호 변경</legend>
+            <label>
+              현재 비밀번호
+              <input id="account-current-password" name="current_password" type="password" autocomplete="current-password" required />
+            </label>
+            <label>
+              새 비밀번호
+              <input id="account-new-password" name="new_password" type="password" autocomplete="new-password" minlength="4" required />
+            </label>
+            <label>
+              새 비밀번호 확인
+              <input id="account-confirm-password" name="confirm_password" type="password" autocomplete="new-password" minlength="4" required />
+            </label>
+          </fieldset>
+          <p class="auth-help">비밀번호는 최소 4자 이상이며, 본인 계정만 변경할 수 있습니다.</p>
+          <p id="account-settings-message" class="auth-message" aria-live="polite"></p>
+          <button class="primary-button" type="submit">비밀번호 저장</button>
+        </form>
       </div>
       <div id="login-modal" class="auth-modal is-hidden" role="dialog" aria-modal="true" aria-labelledby="login-title">
         <form id="login-form" class="auth-modal-card">
@@ -223,7 +651,7 @@
           <h2 id="signup-title">회원가입</h2>
           <div class="auth-inline-field">
             <label>
-              아이디
+              <span id="signup-username-label">아이디</span>
               <input id="signup-username" name="username" type="text" autocomplete="username" minlength="2" maxlength="24" placeholder="아이디는 최소 2글자 이상" required />
               <span id="signup-username-message" class="auth-field-message" aria-live="polite"></span>
             </label>
@@ -234,7 +662,12 @@
             <input id="signup-password" name="password" type="password" autocomplete="new-password" minlength="4" placeholder="비밀번호는 최소 4글자 이상" required />
           </label>
           <p class="auth-help">비밀번호는 최소 4글자 이상 입력해 주세요.</p>
-          <div class="auth-form-grid">
+          <label>
+            가입 코드
+            <input id="signup-invite-code" name="invite_code" type="text" placeholder="선생님/학생 초대 코드를 받은 경우 입력" />
+          </label>
+          <p id="signup-invite-help" class="auth-help">초대 링크로 들어온 경우 아이디와 비밀번호만 입력하면 가입됩니다.</p>
+          <div class="auth-form-grid invite-optional-field">
             <label>
               이름
               <input id="signup-name" name="name" type="text" autocomplete="name" required />
@@ -248,7 +681,7 @@
               <input id="signup-email" name="email" type="email" autocomplete="email" required />
             </label>
           </div>
-          <fieldset class="auth-fieldset">
+          <fieldset class="auth-fieldset invite-optional-field">
             <legend>회원 유형</legend>
             <label class="auth-radio">
               <input type="radio" name="user_type" value="individual" checked />
@@ -259,22 +692,22 @@
               학원장 또는 방과후
             </label>
           </fieldset>
-          <label id="academy-name-field" class="is-hidden">
+          <label id="academy-name-field" class="is-hidden invite-optional-field">
             학원명 또는 방과후선생님 성함
             <input id="signup-academy-name" name="academy_name" type="text" />
           </label>
-          <div class="auth-inline-field">
+          <div class="auth-inline-field invite-optional-field">
             <label>
               우편번호
               <input id="signup-postcode" name="postcode" type="text" readonly />
             </label>
             <button id="search-address" class="secondary-button" type="button">주소 검색</button>
           </div>
-          <label>
+          <label class="invite-optional-field">
             주소
             <input id="signup-address" name="address" type="text" readonly />
           </label>
-          <label>
+          <label class="invite-optional-field">
             상세주소
             <input id="signup-address-detail" name="address_detail" type="text" />
           </label>
@@ -283,6 +716,33 @@
         </form>
       </div>
     </main>
+    <div id="answer-modal" class="answer-modal is-hidden" role="dialog" aria-live="polite" aria-modal="true">
+      <div class="answer-modal-card">
+        <p class="eyebrow">Correct</p>
+        <h2>정답입니다!</h2>
+        <p id="answer-modal-message">좋습니다. 다음 문제로 이동합니다.</p>
+      </div>
+    </div>
+    <div id="wrong-modal" class="answer-modal is-hidden" role="dialog" aria-live="polite" aria-modal="true">
+      <div class="answer-modal-card wrong-modal-card">
+        <p class="eyebrow">Try Again</p>
+        <h2>오답입니다</h2>
+        <p id="wrong-modal-message">문제가 초기 상태로 돌아갑니다. 다시 시도해 보세요.</p>
+      </div>
+    </div>
     <section id="print-area" class="print-area" aria-hidden="true"></section>
+    <div id="postcode-layer" class="postcode-layer is-hidden" aria-label="주소 검색 결과">
+      <div class="postcode-layer-panel">
+        <div class="postcode-layer-actions">
+          <button id="open-postcode-popup" class="postcode-layer-button" type="button">
+            새 창으로 열기
+          </button>
+          <button id="close-postcode-layer" class="postcode-layer-button" type="button" aria-label="주소 검색 닫기">
+            닫기
+          </button>
+        </div>
+        <div id="postcode-layer-content" class="postcode-layer-content"></div>
+      </div>
+    </div>
   </body>
 </html>

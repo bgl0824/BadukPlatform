@@ -30,11 +30,6 @@ npm run build
 - `package.json`: Vercel 빌드 점검 스크립트
 - `vercel.json`: Vercel 정적 배포 설정
 
-## 문제 제작
-
-화면 왼쪽의 `문제 제작` 모드에서 흑/백 돌을 배치하고 정답 위치를 지정한 뒤 `JSON 출력`을 누르면 `js/problems.js`의 `problems` 배열에 바로 붙여넣을 수 있는 문제 객체가 생성됩니다.
-힌트 표시 도구로 기존 바둑알 위에 세모, 동그라미, 네모, X 표시를 추가할 수 있으며 출력 JSON의 해당 stone에 `mark`가 포함됩니다.
-
 ## 문제 목록
 
 `문제 목록` 모드에서 `전체`, `활로`, `따내기`, `축`, `사활` 카테고리별로 문제를 필터링하고 카드에서 바로 문제풀이를 시작할 수 있습니다.
@@ -128,6 +123,26 @@ on public.problems
 for delete
 to anon
 using (true);
+
+create or replace function public.delete_problem(problem_id text)
+returns boolean
+language plpgsql
+security definer
+set search_path = public
+as $$
+declare
+  deleted_count integer;
+begin
+  delete from public.problems
+  where id = problem_id;
+
+  get diagnostics deleted_count = row_count;
+  return deleted_count > 0;
+end;
+$$;
+
+revoke all on function public.delete_problem(text) from public;
+grant execute on function public.delete_problem(text) to anon;
 ```
 
 실시간 반영을 쓰려면 Supabase Dashboard의 `Database` → `Replication`에서 `problems` 테이블의 Realtime을 켜 주세요.

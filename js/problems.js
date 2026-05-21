@@ -97,11 +97,24 @@ const DEFAULT_PROBLEMS = [
   },
 ];
 
+const RETIRED_MUTUAL_ATARI_INTRO_IDS = [
+  "서로단수-입문-001",
+  "서로단수-입문-002",
+  "서로단수-입문-003",
+  "서로단수-입문-004",
+  "서로단수-입문-005",
+  "서로단수-입문-006",
+];
+
 const problems = [];
 const SUPABASE_PROBLEMS_TABLE = "problems";
+const LEGACY_PROBLEMS_STORAGE_KEY = "BADUK_PLATFORM_PROBLEMS";
+const LEGACY_PROBLEMS_MIGRATED_KEY = "BADUK_PLATFORM_PROBLEMS_MIGRATED_TO_SUPABASE";
+const LEGACY_PROBLEMS_BACKUP_KEY = "BADUK_PLATFORM_PROBLEMS_MIGRATED_BACKUP";
 
 const ProblemStore = {
   getDefaultProblems,
+  migrateLegacyProblems,
   loadProblems,
   saveProblem,
   deleteProblem,
@@ -114,6 +127,31 @@ let realtimeChannel = null;
 
 function getDefaultProblems() {
   return DEFAULT_PROBLEMS.map(cloneProblem);
+}
+
+async function migrateLegacyProblems() {
+  const legacyProblems = readLegacyProblems();
+  if (legacyProblems.length === 0) {
+    return { migratedCount: 0 };
+  }
+
+  await saveProblems(legacyProblems);
+
+  try {
+    window.localStorage?.setItem(
+      LEGACY_PROBLEMS_BACKUP_KEY,
+      JSON.stringify(legacyProblems),
+    );
+    window.localStorage?.setItem(
+      LEGACY_PROBLEMS_MIGRATED_KEY,
+      new Date().toISOString(),
+    );
+    window.localStorage?.removeItem(LEGACY_PROBLEMS_STORAGE_KEY);
+  } catch (error) {
+    console.warn("Failed to mark legacy problems as migrated.", error);
+  }
+
+  return { migratedCount: legacyProblems.length };
 }
 
 async function loadProblems({ seedDefaults = true } = {}) {
@@ -132,7 +170,49 @@ async function loadProblems({ seedDefaults = true } = {}) {
     return loadProblems({ seedDefaults: false });
   }
 
-  return data.map(fromSupabaseRow);
+  const loadedProblems = data.map((row) => cloneProblem(fromSupabaseRow(row)));
+  return removeRetiredMutualAtariIntroProblems(loadedProblems);
+}
+
+async function removeRetiredMutualAtariIntroProblems(existingProblems) {
+  const retiredIds = new Set(RETIRED_MUTUAL_ATARI_INTRO_IDS);
+  const hasRetired = existingProblems.some((problem) => retiredIds.has(problem.id));
+  if (!hasRetired) {
+    return existingProblems;
+  }
+
+  const client = getSupabaseClient();
+  const { error } = await client
+    .from(SUPABASE_PROBLEMS_TABLE)
+    .delete()
+    .in("id", [...retiredIds]);
+
+  if (error) {
+    console.warn("Failed to delete retired 서로단수 intro problems.", error);
+  }
+
+  return existingProblems.filter((problem) => !retiredIds.has(problem.id));
+}
+
+function readLegacyProblems() {
+  try {
+    const storedValue = window.localStorage?.getItem(LEGACY_PROBLEMS_STORAGE_KEY);
+    if (!storedValue) {
+      return [];
+    }
+
+    const parsedProblems = JSON.parse(storedValue);
+    if (!Array.isArray(parsedProblems)) {
+      return [];
+    }
+
+    return parsedProblems.filter((problem) => {
+      return problem?.id && problem?.title && problem?.category;
+    });
+  } catch (error) {
+    console.warn("Failed to read legacy localStorage problems.", error);
+    return [];
+  }
 }
 
 async function saveProblems(problemList) {
@@ -158,19 +238,49 @@ async function saveProblem(problem) {
     throw error;
   }
 
-  return fromSupabaseRow(data);
+  return cloneProblem(fromSupabaseRow(data));
 }
 
 async function deleteProblem(problemId) {
   const client = getSupabaseClient();
-  const { error } = await client
+  const { data, error } = await client
     .from(SUPABASE_PROBLEMS_TABLE)
     .delete()
-    .eq("id", problemId);
+    .eq("id", problemId)
+    .select("id");
 
   if (error) {
     throw error;
   }
+
+  if (Array.isArray(data) && data.length > 0) {
+    return;
+  }
+
+  const deletedByRpc = await deleteProblemWithRpc(client, problemId);
+  if (!deletedByRpc) {
+    throw new Error("delete returned no rows");
+  }
+}
+
+async function deleteProblemWithRpc(client, problemId) {
+  const { data, error } = await client.rpc("delete_problem", {
+    problem_id: problemId,
+  });
+
+  if (error) {
+    if (
+      error.message?.includes("function") ||
+      error.message?.includes("delete_problem") ||
+      error.code === "PGRST202"
+    ) {
+      return false;
+    }
+
+    throw error;
+  }
+
+  return data === true;
 }
 
 function subscribe(onProblemsChanged) {
@@ -222,13 +332,21 @@ function getSupabaseClient() {
   return supabaseClient;
 }
 
+function normalizeProblemLevelGroup(value) {
+  const groups = ["입문", "초급", "중급", "고급", "유단자"];
+  return groups.includes(value) ? value : "입문";
+}
+
 function toSupabaseRow(problem) {
   return {
     id: problem.id,
     title: problem.title,
     description: problem.description,
     level: problem.level ?? "",
+    level_group: normalizeProblemLevelGroup(problem.levelGroup),
     category: problem.category,
+    type: problem.type ?? "board",
+    ox_answer: problem.type === "ox" ? Boolean(problem.oxAnswer) : null,
     stones: problem.stones ?? [],
     correct_move: problem.correctMove ?? null,
     correct_sequence: problem.correctSequence ?? null,
@@ -241,10 +359,16 @@ function fromSupabaseRow(row) {
     title: row.title,
     description: row.description,
     level: row.level ?? "",
+    levelGroup: normalizeProblemLevelGroup(row.level_group),
     category: row.category,
+    type: row.type === "ox" ? "ox" : "board",
     stones: row.stones ?? [],
     correctMove: row.correct_move,
   };
+
+  if (problem.type === "ox") {
+    problem.oxAnswer = Boolean(row.ox_answer);
+  }
 
   if (Array.isArray(row.correct_sequence)) {
     problem.correctSequence = row.correct_sequence;
@@ -254,8 +378,10 @@ function fromSupabaseRow(row) {
 }
 
 function cloneProblem(problem) {
-  return {
+  const clonedProblem = {
     ...problem,
+    levelGroup: normalizeProblemLevelGroup(problem.levelGroup),
+    type: problem.type === "ox" ? "ox" : "board",
     correctMove: problem.correctMove ? { ...problem.correctMove } : null,
     correctSequence: Array.isArray(problem.correctSequence)
       ? problem.correctSequence.map((move) => ({ ...move }))
@@ -264,6 +390,12 @@ function cloneProblem(problem) {
       ? problem.stones.map((stone) => ({ ...stone }))
       : [],
   };
+
+  if (clonedProblem.type === "ox") {
+    clonedProblem.oxAnswer = Boolean(problem.oxAnswer);
+  }
+
+  return clonedProblem;
 }
 
 window.BadukProblems = {
