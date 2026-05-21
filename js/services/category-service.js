@@ -1,6 +1,7 @@
 import { DEFAULT_LEVEL_GROUP, normalizeLevelGroup } from "./level-group-service.js";
 
 const CATEGORIES_STORAGE_KEY = "BADUK_CURRICULUM_CATEGORIES";
+const SUPPRESSED_CATEGORIES_KEY = "BADUK_SUPPRESSED_CATEGORIES";
 const FALLBACK_CATEGORY_NAME = "미분류";
 export const DEFAULT_CATEGORY_NAMES = [
   "활로",
@@ -44,26 +45,54 @@ export function readCategories() {
 }
 
 export function saveCategories(categories) {
-  const normalized = categories
-    .map(normalizeCategoryRecord)
-    .filter(Boolean)
-    .map((category, index) => ({
-      ...category,
-      order: index,
-    }));
+  const normalized = sortCategoriesByOrder(
+    categories
+      .map(normalizeCategoryRecord)
+      .filter(Boolean)
+      .filter((category) => category.status !== "deleted"),
+  );
 
   localStorage.setItem(CATEGORIES_STORAGE_KEY, JSON.stringify(normalized));
+  void import("./category-persistence-service.js").then(({ persistCategoriesToSupabase }) =>
+    persistCategoriesToSupabase(normalized),
+  );
+}
+
+export async function hydrateCategoryRegistry(defaultNames = DEFAULT_CATEGORY_NAMES) {
+  const { fetchCategoriesFromSupabase, persistCategoriesToSupabase } = await import(
+    "./category-persistence-service.js",
+  );
+  const remote = await fetchCategoriesFromSupabase();
+
+  if (remote.ok && remote.categories.length > 0) {
+    saveCategories(remote.categories);
+    return readCategories();
+  }
+
+  const local = readCategories();
+  if (local.length > 0) {
+    await persistCategoriesToSupabase(local);
+    return local;
+  }
+
+  const seeded = defaultNames.map((name, order) =>
+    createCategoryRecord(name, order, DEFAULT_LEVEL_GROUP),
+  );
+  saveCategories(seeded);
+  return readCategories();
 }
 
 export function initializeCategoryRegistry(defaultNames = DEFAULT_CATEGORY_NAMES) {
-  let categories = readCategories();
-  if (categories.length === 0) {
-    categories = defaultNames.map((name, order) => createCategoryRecord(name, order, DEFAULT_LEVEL_GROUP));
-    saveCategories(categories);
+  const categories = readCategories();
+  if (categories.length > 0) {
     return categories;
   }
 
-  return categories;
+  const seeded = defaultNames.map((name, order) =>
+    createCategoryRecord(name, order, DEFAULT_LEVEL_GROUP),
+  );
+  saveCategories(seeded);
+  return readCategories();
 }
 
 export function syncCategoryNames(targetArray, categories = readCategories(), options = {}) {
@@ -131,7 +160,7 @@ export function syncCategoriesFromProblemNames(problemNames, categories = readCa
       return;
     }
 
-    if (!nextCategories.some((category) => category.name === trimmedName)) {
+    if (!nextCategories.some((category) => category.name === trimmedName) && !isCategorySuppressed(trimmedName)) {
       nextCategories.push(createCategoryRecord(trimmedName, nextCategories.length));
       changed = true;
     }
@@ -161,8 +190,11 @@ export function syncCategoriesFromProblems(problemList, categories = readCategor
         normalizeLevelGroup(category.levelGroup) === levelGroup,
     );
 
-    if (!exists) {
-      nextCategories.push(createCategoryRecord(trimmedName, nextCategories.length, levelGroup));
+    if (!exists && !isCategorySuppressed(trimmedName, levelGroup)) {
+      const groupCount = nextCategories.filter(
+        (category) => normalizeLevelGroup(category.levelGroup) === levelGroup,
+      ).length;
+      nextCategories.push(createCategoryRecord(trimmedName, groupCount, levelGroup));
       changed = true;
     }
   });
@@ -324,30 +356,57 @@ export function reorderCategories(orderedIds, categories = readCategories(), { l
   return { ok: true, categories: readCategories() };
 }
 
-export function deleteCategory(categoryId, categories = readCategories()) {
+export async function deleteCategory(categoryId, categories = readCategories()) {
   const target = categories.find((category) => category.id === categoryId);
   if (!target) {
     return { ok: false, message: "카테고리를 찾을 수 없습니다." };
   }
 
+  markCategorySuppressed(target.name, target.levelGroup);
   const nextCategories = categories.filter((category) => category.id !== categoryId);
   saveCategories(nextCategories);
+
+  const { markCategoryDeletedInSupabase } = await import("./category-persistence-service.js");
+  await markCategoryDeletedInSupabase(target);
+
   return {
     ok: true,
     categories: readCategories(),
     removedName: target.name,
-    fallbackName: ensureFallbackCategoryName(readCategories()),
+    levelGroup: normalizeLevelGroup(target.levelGroup),
   };
 }
 
-export function ensureFallbackCategoryName(categories = readCategories()) {
-  if (categories.some((category) => category.name === FALLBACK_CATEGORY_NAME)) {
+/** 문제 재배치가 필요할 때만 호출 — 빈 삭제 시 미분류 자동 생성 방지 */
+export function resolveFallbackCategoryForReassign(
+  categories = readCategories(),
+  { levelGroup = DEFAULT_LEVEL_GROUP, excludingName = "" } = {},
+) {
+  const normalizedLevelGroup = normalizeLevelGroup(levelGroup);
+  const normalizedExclude = String(excludingName ?? "").trim();
+  const inGroup = filterCategoriesByLevelGroup(categories, normalizedLevelGroup).filter(
+    (category) => category.name !== normalizedExclude,
+  );
+
+  const uncategorized = inGroup.find((category) => category.name === FALLBACK_CATEGORY_NAME);
+  if (uncategorized) {
     return FALLBACK_CATEGORY_NAME;
   }
 
-  const nextCategories = [...categories, createCategoryRecord(FALLBACK_CATEGORY_NAME, categories.length)];
+  if (inGroup.length > 0) {
+    return inGroup[0].name;
+  }
+
+  const nextCategories = [
+    ...categories,
+    createCategoryRecord(FALLBACK_CATEGORY_NAME, 0, normalizedLevelGroup),
+  ];
   saveCategories(nextCategories);
   return FALLBACK_CATEGORY_NAME;
+}
+
+export function ensureFallbackCategoryName(categories = readCategories()) {
+  return resolveFallbackCategoryForReassign(categories);
 }
 
 export function countProblemsInCategory(categoryName, problems, { levelGroup } = {}) {
@@ -413,10 +472,42 @@ function sortCategoriesByOrder(categories) {
 }
 
 function compareCategoryOrder(left, right) {
+  const groupDiff = String(left.levelGroup ?? "").localeCompare(String(right.levelGroup ?? ""), "ko");
+  if (groupDiff !== 0) {
+    return groupDiff;
+  }
+
   const orderDiff = left.order - right.order;
   if (orderDiff !== 0) {
     return orderDiff;
   }
 
   return left.name.localeCompare(right.name, "ko");
+}
+
+function categorySuppressionKey(name, levelGroup = DEFAULT_LEVEL_GROUP) {
+  return `${normalizeLevelGroup(levelGroup)}::${String(name ?? "").trim()}`;
+}
+
+function readSuppressedCategoryKeys() {
+  try {
+    const stored = JSON.parse(localStorage.getItem(SUPPRESSED_CATEGORIES_KEY));
+    return new Set(Array.isArray(stored) ? stored : []);
+  } catch {
+    return new Set();
+  }
+}
+
+function saveSuppressedCategoryKeys(keys) {
+  localStorage.setItem(SUPPRESSED_CATEGORIES_KEY, JSON.stringify([...keys]));
+}
+
+export function markCategorySuppressed(name, levelGroup = DEFAULT_LEVEL_GROUP) {
+  const keys = readSuppressedCategoryKeys();
+  keys.add(categorySuppressionKey(name, levelGroup));
+  saveSuppressedCategoryKeys(keys);
+}
+
+export function isCategorySuppressed(name, levelGroup = DEFAULT_LEVEL_GROUP) {
+  return readSuppressedCategoryKeys().has(categorySuppressionKey(name, levelGroup));
 }

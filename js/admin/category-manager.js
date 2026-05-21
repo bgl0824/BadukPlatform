@@ -2,6 +2,8 @@ import {
   addCategory,
   countProblemsInCategory,
   deleteCategory,
+  filterCategoriesByLevelGroup,
+  resolveFallbackCategoryForReassign,
   moveCategory,
   readCategories,
   renameCategory,
@@ -199,9 +201,7 @@ export function createCategoryManagerController({
     }
 
     const levelGroup = getActiveLevelGroup();
-    const categories = readCategories().filter(
-      (category) => String(category.levelGroup ?? "입문").trim() === levelGroup,
-    );
+    const categories = filterCategoriesByLevelGroup(readCategories(), levelGroup);
     if (categories.length === 0) {
       elements.categoryManagerList.innerHTML = `<li class="category-manager-empty">${escapeHtml(levelGroup)} 단계에 등록된 카테고리가 없습니다.</li>`;
       return;
@@ -409,14 +409,18 @@ export function createCategoryManagerController({
       return;
     }
 
-    const result = deleteCategory(categoryId);
+    if (problemCount > 0) {
+      const fallbackName = resolveFallbackCategoryForReassign(readCategories(), {
+        levelGroup: category.levelGroup,
+        excludingName: category.name,
+      });
+      await reassignProblemsCategory(category.name, fallbackName, category.levelGroup);
+    }
+
+    const result = await deleteCategory(categoryId);
     if (!result.ok) {
       setFeedback(result.message, "wrong");
       return;
-    }
-
-    if (problemCount > 0) {
-      await reassignProblemsCategory(result.removedName, result.fallbackName, category.levelGroup);
     }
 
     refreshCategoryViews();

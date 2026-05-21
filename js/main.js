@@ -32,6 +32,7 @@ import { createProblemPrintController } from "./problem/print.js";
 import {
   getNextCategoryName,
   getOrderedCategoryNames,
+  hydrateCategoryRegistry,
   initializeCategoryRegistry,
   readCategories,
   syncCategoriesFromProblems as syncCategoryRegistryFromProblems,
@@ -77,8 +78,6 @@ const { BOARD_SIZE, ProblemStore, problems, STONE } = window.BadukProblems;
 const { createProblemSgf } = window.BadukSgf;
 
 const CREATOR_CATEGORIES = [];
-initializeCategoryRegistry();
-syncCreatorCategoriesForLevelGroup();
 const elements = {
   ...problemElements,
   ...adminElements,
@@ -592,6 +591,7 @@ async function initializeApp() {
       }
     });
 
+    await boot.runAsync("hydrateCategoryRegistry", () => hydrateCategoryRegistry());
     boot.run("syncCategoriesFromProblems", () => syncCategoriesFromProblems());
     boot.run("renderCategoryManager", () => renderCategoryManager());
     boot.run("renderCreatorCategoryOptions", () => renderCreatorCategoryOptions());
