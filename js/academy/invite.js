@@ -1,5 +1,11 @@
 import { canManageInviteCodes } from "../permissions/permission-service.js";
 import {
+  fetchInviteCodesByAcademyId,
+  insertInviteCodeToSupabase,
+  logInvite,
+} from "../services/academy-invite-service.js";
+import { isSupabaseConfigured } from "../services/supabase-client.js";
+import {
   isInviteCodeActive,
   readAcademyMembers,
   readInviteCodes,
@@ -45,14 +51,13 @@ export function createAcademyInviteController({
     }
   }
 
-  function createInviteCode(role) {
+  async function createInviteCode(role) {
     if (!isAcademyUser()) {
       setFeedback("학원장 또는 방과후 계정에서만 초대 코드를 만들 수 있습니다.", "wrong");
       return;
     }
 
     const currentUser = getCurrentUser();
-    const inviteCodes = readInviteCodes();
     const inviteCode = {
       code: generateInviteCode(role),
       role,
@@ -63,12 +68,29 @@ export function createAcademyInviteController({
       status: "active",
     };
 
-    saveInviteCodes([inviteCode, ...inviteCodes]);
-    renderInviteCodes();
+    if (!isSupabaseConfigured()) {
+      const inviteCodes = readInviteCodes();
+      saveInviteCodes([inviteCode, ...inviteCodes]);
+      logInvite("create.localStorage-only", { code: inviteCode.code });
+      await renderInviteCodes();
+      setFeedback(
+        `${getInviteRoleLabel(role)} 가입 코드 ${inviteCode.code}를 만들었습니다. (로컬 저장만 — Supabase 설정 후 다시 생성하세요)`,
+        "correct",
+      );
+      return;
+    }
+
+    const result = await insertInviteCodeToSupabase(inviteCode);
+    if (!result.ok) {
+      setFeedback(result.message || "가입 코드 저장에 실패했습니다.", "wrong");
+      return;
+    }
+
+    await renderInviteCodes();
     setFeedback(`${getInviteRoleLabel(role)} 가입 코드 ${inviteCode.code}를 만들었습니다.`, "correct");
   }
 
-  function deleteInviteCode(code) {
+  async function deleteInviteCode(code) {
     const currentUser = getCurrentUser();
     if (!canManageInviteCodes(currentUser)) {
       setFeedback("초대코드를 삭제할 권한이 없습니다.", "wrong");
@@ -80,7 +102,7 @@ export function createAcademyInviteController({
       return;
     }
 
-    const result = removeInviteCode({
+    const result = await removeInviteCode({
       code,
       academyId: currentUser?.id,
     });
@@ -89,11 +111,11 @@ export function createAcademyInviteController({
       return;
     }
 
-    renderInviteCodes();
+    await renderInviteCodes();
     window.alert("초대코드가 삭제되었습니다.");
   }
 
-  function renderInviteCodes() {
+  async function renderInviteCodes() {
     bindInviteCodeEvents();
     if (!elements.inviteCodeList) {
       return;
@@ -101,7 +123,11 @@ export function createAcademyInviteController({
 
     const currentUser = getCurrentUser();
     const canDeleteInvite = canManageInviteCodes(currentUser);
-    const inviteCodes = readInviteCodes().filter((invite) => invite.academyId === currentUser?.id);
+    const listResult = await fetchInviteCodesByAcademyId(currentUser?.id ?? "");
+    const inviteCodes = listResult.invites ?? [];
+    if (!listResult.ok && listResult.message) {
+      setFeedback(`가입 코드 목록을 불러오지 못했습니다: ${listResult.message}`, "wrong");
+    }
     const academyMembers = readAcademyMembers().filter((member) => member.academyId === currentUser?.id);
     if (inviteCodes.length === 0) {
       elements.inviteCodeList.innerHTML = `<p class="invite-empty">아직 만든 가입 코드가 없습니다.</p>`;

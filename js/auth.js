@@ -511,11 +511,6 @@ async function handleSignupSubmit(event) {
   }
 
   const inviteCode = payload.inviteCode;
-  const invite = inviteCode ? findInviteCode(inviteCode) : null;
-  if (inviteCode && !invite) {
-    setAuthMessage(elements.signupMessage, "유효하지 않은 가입 코드입니다.", "error");
-    return;
-  }
 
   if (!isInviteSignupEntry()) {
     if (!payload.name || !payload.phone) {
@@ -531,6 +526,12 @@ async function handleSignupSubmit(event) {
 
   if (!isSupabaseConfigured()) {
     setAuthMessage(elements.signupMessage, "Supabase 인증 설정이 없습니다.", "error");
+    return;
+  }
+
+  const invite = inviteCode ? await findInviteCode(inviteCode) : null;
+  if (inviteCode && !invite) {
+    setAuthMessage(elements.signupMessage, "유효하지 않은 가입 코드입니다.", "error");
     return;
   }
 
@@ -717,12 +718,22 @@ function applyInviteSignupEntryFromUrl() {
   }
 }
 
-function prefillInviteCodeFromUrl() {
+async function prefillInviteCodeFromUrl() {
   if (!isSignupPage || !inviteSignupEntry) {
     return;
   }
 
   updateInviteSignupMode();
+
+  const inviteCode = getInviteCodeFromUrl();
+  if (inviteCode && isSupabaseConfigured()) {
+    const invite = await findInviteCode(inviteCode);
+    if (!invite) {
+      setAuthMessage(elements.signupMessage, "유효하지 않은 가입 코드입니다.", "error");
+      return;
+    }
+  }
+
   setAuthMessage(
     elements.signupMessage,
     "학원 초대 링크가 적용되었습니다. 아이디와 비밀번호만 입력해 주세요.",

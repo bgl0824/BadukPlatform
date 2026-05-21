@@ -31,9 +31,15 @@ export function saveInviteCodes(inviteCodes) {
   localStorage.setItem(INVITE_CODES_STORAGE_KEY, JSON.stringify(inviteCodes));
 }
 
-export function findInviteCode(code) {
+/** @deprecated 동기 localStorage 조회 — signup/생성은 findInviteCodeAsync 사용 */
+export function findInviteCodeLocal(code) {
   const normalizedCode = normalizeInviteCode(code);
   return readInviteCodes().find((invite) => isInviteCodeActive(invite, normalizedCode));
+}
+
+export async function findInviteCode(code) {
+  const { findInviteCodeByCode } = await import("./academy-invite-service.js");
+  return findInviteCodeByCode(code);
 }
 
 export function isInviteCodeActive(invite, normalizedCode = normalizeInviteCode(invite?.code ?? "")) {
@@ -52,23 +58,9 @@ export function isInviteCodeActive(invite, normalizedCode = normalizeInviteCode(
   return true;
 }
 
-export function removeInviteCode({ code, academyId }) {
-  const normalizedCode = normalizeInviteCode(code);
-  if (!normalizedCode || !academyId) {
-    return { ok: false, message: "초대코드를 찾을 수 없습니다." };
-  }
-
-  const inviteCodes = readInviteCodes();
-  const targetIndex = inviteCodes.findIndex(
-    (invite) => invite.code === normalizedCode && invite.academyId === academyId,
-  );
-  if (targetIndex < 0) {
-    return { ok: false, message: "초대코드를 찾을 수 없습니다." };
-  }
-
-  const [removed] = inviteCodes.splice(targetIndex, 1);
-  saveInviteCodes(inviteCodes);
-  return { ok: true, removed };
+export async function removeInviteCode({ code, academyId }) {
+  const { deleteInviteCodeFromSupabase } = await import("./academy-invite-service.js");
+  return deleteInviteCodeFromSupabase({ code, academyId });
 }
 
 export function normalizeInviteCode(code) {
