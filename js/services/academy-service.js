@@ -80,7 +80,7 @@ export function saveAcademyMembers(academyMembers) {
   localStorage.setItem(ACADEMY_MEMBERS_STORAGE_KEY, JSON.stringify(academyMembers));
 }
 
-export function createAcademyMember({ user, invite }) {
+export async function createAcademyMember({ user, invite }) {
   if (!user?.id || !invite?.academyId) {
     return null;
   }
@@ -99,12 +99,15 @@ export function createAcademyMember({ user, invite }) {
     joinedAt: new Date().toISOString(),
     status: "active",
   };
-  const academyMembers = readAcademyMembers().filter((member) => {
-    return !(member.academyId === nextMember.academyId && member.userId === nextMember.userId);
-  });
 
-  saveAcademyMembers([nextMember, ...academyMembers]);
-  return nextMember;
+  const { insertAcademyMemberToSupabase } = await import("./academy-member-service.js");
+  const result = await insertAcademyMemberToSupabase(nextMember);
+  return result.member ?? nextMember;
+}
+
+export async function refreshAcademyMembersCache(academyId) {
+  const { fetchAcademyMembersFromSupabase } = await import("./academy-member-service.js");
+  return fetchAcademyMembersFromSupabase(academyId ? { academyId } : {});
 }
 
 export function getAcademyMembersByAcademyId(academyId, options = {}) {

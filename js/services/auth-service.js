@@ -125,9 +125,26 @@ export function mapSupabaseUserToAppUser(supabaseUser) {
     role,
     academyId: metadata.academyId ?? "",
     academyName: metadata.academyName ?? "",
+    inviteCode: metadata.inviteCode ?? "",
     phone: metadata.phone ?? "",
     loggedInAt: new Date().toISOString(),
   };
+}
+
+/** 비밀번호 변경·재인증용 — 세션 이메일 우선(초대 가입 계정 포함) */
+export async function getAuthEmailForPasswordChange(appUser) {
+  const session = await getSupabaseAuthSession();
+  const sessionEmail = String(session?.user?.email ?? "").trim().toLowerCase();
+  if (sessionEmail) {
+    return sessionEmail;
+  }
+
+  const inviteCode = String(appUser?.inviteCode ?? "").trim();
+  if (inviteCode && appUser?.username) {
+    return buildInviteSignupEmail(inviteCode, appUser.username);
+  }
+
+  return usernameToAuthEmail(appUser?.username ?? "");
 }
 
 export function isSupabaseAuthUser(user) {

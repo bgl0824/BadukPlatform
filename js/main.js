@@ -20,6 +20,8 @@ import {
   canManageAttendance,
   canManageProblems,
   canManageStudents,
+  canViewAcademyMenu,
+  canViewAcademySubmenu,
   canViewPayments,
   canViewReviews,
   canUsePrintBuilder,
@@ -401,7 +403,8 @@ const academyView = createAcademyView({
   elements,
   appState,
   canViewLearningMenu,
-  canViewAcademyMenu,
+  canViewAcademyMenu: () => canViewAcademyMenu(getCurrentUser()),
+  canViewAcademySubmenu: (section) => canViewAcademySubmenu(getCurrentUser(), section),
   canViewAttendanceMenu,
   canViewPaymentsMenu,
   showSolveMode,
@@ -1602,10 +1605,6 @@ function canViewLearningMenu() {
   return canManageStudents(currentUser) || canViewReviews(currentUser);
 }
 
-function canViewAcademyMenu() {
-  return canManageAcademy(getCurrentUser());
-}
-
 function canViewAttendanceMenu() {
   return canManageAttendance(getCurrentUser());
 }
@@ -1618,7 +1617,7 @@ function canAccessAcademyMenu(menuType) {
   const currentUser = getCurrentUser();
   const menuPermissions = {
     learning: canViewLearningMenu(),
-    academy: canManageAcademy(currentUser),
+    academy: canViewAcademyMenu(currentUser),
     attendance: canManageAttendance(currentUser),
     payments: canViewPayments(currentUser),
   };
@@ -1732,24 +1731,43 @@ function cloneProblem(problem) {
   return clonedProblem;
 }
 
-function buildCategoryCompletionContext(categoryName, levelGroup) {
+function buildStudentProgressMap(extraProgress = null) {
+  const currentUser = getCurrentUser();
+  if (!currentUser?.id || normalizeRole(currentUser?.role) !== ROLES.student) {
+    return null;
+  }
+
+  const progressMap = new Map(
+    studentProgressService
+      .getStudentProgressByUserId(currentUser.id)
+      .map((progress) => [progress.problemId, progress]),
+  );
+
+  if (extraProgress?.problemId) {
+    progressMap.set(extraProgress.problemId, extraProgress);
+  }
+
+  return progressMap;
+}
+
+function buildCategoryCompletionContext(categoryName, levelGroup, progressByProblemId = null) {
   const normalizedLevelGroup = normalizeLevelGroup(levelGroup);
-  const progressByProblemId = getCurrentStudentProgressByProblemId();
-  const row = getCategoryProgressRow(categoryName, problems, progressByProblemId, {
+  const resolvedProgressMap = progressByProblemId ?? buildStudentProgressMap();
+  const row = getCategoryProgressRow(categoryName, problems, resolvedProgressMap, {
     levelGroup: normalizedLevelGroup,
   });
   if (!row.isComplete) {
     return null;
   }
 
-  const reviewOffer = getReviewOffer(categoryName, problems, progressByProblemId, {
+  const reviewOffer = getReviewOffer(categoryName, problems, resolvedProgressMap, {
     levelGroup: normalizedLevelGroup,
   });
   const nextCategoryName = getNextCategoryName(categoryName, readCategories(), {
     levelGroup: normalizedLevelGroup,
   });
   const nextProblem = nextCategoryName
-    ? getNextProblemForCategory(nextCategoryName, problems, progressByProblemId, {
+    ? getNextProblemForCategory(nextCategoryName, problems, resolvedProgressMap, {
         levelGroup: normalizedLevelGroup,
       })
     : null;
@@ -1806,10 +1824,11 @@ function handleCategoryCompleteAction(action) {
 
 function completeProblem(problem) {
   const levelGroup = normalizeLevelGroup(problem.levelGroup);
+  const progressBeforeSolve = buildStudentProgressMap();
   const wasCategoryCompleteBefore = getCategoryProgressRow(
     problem.category,
     problems,
-    getCurrentStudentProgressByProblemId(),
+    progressBeforeSolve,
     { levelGroup },
   ).isComplete;
 
@@ -1817,12 +1836,14 @@ function completeProblem(problem) {
   appState.isSolved = true;
   syncBoardPreviewContext();
   solveView.renderProblemSolveMode(problem);
+  let savedProgress = null;
   safeRecordStudentProgress(() => {
-    studentProgressService.markProblemSolved({
+    savedProgress = studentProgressService.markProblemSolved({
       user: getCurrentUser(),
       problem,
     });
   });
+  const progressAfterSolve = buildStudentProgressMap(savedProgress);
   setStatus("정답입니다.");
   setFeedback(
     isOxProblem(problem)
@@ -1863,13 +1884,14 @@ function completeProblem(problem) {
   }
 
   const completionContext = !wasCategoryCompleteBefore
-    ? buildCategoryCompletionContext(problem.category, levelGroup)
+    ? buildCategoryCompletionContext(problem.category, levelGroup, progressAfterSolve)
     : null;
 
   if (completionContext) {
     clearAutoNext();
     hideAnswerModal();
     showCategoryCompleteModal(completionContext);
+    renderStudyScreen();
     return;
   }
 

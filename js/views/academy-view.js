@@ -10,6 +10,7 @@ export function createAcademyView({
   appState,
   canViewLearningMenu,
   canViewAcademyMenu,
+  canViewAcademySubmenu,
   canViewAttendanceMenu,
   canViewPaymentsMenu,
   showSolveMode,
@@ -67,6 +68,14 @@ export function createAcademyView({
       section = ACADEMY_SECTIONS.students;
     }
 
+    if (!canViewAcademySubmenu(section)) {
+      const fallbackSection = getDefaultAcademySection();
+      if (!canViewAcademySubmenu(fallbackSection)) {
+        return;
+      }
+      section = fallbackSection;
+    }
+
     activeAcademySection = section;
     appState.academySection = section;
 
@@ -113,11 +122,37 @@ export function createAcademyView({
     showAcademySection(ACADEMY_SECTIONS.accounts);
   }
 
+  function getDefaultAcademySection() {
+    const preferredOrder = [
+      ACADEMY_SECTIONS.students,
+      ACADEMY_SECTIONS.accounts,
+      ACADEMY_SECTIONS.invites,
+      ACADEMY_SECTIONS.teachers,
+    ];
+    return preferredOrder.find((section) => canViewAcademySubmenu(section)) ?? ACADEMY_SECTIONS.students;
+  }
+
+  function updateAcademySubmenuVisibility() {
+    elements.academySubmenuButtons?.forEach((button) => {
+      const section = button.dataset.academySection;
+      const canView = canViewAcademySubmenu(section);
+      button.classList.toggle("is-hidden", !canView);
+      button.disabled = !canView;
+      button.setAttribute("aria-hidden", String(!canView));
+      button.tabIndex = canView ? 0 : -1;
+    });
+
+    if (!canViewAcademySubmenu(activeAcademySection)) {
+      showAcademySection(getDefaultAcademySection());
+    }
+  }
+
   function updateAcademyMenuVisibility() {
     setMenuButtonsVisibility(elements.learningMenuButtons, canViewLearningMenu());
     setMenuButtonsVisibility([elements.academyModeButton], canViewAcademyMenu());
     setMenuButtonsVisibility([elements.attendanceModeButton], canViewAttendanceMenu());
     setMenuButtonsVisibility([elements.paymentsModeButton], canViewPaymentsMenu());
+    updateAcademySubmenuVisibility();
 
     const canStayInMode =
       (appState.mode === "learning" && canViewLearningMenu()) ||

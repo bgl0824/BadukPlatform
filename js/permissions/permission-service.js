@@ -12,8 +12,9 @@ const ROLE_ALIASES = {
 };
 
 export function normalizeRole(role) {
-  const normalizedRole = String(role ?? "").trim();
-  return ROLE_ALIASES[normalizedRole] ?? normalizedRole;
+  const normalizedRole = String(role ?? "").trim().toLowerCase();
+  const aliasedRole = ROLE_ALIASES[normalizedRole] ?? normalizedRole;
+  return aliasedRole === "academy_owner" ? ROLES.academyOwner : aliasedRole;
 }
 
 export function canManageProblems(user) {
@@ -26,6 +27,23 @@ export function canManageCategories(user) {
 
 export function canManageAcademy(user) {
   return [ROLES.admin, ROLES.academyOwner].includes(normalizeRole(user?.role));
+}
+
+/** 학원관리 메인 메뉴(학원관리 화면) 진입 */
+export function canViewAcademyMenu(user) {
+  return [ROLES.admin, ROLES.academyOwner, ROLES.teacher].includes(normalizeRole(user?.role));
+}
+
+/** 학원관리 하위 탭: invites / teachers 는 학원장·관리자만 */
+export function canViewAcademySubmenu(user, section) {
+  const role = normalizeRole(user?.role);
+  if (section === "invites" || section === "teachers") {
+    return [ROLES.admin, ROLES.academyOwner].includes(role);
+  }
+  if (section === "accounts" || section === "students") {
+    return [ROLES.admin, ROLES.academyOwner, ROLES.teacher].includes(role);
+  }
+  return canViewAcademyMenu(user);
 }
 
 export function canUsePrintBuilder(user) {

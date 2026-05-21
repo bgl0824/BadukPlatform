@@ -7,7 +7,11 @@ import {
   deactivateTeacherMember,
   deleteInactiveStudentMember,
   getAcademyMembersByAcademyId,
+  refreshAcademyMembersCache,
+  readAcademyMembers,
   isActiveMember,
+  MEMBER_STATUS,
+  normalizeMemberStatus,
   transferStudentsToTeacher,
 } from "../services/academy-service.js";
 import {
@@ -257,17 +261,21 @@ export function createAcademyMemberController({
     renderAcademyMembers({ view: "accounts" });
   }
 
-  function renderAcademyMembers({ showTeachers = true, view } = {}) {
+  async function renderAcademyMembers({ showTeachers = true, view } = {}) {
     studentListState.view = resolveMemberView({ showTeachers, view });
     studentListState.showTeachers = studentListState.view === "teachers";
     const currentUser = getCurrentUser();
-    const academyId = currentUser?.academyId || currentUser?.id;
+    const academyScopeId =
+      normalizeRole(currentUser?.role) === ROLES.admin && !currentUser?.academyId
+        ? null
+        : currentUser?.academyId || currentUser?.id;
+    await refreshAcademyMembersCache(academyScopeId);
     const canViewAllStudents = canViewAllAcademyStudents(currentUser);
     const canManageLifecycle = canManageMemberLifecycle(currentUser);
-    const activeTeacherMembers = getAcademyMembersByAcademyId(academyId, { role: "teacher", status: "active" });
-    const allTeacherMembers = getAcademyMembersByAcademyId(academyId, { role: "teacher", status: "all" });
-    const activeStudentMembers = getAcademyMembersByAcademyId(academyId, { role: "student", status: "active" });
-    const allStudentMembers = getAcademyMembersByAcademyId(academyId, { role: "student", status: "all" });
+    const activeTeacherMembers = getAcademyMembersForUser(currentUser, { role: "teacher", status: "active" });
+    const allTeacherMembers = getAcademyMembersForUser(currentUser, { role: "teacher", status: "all" });
+    const activeStudentMembers = getAcademyMembersForUser(currentUser, { role: "student", status: "active" });
+    const allStudentMembers = getAcademyMembersForUser(currentUser, { role: "student", status: "all" });
     const inactiveStudentMembers = allStudentMembers.filter((member) => !isActiveMember(member));
     const inactiveTeacherMembers = allTeacherMembers.filter((member) => !isActiveMember(member));
     const scopedActiveStudents = getScopedStudentMembers(activeStudentMembers, currentUser);
@@ -1072,6 +1080,29 @@ export function createAcademyMemberController({
 
     window.alert(`${result.transferredCount}명의 담당 학생을 이전했습니다.`);
     refreshAcademyMemberView();
+  }
+
+  function getAcademyMembersForUser(currentUser, options = {}) {
+    const role = normalizeRole(currentUser?.role);
+    const academyId = currentUser?.academyId || currentUser?.id;
+
+    if (role === ROLES.admin && !currentUser?.academyId) {
+      const statusFilter = options.status ?? MEMBER_STATUS.active;
+
+      return readAcademyMembers().filter((member) => {
+        const memberStatus = normalizeMemberStatus(member.status);
+        const matchesStatus =
+          statusFilter === "all" ? true : memberStatus === normalizeMemberStatus(statusFilter);
+        const matchesRole = options.role ? member.role === options.role : true;
+        const matchesTeacher =
+          options.assignedTeacherId === undefined
+            ? true
+            : member.assignedTeacherId === options.assignedTeacherId;
+        return matchesStatus && matchesRole && matchesTeacher;
+      });
+    }
+
+    return getAcademyMembersByAcademyId(academyId, options);
   }
 
   function canResetMemberInAcademy(currentUser, member) {

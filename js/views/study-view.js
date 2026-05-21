@@ -211,8 +211,23 @@ export function createStudyView({ elements, escapeHtml }) {
   }
 
   function buildFlowNotice({ activeRow, recommendation, categoryRows, levelGroup }) {
+    if (categoryRows.length === 0) {
+      return "";
+    }
+
+    const allComplete = categoryRows.every((row) => row.isComplete);
+    const anyStarted = categoryRows.some((row) => row.isInProgress || row.isComplete);
     const hasAnyContinue = categoryRows.some((row) => row.continueTarget);
-    if (!hasAnyContinue && categoryRows.length > 0) {
+
+    if (allComplete) {
+      return `
+        <li class="study-flow-notice">
+          <p>${escapeHtml(levelGroup)} 과정을 모두 마쳤습니다. <button type="button" data-go-problem-bank>문제은행</button>에서 복습할 수 있습니다.</p>
+        </li>
+      `;
+    }
+
+    if (!anyStarted && !hasAnyContinue) {
       return `
         <li class="study-flow-notice">
           <p>시작할 문제가 없습니다. <button type="button" data-go-problem-bank>문제은행</button>에서 선택해 주세요.</p>
@@ -223,11 +238,11 @@ export function createStudyView({ elements, escapeHtml }) {
     if (
       activeRow?.isComplete &&
       !recommendation?.problem &&
-      categoryRows.every((row) => row.isComplete)
+      !hasAnyContinue
     ) {
       return `
         <li class="study-flow-notice">
-          <p>${escapeHtml(levelGroup)} 과정을 모두 마쳤습니다. <button type="button" data-go-problem-bank>문제은행</button>에서 복습할 수 있습니다.</p>
+          <p>${escapeHtml(activeRow.name)} 테마를 완료했습니다. 다른 테마를 이어가거나 <button type="button" data-go-problem-bank>문제은행</button>에서 복습해 주세요.</p>
         </li>
       `;
     }

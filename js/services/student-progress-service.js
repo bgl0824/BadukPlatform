@@ -389,7 +389,23 @@ function normalizeProgress(progress) {
 }
 
 function canRecordStudentProgress(user) {
-  return Boolean(user?.id && user?.academyId && normalizeRole(user.role) === ROLES.student);
+  if (!user?.id || normalizeRole(user.role) !== ROLES.student) {
+    return false;
+  }
+
+  if (String(user.academyId ?? "").trim()) {
+    return true;
+  }
+
+  try {
+    const members = JSON.parse(localStorage.getItem("BADUK_ACADEMY_MEMBERS"));
+    return (
+      Array.isArray(members) &&
+      members.some((member) => member.userId === user.id && member.academyId)
+    );
+  } catch {
+    return false;
+  }
 }
 
 function createProgressId(userId, problemId) {

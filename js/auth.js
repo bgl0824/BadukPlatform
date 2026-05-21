@@ -21,6 +21,7 @@ import {
   deleteUserById,
   findUserById,
   formatSupabaseAuthError,
+  getAuthEmailForPasswordChange,
   getSupabaseAuthSession,
   isSupabaseAuthUser,
   isSupabaseConfigured,
@@ -147,7 +148,7 @@ async function bootstrapAuth() {
   try {
     const session = await getSupabaseAuthSession();
     if (session?.user) {
-      applySupabaseUser(session.user);
+      await applySupabaseUser(session.user);
     } else {
       currentUser = null;
       localStorage.removeItem(AUTH_STORAGE_KEY);
@@ -156,9 +157,10 @@ async function bootstrapAuth() {
     if (!authStateSubscription) {
       authStateSubscription = subscribeSupabaseAuthStateChange(({ event, user }) => {
         if (user) {
-          applySupabaseUser(user);
+          void applySupabaseUser(user).then(() => {
           renderAuthStatus();
           updateAdminModeVisibility();
+          });
           return;
         }
 
@@ -195,8 +197,28 @@ function hideTemporaryAdminEntry() {
   elements.adminEntry?.setAttribute("aria-hidden", "true");
 }
 
-function applySupabaseUser(supabaseUser) {
-  storeUser(mapSupabaseUserToAppUser(supabaseUser));
+async function enrichAppUserFromAcademyMember(appUser) {
+  if (!appUser?.id || String(appUser.academyId ?? "").trim()) {
+    return appUser;
+  }
+
+  const { fetchAcademyMemberByUserId } = await import("./services/academy-member-service.js");
+  const member = await fetchAcademyMemberByUserId(appUser.id);
+  if (!member) {
+    return appUser;
+  }
+
+  return {
+    ...appUser,
+    academyId: member.academyId,
+    academyName: member.academyName || appUser.academyName,
+    inviteCode: member.inviteCode || appUser.inviteCode,
+  };
+}
+
+async function applySupabaseUser(supabaseUser) {
+  const appUser = await enrichAppUserFromAcademyMember(mapSupabaseUserToAppUser(supabaseUser));
+  storeUser(appUser);
 }
 
 function clearSessionUser({ redirectOnProtectedPage = false } = {}) {
@@ -274,7 +296,7 @@ function renderAuthStatus() {
     welcome.className = "auth-status-text";
     welcome.textContent = `${getDisplayUserName(currentUser)}님 환영합니다`;
 
-    const settingsButton = createAuthButton("계정 설정", () => {
+    const settingsButton = createAuthButton("계정 관리", () => {
       openAccountSettingsModal();
     });
 
@@ -342,9 +364,9 @@ function openAccountSettingsModal() {
     elements.accountSettingsRole.textContent = getRoleLabel(currentUser.role);
   }
 
-  const isAcademyOwner = normalizeRole(currentUser.role) === ROLES.academyOwner;
-  elements.accountSettingsAcademyRow?.classList.toggle("is-hidden", !isAcademyOwner);
-  if (elements.accountSettingsAcademy && isAcademyOwner) {
+  const hasAcademyInfo = Boolean(currentUser.academyName || currentUser.academyId);
+  elements.accountSettingsAcademyRow?.classList.toggle("is-hidden", !hasAcademyInfo);
+  if (elements.accountSettingsAcademy && hasAcademyInfo) {
     elements.accountSettingsAcademy.textContent = currentUser.academyName || "-";
   }
 
@@ -378,7 +400,7 @@ async function handleAccountSettingsSubmit(event) {
     elements.accountSettingsMessage,
     async () => {
       if (isSupabaseAuthUser(currentUser)) {
-        const authEmail = await usernameToAuthEmail(currentUser.username);
+        const authEmail = await getAuthEmailForPasswordChange(currentUser);
         if (!authEmail) {
           throw new Error("아이디 정보가 없어 비밀번호를 변경할 수 없습니다.");
         }
@@ -470,7 +492,8 @@ async function handleLoginSubmit(event) {
       throw new Error(formatSupabaseAuthError(signInResult.message));
     }
 
-    const appUser = mapSupabaseUserToAppUser(signInResult.user);
+    let appUser = mapSupabaseUserToAppUser(signInResult.user);
+    appUser = await enrichAppUserFromAcademyMember(appUser);
     const academyMember = readAcademyMembers().find((member) => member.userId === appUser.id);
     if (academyMember && !isActiveMember(academyMember)) {
       await signOutSupabase();
@@ -581,22 +604,37 @@ async function handleSignupSubmit(event) {
     }
 
     const appUser = mapSupabaseUserToAppUser(signUpResult.user);
+    const appUserWithAcademy = invite
+      ? {
+          ...appUser,
+          academyId: appUser.academyId || invite.academyId,
+          academyName: appUser.academyName || invite.academyName,
+          inviteCode: invite.code,
+        }
+      : appUser;
+
     if (invite) {
-      createAcademyMember({
+      const memberResult = await createAcademyMember({
         user: {
-          id: appUser.id,
-          username: appUser.username,
-          name: appUser.name,
+          id: appUserWithAcademy.id,
+          username: appUserWithAcademy.username,
+          name: appUserWithAcademy.name,
           role: userRole,
-          academyId: appUser.academyId,
-          academyName: appUser.academyName,
+          academyId: invite.academyId,
+          academyName: invite.academyName,
         },
         invite,
       });
+      if (!memberResult) {
+        console.warn("[Signup] academy member insert skipped", {
+          userId: appUserWithAcademy.id,
+          academyId: invite.academyId,
+        });
+      }
     }
 
     finishSignupSuccess({
-      appUser,
+      appUser: appUserWithAcademy,
       hasSession: Boolean(signUpResult.session),
     });
     });
