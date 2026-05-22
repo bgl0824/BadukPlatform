@@ -14,13 +14,13 @@ export function createStudyView({ elements, escapeHtml }) {
         return renderLevelAccordionSection({
           levelFlow,
           isExpanded: expandedSet.has(levelFlow.levelGroup),
-          reviewOffer: reviewOffersByLevel[levelFlow.levelGroup] ?? null,
+          reviewOffers: reviewOffersByLevel[levelFlow.levelGroup] ?? [],
         });
       })
       .join("");
   }
 
-  function renderLevelAccordionSection({ levelFlow, isExpanded, reviewOffer }) {
+  function renderLevelAccordionSection({ levelFlow, isExpanded, reviewOffers }) {
     const {
       levelGroup,
       levelInfo,
@@ -64,7 +64,7 @@ export function createStudyView({ elements, escapeHtml }) {
         <div class="study-level-accordion-panel"${isExpanded ? "" : " hidden"}>
           <p class="study-level-accordion-description">${escapeHtml(description)}</p>
           ${renderLevelProgressBar({ title, solved, total, percent, statusLabel, levelProgress })}
-          ${renderLevelReviewOffer(reviewOffer, levelGroup)}
+          ${renderLevelReviewOffers(reviewOffers, levelGroup)}
           ${renderLevelRecommendation(recommendation, activeRow)}
           ${renderLevelCategoryBody({
             levelFlow,
@@ -108,25 +108,40 @@ export function createStudyView({ elements, escapeHtml }) {
     `;
   }
 
-  function renderLevelReviewOffer(reviewOffer, levelGroup) {
-    if (!reviewOffer) {
+  function renderLevelReviewOffers(reviewOffers, levelGroup) {
+    const offers = Array.isArray(reviewOffers) ? reviewOffers : reviewOffers ? [reviewOffers] : [];
+    if (offers.length === 0) {
       return "";
     }
 
-    return `
+    return offers
+      .map(
+        (reviewOffer) => `
       <div class="study-review-offer">
         <p class="study-review-eyebrow">복습 추천</p>
         <p class="study-review-meta">${escapeHtml(reviewOffer.categoryName)} · 복습 추천 ${reviewOffer.problemCount}문제</p>
-        <button
-          class="study-review-start-button"
-          type="button"
-          data-start-review-category="${escapeHtml(reviewOffer.categoryName)}"
-          data-review-level-group="${escapeHtml(levelGroup)}"
-        >
-          복습 시작
-        </button>
+        <div class="study-review-actions">
+          <button
+            class="study-review-start-button"
+            type="button"
+            data-start-review-category="${escapeHtml(reviewOffer.categoryName)}"
+            data-review-level-group="${escapeHtml(levelGroup)}"
+          >
+            ${escapeHtml(reviewOffer.categoryName)} 복습 시작
+          </button>
+          <button
+            class="study-review-dismiss-button"
+            type="button"
+            data-dismiss-review-category="${escapeHtml(reviewOffer.categoryName)}"
+            data-review-level-group="${escapeHtml(levelGroup)}"
+          >
+            복습 숨기기
+          </button>
+        </div>
       </div>
-    `;
+    `,
+      )
+      .join("");
   }
 
   function renderLevelRecommendation(recommendation, activeRow) {

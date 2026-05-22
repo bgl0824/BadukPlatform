@@ -96,7 +96,7 @@ export function createCategoryCompleteModalController({ elements, onAction }) {
     if (context.reviewOffer) {
       elements.categoryCompleteReviewSection?.classList.remove("is-hidden");
       elements.categoryCompleteReviewMeta.textContent =
-        `복습 추천 ${context.reviewOffer.problemCount}문제`;
+        `${context.reviewOffer.categoryName} · 복습 추천 ${context.reviewOffer.problemCount}문제`;
       elements.categoryCompleteReviewButton?.classList.remove("is-hidden");
       elements.categoryCompleteReviewButton.disabled = false;
     } else {

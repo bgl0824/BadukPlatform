@@ -71,7 +71,16 @@ import {
   getStudyCurriculumTree,
   resolveActiveLevelGroupFromProgress,
 } from "./services/learning-flow-service.js";
-import { buildReviewQueue, getReviewOffer } from "./services/review-service.js";
+import {
+  completeCategoryReviewOffer,
+  dismissCategoryReviewOffer,
+  ensureCategoryReviewOfferFromReviewOffer,
+} from "./services/category-review-offer-service.js";
+import {
+  buildReviewQueue,
+  getReviewOffer,
+  getPersistentReviewOffersForLevel,
+} from "./services/review-service.js";
 import { problemService } from "./services/problem-service.js";
 import { PROGRESS_STATUS, studentProgressService } from "./services/student-progress-service.js";
 import { adminState } from "./state/admin-state.js";
@@ -728,6 +737,20 @@ function bindStudyScreenEvents() {
       return;
     }
 
+    const dismissReviewButton = event.target.closest("[data-dismiss-review-category]");
+    if (dismissReviewButton) {
+      const currentUser = getCurrentUser();
+      if (currentUser?.id) {
+        dismissCategoryReviewOffer({
+          userId: currentUser.id,
+          categoryName: dismissReviewButton.dataset.dismissReviewCategory,
+          levelGroup: dismissReviewButton.dataset.reviewLevelGroup,
+        });
+        renderStudyScreen();
+      }
+      return;
+    }
+
     const reviewButton = event.target.closest("[data-start-review-category]");
     if (reviewButton) {
       startReviewSession(
@@ -861,26 +884,23 @@ function toggleStudyLevelGroup(levelGroup) {
 
 function buildReviewOffersByLevel(curriculumTree, progressByProblemId) {
   const reviewOffersByLevel = {};
+  const currentUser = getCurrentUser();
 
   curriculumTree.levelGroups.forEach((levelFlow) => {
-    if (!levelFlow.activeCategory || !levelFlow.activeRow?.isComplete) {
-      return;
-    }
-
     try {
-      const reviewOffer = getReviewOffer(
-        levelFlow.activeCategory,
+      const offers = getPersistentReviewOffersForLevel({
+        user: currentUser,
+        categoryRows: levelFlow.categoryRows,
         problems,
         progressByProblemId,
-        { levelGroup: levelFlow.levelGroup },
-      );
+        levelGroup: levelFlow.levelGroup,
+      });
 
-      if (reviewOffer) {
-        reviewOffersByLevel[levelFlow.levelGroup] = reviewOffer;
+      if (offers.length > 0) {
+        reviewOffersByLevel[levelFlow.levelGroup] = offers;
       }
     } catch (error) {
-      console.error("[study] getReviewOffer failed", {
-        category: levelFlow.activeCategory,
+      console.error("[study] getPersistentReviewOffersForLevel failed", {
         levelGroup: levelFlow.levelGroup,
         message: error?.message,
       });
@@ -973,7 +993,19 @@ function showStudyMode() {
   renderStudyScreen();
 }
 
-function clearReviewSession() {
+function clearReviewSession({ completeCategoryOffer = false } = {}) {
+  const session = appState.reviewSession;
+  if (completeCategoryOffer && session?.categoryName) {
+    const currentUser = getCurrentUser();
+    if (currentUser?.id) {
+      completeCategoryReviewOffer({
+        userId: currentUser.id,
+        categoryName: session.categoryName,
+        levelGroup: session.levelGroup,
+      });
+    }
+  }
+
   appState.reviewSession = null;
 }
 
@@ -1969,6 +2001,10 @@ function buildCategoryCompletionContext(categoryName, levelGroup, progressByProb
     reviewOffer = getReviewOffer(categoryName, problems, resolvedProgressMap, {
       levelGroup: normalizedLevelGroup,
     });
+    if (reviewOffer) {
+      const currentUser = getCurrentUser();
+      ensureCategoryReviewOfferFromReviewOffer(currentUser, reviewOffer);
+    }
   } catch (error) {
     console.error("[learning] getReviewOffer failed during category completion", {
       categoryName,
@@ -2087,7 +2123,7 @@ function completeProblem(problem) {
     } else {
       appState.autoNextTimeout = window.setTimeout(() => {
         hideBoardFeedback();
-        clearReviewSession();
+        clearReviewSession({ completeCategoryOffer: true });
         showStudyMode();
       }, 1000);
     }

@@ -24,6 +24,7 @@ export function getProblemsInCategoryOrder(categoryName, problems, { levelGroup 
 export function getActiveCategoryName({ progressList, categoryNames, problems, levelGroup }) {
   const curriculum = categoryNames.length > 0 ? categoryNames : getOrderedCategoryNames(undefined, { levelGroup });
   const normalizedLevelGroup = levelGroup ? normalizeLevelGroup(levelGroup) : null;
+  const problemById = new Map(problems.map((problem) => [problem.id, problem]));
   const problemIdsInLevel = normalizedLevelGroup
     ? new Set(
         problems
@@ -32,13 +33,19 @@ export function getActiveCategoryName({ progressList, categoryNames, problems, l
       )
     : null;
 
+  const resolveProgressCategory = (progress) => {
+    const problem = problemById.get(progress.problemId);
+    const category = String(problem?.category ?? progress.category ?? "").trim();
+    return curriculum.includes(category) ? category : null;
+  };
+
   const relevantProgress = progressList
     .filter((progress) => {
       if (problemIdsInLevel && !problemIdsInLevel.has(progress.problemId)) {
         return false;
       }
 
-      return curriculum.includes(progress.category);
+      return Boolean(resolveProgressCategory(progress));
     })
     .sort((left, right) => {
       return new Date(right.updatedAt ?? right.solvedAt ?? 0).getTime() -
@@ -46,7 +53,7 @@ export function getActiveCategoryName({ progressList, categoryNames, problems, l
     });
 
   if (relevantProgress.length > 0) {
-    return relevantProgress[0].category;
+    return resolveProgressCategory(relevantProgress[0]);
   }
 
   return (

@@ -19,6 +19,7 @@ import {
   isSupabaseConfigured,
 } from "./auth-service.js";
 import { getSupabaseClient } from "./supabase-client.js";
+import { deleteCategoryReviewOffersByUserId } from "./category-review-offer-service.js";
 import { deleteStudentProgressByUserId } from "./student-progress-service.js";
 
 const USERS_STORAGE_KEY = "BADUK_AUTH_USERS";
@@ -79,6 +80,7 @@ export async function deleteAuthUserFromSupabase({ userId, academyId }) {
  */
 export function purgeLocalMemberCaches({ userId, academyId }) {
   const progressResult = deleteStudentProgressByUserId(userId);
+  const reviewOfferResult = deleteCategoryReviewOffersByUserId(userId);
   const memberResult = removeAcademyMember({ academyId, userId });
 
   const legacyUsers = readLegacyAuthUsers();
@@ -89,6 +91,7 @@ export function purgeLocalMemberCaches({ userId, academyId }) {
 
   return {
     removedProgressCount: progressResult.removedCount,
+    removedReviewOfferCount: reviewOfferResult.removedCount,
     removedMember: memberResult.ok,
     removedLegacyUser: authResult.ok,
   };
