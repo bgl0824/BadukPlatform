@@ -25,9 +25,11 @@ export function getReviewProblemsForCategory(
   categoryName,
   problems,
   progressByProblemId = null,
-  { minWrongCount = REVIEW_MIN_WRONG_COUNT } = {},
+  options = {},
 ) {
-  return getProblemsInCategoryOrder(categoryName, problems, options)
+  const { minWrongCount = REVIEW_MIN_WRONG_COUNT, levelGroup } = options;
+
+  return getProblemsInCategoryOrder(categoryName, problems, { levelGroup })
     .map(({ problem, index }) => {
       const progress = progressByProblemId?.get(problem.id) ?? null;
       const totalWrongCount = getTotalWrongCount(progress);

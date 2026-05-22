@@ -36,6 +36,13 @@
         <button class="main-menu-button academy-owner-only-menu is-hidden" type="button" data-main-menu="payments">
           결재확인
         </button>
+        <button
+          class="main-menu-button platform-admin-only-menu is-hidden"
+          type="button"
+          data-main-menu="platform"
+        >
+          플랫폼
+        </button>
       </nav>
 
       <section class="hero-card" aria-labelledby="problem-title">
@@ -241,11 +248,45 @@
             <p id="list-summary">전체 문제를 확인하고 원하는 문제를 선택하세요.</p>
           </div>
         </div>
-        <div class="category-filter-stack">
-          <div id="level-group-filters" class="level-group-filters" aria-label="단계 필터"></div>
-          <div id="category-filters" class="category-filters" aria-label="카테고리 필터"></div>
-        </div>
-        <section id="print-panel" class="print-panel" aria-label="인쇄">
+        <div id="problem-library-body" class="problem-library-body">
+          <div class="category-filter-stack">
+            <div id="level-group-filters" class="level-group-filters" aria-label="단계 필터"></div>
+            <div id="category-filters" class="category-filters" aria-label="카테고리 필터"></div>
+          </div>
+          <div id="admin-workspace" class="admin-workspace is-hidden" aria-label="관리자 작업 영역">
+            <nav id="admin-panel-tabs" class="admin-panel-tabs" aria-label="관리자 메뉴">
+              <button id="admin-problems-tab" class="admin-panel-tab is-active" type="button" data-admin-panel="problems">
+                문제 관리
+              </button>
+              <button id="admin-curriculum-tab" class="admin-panel-tab" type="button" data-admin-panel="curriculum">
+                커리큘럼 관리
+              </button>
+            </nav>
+            <div id="admin-problems-panel" class="admin-panel">
+              <div id="admin-problems-toolbar" class="admin-problems-toolbar">
+                <p class="admin-panel-summary">문제 추가·수정·삭제를 빠르게 처리합니다.</p>
+                <button id="add-problem" class="primary-button" type="button">새 문제 추가</button>
+              </div>
+              <section id="admin-editor" class="admin-editor is-hidden" aria-label="문제 편집"></section>
+            </div>
+            <div id="admin-curriculum-panel" class="admin-panel is-hidden">
+              <div class="admin-curriculum-toolbar">
+                <div>
+                  <h3>커리큘럼 흐름</h3>
+                  <p>아래 순서가 학습중·이어하기·다음 카테고리 추천의 공식 순서입니다.</p>
+                </div>
+                <label class="admin-category-add">
+                  새 카테고리
+                  <input id="admin-new-category" type="text" placeholder="예: 궁도" />
+                </label>
+                <button id="add-category" class="secondary-button" type="button">카테고리 추가</button>
+              </div>
+              <section id="category-manager" class="category-manager" aria-label="커리큘럼 카테고리 관리">
+                <ol id="category-manager-list" class="category-manager-list"></ol>
+              </section>
+            </div>
+          </div>
+          <section id="print-panel" class="print-panel" aria-label="인쇄">
           <div class="print-panel-primary print-toolbar">
             <p
               id="print-selection-count"
@@ -348,40 +389,18 @@
           </div>
           </details>
         </section>
-        <div id="admin-workspace" class="admin-workspace is-hidden" aria-label="관리자 작업 영역">
-          <nav id="admin-panel-tabs" class="admin-panel-tabs" aria-label="관리자 메뉴">
-            <button id="admin-problems-tab" class="admin-panel-tab is-active" type="button" data-admin-panel="problems">
-              문제 관리
-            </button>
-            <button id="admin-curriculum-tab" class="admin-panel-tab" type="button" data-admin-panel="curriculum">
-              커리큘럼 관리
-            </button>
-          </nav>
-          <div id="admin-problems-panel" class="admin-panel">
-            <div id="admin-problems-toolbar" class="admin-problems-toolbar">
-              <p class="admin-panel-summary">문제 추가·수정·삭제를 빠르게 처리합니다.</p>
-              <button id="add-problem" class="primary-button" type="button">새 문제 추가</button>
-            </div>
-            <section id="admin-editor" class="admin-editor is-hidden" aria-label="문제 편집"></section>
-          </div>
-          <div id="admin-curriculum-panel" class="admin-panel is-hidden">
-            <div class="admin-curriculum-toolbar">
-              <div>
-                <h3>커리큘럼 흐름</h3>
-                <p>아래 순서가 학습중·이어하기·다음 카테고리 추천의 공식 순서입니다.</p>
-              </div>
-              <label class="admin-category-add">
-                새 카테고리
-                <input id="admin-new-category" type="text" placeholder="예: 궁도" />
-              </label>
-              <button id="add-category" class="secondary-button" type="button">카테고리 추가</button>
-            </div>
-            <section id="category-manager" class="category-manager" aria-label="커리큘럼 카테고리 관리">
-              <ol id="category-manager-list" class="category-manager-list"></ol>
-            </section>
-          </div>
+          <div id="problem-cards" class="problem-cards" aria-live="polite"></div>
         </div>
-        <div id="problem-cards" class="problem-cards"></div>
+      </section>
+      <section id="platform-admin-screen" class="platform-admin-screen is-hidden" aria-label="플랫폼 운영">
+        <div class="platform-admin-card">
+          <p id="platform-admin-eyebrow" class="eyebrow">Platform</p>
+          <h2 id="platform-admin-title">플랫폼 운영</h2>
+          <p id="platform-admin-description" class="platform-admin-description">
+            서비스 운영·결제·계약 정보를 관리하는 관리자 전용 화면입니다.
+          </p>
+          <div id="platform-admin-dashboard-body" class="platform-admin-dashboard-body"></div>
+        </div>
       </section>
       <section id="academy-menu-screen" class="academy-menu-screen is-hidden" aria-label="학원 관리">
         <div class="academy-menu-card">

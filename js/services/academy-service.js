@@ -34,6 +34,21 @@ export function resolveAcademyScopeId(user) {
 }
 
 /**
+ * academy_members.academy_id 정규화 — 레거시에 본인 auth uid 가 들어간 경우 invited_by(학원장) 로 보정.
+ */
+export function resolveMemberAcademyId(member, authUserId = member?.userId) {
+  const academyId = String(member?.academyId ?? "").trim();
+  const invitedBy = String(member?.invitedBy ?? "").trim();
+  const userKey = String(authUserId ?? "").trim();
+
+  if (invitedBy && userKey && academyId === userKey) {
+    return invitedBy;
+  }
+
+  return academyId || invitedBy;
+}
+
+/**
  * 멤버 조회에 쓸 academy_id 후보 (학원장: auth.uid + 레거시 metadata.academyId)
  */
 export function resolveAcademyScopeIds(user) {
@@ -42,28 +57,32 @@ export function resolveAcademyScopeIds(user) {
   }
 
   const role = normalizeRole(user.role ?? user.userType);
-  const primary = (() => {
-    if (role === ROLES.academyOwner) {
-      return String(user.id).trim();
-    }
-    if (role === ROLES.admin) {
-      return String(user.academyId ?? "").trim();
-    }
-    return String(user.academyId || user.id).trim();
-  })();
 
-  if (!primary) {
+  if (role === ROLES.admin) {
     return [];
   }
 
   if (role === ROLES.academyOwner) {
+    const primary = String(user.id).trim();
+    if (!primary) {
+      return [];
+    }
+
     const legacyMeta = String(user.academyId ?? "").trim();
     if (legacyMeta && legacyMeta !== primary) {
       return [primary, legacyMeta];
     }
+
+    return [primary];
   }
 
-  return [primary];
+  if (role === ROLES.teacher || role === ROLES.student) {
+    const academyId = String(user.academyId ?? "").trim();
+    return academyId ? [academyId] : [];
+  }
+
+  const academyId = String(user.academyId ?? "").trim();
+  return academyId ? [academyId] : [];
 }
 
 export const MEMBER_STATUS = {
@@ -171,11 +190,17 @@ export async function createAcademyMember({ user, invite }) {
 }
 
 export async function refreshAcademyMembersCache(academyId, { user } = {}) {
-  const { fetchAcademyMembersFromSupabase, repairAcademyMemberScope } = await import(
-    "./academy-member-service.js"
-  );
+  const {
+    fetchAcademyMembersFromSupabase,
+    fetchAcademyMemberByUserId,
+    fetchStudentsAssignedToTeacher,
+    repairAcademyMemberScope,
+    repairMyAcademyMemberScope,
+  } = await import("./academy-member-service.js");
 
-  if (user && normalizeRole(user.role ?? user.userType) === ROLES.academyOwner) {
+  const userRole = user ? normalizeRole(user.role ?? user.userType) : "";
+
+  if (userRole === ROLES.academyOwner) {
     const repairResult = await repairAcademyMemberScope();
     if (repairResult?.fixedMembers > 0 || repairResult?.fixedInviteCodes > 0) {
       const { debugLog } = await import("../bootstrap/debug-logs.js");
@@ -186,9 +211,69 @@ export async function refreshAcademyMembersCache(academyId, { user } = {}) {
     }
   }
 
-  const scopeId = String(academyId || (user ? resolveAcademyScopeId(user) : "") || "").trim();
+  if (userRole === ROLES.teacher || userRole === ROLES.student) {
+    const repairSelf = await repairMyAcademyMemberScope();
+    if (!repairSelf.ok) {
+      debugWarn(ACADEMY, "repair my academy scope skipped", {
+        source: DEBUG_SOURCES.supabase,
+        message: repairSelf.message ?? null,
+      });
+    }
+    const selfMember = await fetchAcademyMemberByUserId(user.id);
+    if (selfMember) {
+      const correctedAcademyId = resolveMemberAcademyId(selfMember, user.id);
+      if (correctedAcademyId && correctedAcademyId !== String(user.academyId ?? "").trim()) {
+        debugWarn(ACADEMY, "teacher/student scope corrected from member row", {
+          source: DEBUG_SOURCES.fallback,
+          userId: user.id,
+          sessionAcademyId: user.academyId ?? null,
+          memberAcademyId: selfMember.academyId ?? null,
+          invitedBy: selfMember.invitedBy ?? null,
+          correctedAcademyId,
+        });
+        user = { ...user, academyId: correctedAcademyId };
+      }
+    }
+  }
+
+  const scopeId = String(
+    academyId || (user ? resolveAcademyScopeId(user) : "") || "",
+  ).trim();
   const cacheBeforeFetch = readAcademyMembers();
-  const result = await fetchAcademyMembersFromSupabase(scopeId ? { academyId: scopeId } : {});
+  let result = await fetchAcademyMembersFromSupabase(
+    scopeId ? { academyId: scopeId, user } : { user },
+  );
+
+  if (userRole === ROLES.teacher && scopeId) {
+    const selfMember =
+      (await fetchAcademyMemberByUserId(user.id)) ??
+      readAcademyMembers().find((member) => String(member.userId ?? "").trim() === String(user.id).trim());
+    const assignedResult = await fetchStudentsAssignedToTeacher({
+      academyId: scopeId,
+      authUserId: user.id,
+      memberId: selfMember?.id,
+    });
+
+    if (assignedResult.ok && assignedResult.members?.length) {
+      const mergedByUserId = new Map(
+        (result.members ?? []).map((member) => [member.userId, member]),
+      );
+      assignedResult.members.forEach((member) => {
+        mergedByUserId.set(member.userId, member);
+      });
+      const mergedMembers = [...mergedByUserId.values()];
+      const { syncAcademyMembersCache } = await import("./academy-member-service.js");
+      syncAcademyMembersCache(scopeId, mergedMembers);
+      result = { ...result, members: mergedMembers, assignedStudentsMerged: assignedResult.members.length };
+      debugLog(ACADEMY, "teacher assigned students merged into cache", {
+        source: assignedResult.source ?? DEBUG_SOURCES.supabase,
+        scopeId,
+        assignedCount: assignedResult.members.length,
+        mergedCount: mergedMembers.length,
+      });
+    }
+  }
+
   const cacheAfterSync = readAcademyMembers();
 
   return {
@@ -265,24 +350,6 @@ export function selectAcademyMembersForUser(members, currentUser, options = {}) 
   const role = normalizeRole(currentUser?.role ?? currentUser?.userType);
   const scopeIds = resolveAcademyScopeIds(currentUser);
 
-  if (role === ROLES.admin && !currentUser?.academyId) {
-    const statusFilter = options.status ?? MEMBER_STATUS.active;
-
-    return list.filter((member) => {
-      const memberStatus = normalizeMemberStatus(member.status);
-      const matchesStatus =
-        statusFilter === "all" ? true : memberStatus === normalizeMemberStatus(statusFilter);
-      const matchesRole = options.role
-        ? normalizeAcademyMemberRole(member.role) === normalizeAcademyMemberRole(options.role)
-        : true;
-      const matchesTeacher =
-        options.assignedTeacherId === undefined
-          ? true
-          : member.assignedTeacherId === options.assignedTeacherId;
-      return matchesStatus && matchesRole && matchesTeacher;
-    });
-  }
-
   if (!scopeIds.length) {
     if (list.some((member) => normalizeAcademyMemberRole(member.role) === "teacher")) {
       debugWarn("academy", "selectAcademyMembersForUser: empty scopeIds with teachers in snapshot", {
@@ -314,32 +381,74 @@ export function findAcademyMember({ academyId, userId }) {
   });
 }
 
-export function setMemberStatus({ academyId, userId, status }) {
-  if (!academyId || !userId) {
+export async function setMemberStatus({ academyId, userId, status }) {
+  const scopeId = String(academyId ?? "").trim();
+  const targetUserId = String(userId ?? "").trim();
+
+  if (!scopeId || !targetUserId) {
     return { ok: false, message: "멤버 정보를 찾을 수 없습니다." };
   }
 
   const nextStatus = normalizeMemberStatus(status);
   const academyMembers = readAcademyMembers();
   const memberIndex = academyMembers.findIndex((member) => {
-    return member.academyId === academyId && member.userId === userId;
+    return (
+      String(member.academyId ?? "").trim() === scopeId &&
+      String(member.userId ?? "").trim() === targetUserId
+    );
   });
 
   if (memberIndex < 0) {
+    debugWarn(ACADEMY, "setMemberStatus member not found in cache", {
+      scopeId,
+      targetUserId,
+      cachedCount: academyMembers.length,
+    });
     return { ok: false, message: "멤버 정보를 찾을 수 없습니다." };
   }
 
-  const nextMembers = [...academyMembers];
-  nextMembers[memberIndex] = {
-    ...nextMembers[memberIndex],
+  const previousMembers = academyMembers;
+  const nextMember = {
+    ...academyMembers[memberIndex],
     status: nextStatus,
-    statusUpdatedAt: new Date().toISOString(),
   };
+  const nextMembers = [...academyMembers];
+  nextMembers[memberIndex] = nextMember;
   saveAcademyMembers(nextMembers);
-  return { ok: true, member: nextMembers[memberIndex] };
+
+  const { updateAcademyMemberInSupabase } = await import("./academy-member-service.js");
+  const persistResult = await updateAcademyMemberInSupabase(nextMember);
+
+  if (!persistResult.ok) {
+    saveAcademyMembers(previousMembers);
+    debugError(ACADEMY, "setMemberStatus persist failed", {
+      scopeId,
+      targetUserId,
+      nextStatus,
+      message: persistResult.message ?? null,
+    });
+    return {
+      ok: false,
+      message: persistResult.message || "멤버 상태 저장에 실패했습니다.",
+    };
+  }
+
+  const savedMember = persistResult.member ?? nextMember;
+  const syncedMembers = [...nextMembers];
+  syncedMembers[memberIndex] = savedMember;
+  saveAcademyMembers(syncedMembers);
+
+  debugLog(ACADEMY, "setMemberStatus success", {
+    scopeId,
+    targetUserId,
+    status: savedMember.status,
+    source: persistResult.source ?? DEBUG_SOURCES.supabase,
+  });
+
+  return { ok: true, member: savedMember, source: persistResult.source ?? "supabase" };
 }
 
-export function deactivateStudentMember({ academyId, studentUserId }) {
+export async function deactivateStudentMember({ academyId, studentUserId }) {
   return setMemberStatus({
     academyId,
     userId: studentUserId,
@@ -347,7 +456,7 @@ export function deactivateStudentMember({ academyId, studentUserId }) {
   });
 }
 
-export function activateStudentMember({ academyId, studentUserId }) {
+export async function activateStudentMember({ academyId, studentUserId }) {
   return setMemberStatus({
     academyId,
     userId: studentUserId,
@@ -355,8 +464,12 @@ export function activateStudentMember({ academyId, studentUserId }) {
   });
 }
 
-export function deactivateTeacherMember({ academyId, teacherUserId, clearAssignments = true }) {
-  const deactivateResult = setMemberStatus({
+export async function deactivateTeacherMember({
+  academyId,
+  teacherUserId,
+  clearAssignments = true,
+}) {
+  const deactivateResult = await setMemberStatus({
     academyId,
     userId: teacherUserId,
     status: MEMBER_STATUS.inactive,
@@ -374,7 +487,7 @@ export function deactivateTeacherMember({ academyId, teacherUserId, clearAssignm
   return deactivateResult;
 }
 
-export function activateTeacherMember({ academyId, teacherUserId }) {
+export async function activateTeacherMember({ academyId, teacherUserId }) {
   return setMemberStatus({
     academyId,
     userId: teacherUserId,
@@ -507,7 +620,7 @@ export function deleteInactiveStudentMember({ academyId, studentUserId }) {
 export async function assignStudentTeacher({ academyId, studentUserId, teacherUserId = null }) {
   const scopeId = String(academyId ?? "").trim();
   const normalizedStudentId = String(studentUserId ?? "").trim();
-  const normalizedTeacherId = teacherUserId ? String(teacherUserId).trim() : null;
+  let normalizedTeacherId = teacherUserId ? String(teacherUserId).trim() : null;
 
   const payload = {
     academyId: scopeId,
@@ -527,6 +640,23 @@ export async function assignStudentTeacher({ academyId, studentUserId, teacherUs
   }
 
   const academyMembers = readAcademyMembers();
+
+  if (normalizedTeacherId) {
+    const teacherMember = academyMembers.find((member) => {
+      return (
+        String(member.academyId ?? "").trim() === scopeId &&
+        normalizeAcademyMemberRole(member.role) === "teacher" &&
+        (String(member.userId ?? "").trim() === normalizedTeacherId ||
+          String(member.id ?? "").trim() === normalizedTeacherId)
+      );
+    });
+    if (teacherMember?.userId) {
+      normalizedTeacherId = String(teacherMember.userId).trim();
+      payload.teacherUserId = normalizedTeacherId;
+      payload.assignedTeacherId = normalizedTeacherId;
+    }
+  }
+
   const studentIndex = academyMembers.findIndex((member) => {
     return (
       String(member.academyId ?? "").trim() === scopeId &&
@@ -632,7 +762,58 @@ export async function assignStudentTeacher({ academyId, studentUserId, teacherUs
   };
 }
 
-export function countStudentsByTeacher(students, teacherUserId) {
+/** 담당 배정 비교용 id 집합 — auth uid, academy_members.id, 레거시 composite id */
+export function buildTeacherAssignmentMatchIds(authUser, teacherMembers = [], selfMember = null) {
+  const matchIds = new Set();
+  const authId = String(authUser?.id ?? authUser ?? "").trim();
+
+  if (authId) {
+    matchIds.add(authId);
+  }
+
+  const member =
+    selfMember ??
+    teacherMembers.find((entry) => String(entry?.userId ?? "").trim() === authId);
+
+  if (member) {
+    const userId = String(member.userId ?? "").trim();
+    const memberId = String(member.id ?? "").trim();
+    const academyId = String(member.academyId ?? "").trim();
+
+    if (userId) {
+      matchIds.add(userId);
+    }
+    if (memberId) {
+      matchIds.add(memberId);
+    }
+    if (userId && academyId) {
+      matchIds.add(createAcademyMemberId(userId, academyId));
+    }
+  }
+
+  return matchIds;
+}
+
+export function isStudentAssignedToTeacher(student, matchIds) {
+  const assigned = String(student?.assignedTeacherId ?? "").trim();
+
+  if (!assigned || !matchIds?.size) {
+    return false;
+  }
+
+  if (matchIds.has(assigned)) {
+    return true;
+  }
+
+  const legacyUserId = assigned.match(/^academy-member-[^-]+-(.+)$/);
+  if (legacyUserId?.[1] && matchIds.has(legacyUserId[1])) {
+    return true;
+  }
+
+  return false;
+}
+
+export function countStudentsByTeacher(students, teacherUserId, teacherMembers = []) {
   if (teacherUserId === "all") {
     return students.length;
   }
@@ -641,7 +822,8 @@ export function countStudentsByTeacher(students, teacherUserId) {
     return students.filter((student) => !student.assignedTeacherId).length;
   }
 
-  return students.filter((student) => student.assignedTeacherId === teacherUserId).length;
+  const matchIds = buildTeacherAssignmentMatchIds({ id: teacherUserId }, teacherMembers);
+  return students.filter((student) => isStudentAssignedToTeacher(student, matchIds)).length;
 }
 
 function createAcademyMemberId(userId, academyId) {

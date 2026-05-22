@@ -19,6 +19,7 @@ export function createSolveView({
   updateAcademyMenuVisibility,
   updateAdminVisibility,
   updatePrintUiVisibility,
+  renderProblemLibraryScreen,
 }) {
   function setMode(mode) {
     appState.mode = mode;
@@ -28,6 +29,7 @@ export function createSolveView({
     elements.academyModeButton?.classList.toggle("is-active", mode === "academy");
     elements.attendanceModeButton?.classList.toggle("is-active", mode === "attendance");
     elements.paymentsModeButton?.classList.toggle("is-active", mode === "payments");
+    elements.platformModeButton?.classList.toggle("is-active", mode === "platform");
     elements.mainMenuButtons.forEach((button) => {
       button.classList.toggle("is-active", button.dataset.mainMenu === mode);
     });
@@ -40,6 +42,7 @@ export function createSolveView({
     elements.studyLayout.classList.toggle("is-hidden", mode !== "solve" && mode !== "create");
     elements.studyScreen?.classList.toggle("is-hidden", mode !== "study");
     elements.problemListScreen.classList.toggle("is-hidden", mode !== "list");
+    elements.platformAdminScreen?.classList.toggle("is-hidden", mode !== "platform");
     elements.academyMenuScreen.classList.toggle("is-hidden", !ACADEMY_MODES.includes(mode));
     elements.heroCard?.classList.toggle("is-compact-hub", mode === "study");
     updateAcademyMenuVisibility();
@@ -91,7 +94,6 @@ export function createSolveView({
     setFeedback("현재 등록된 문제가 없습니다.");
     boardController.clearAnswerMarker();
     boardController.loadPosition([]);
-    renderProblemList();
   }
 
   function renderProblemBank() {

@@ -4,10 +4,12 @@ import { createCategoryManagerController } from "./admin/category-manager.js";
 import { createAdminEditorController } from "./admin/editor.js";
 import { createAcademyController } from "./controllers/academy-controller.js";
 import { createAdminController } from "./controllers/admin-controller.js";
+import { createPlatformAdminController } from "./controllers/platform-admin-controller.js";
 import { createProblemCreatorController } from "./controllers/create-controller.js";
 import { bindSolveController } from "./controllers/solve-controller.js";
 import { academyElements } from "./dom/academy-elements.js";
 import { adminElements } from "./dom/admin-elements.js";
+import { platformAdminElements } from "./dom/platform-admin-elements.js";
 import { problemElements } from "./dom/problem-elements.js";
 import { removeCapturedStonesAfterMove as calculateStonesAfterCapture } from "./game/capture.js";
 import { evaluatePlacement, PLACEMENT_STATUS } from "./game/placement-validation.js";
@@ -19,12 +21,14 @@ import {
   canManageAcademy,
   canManageAttendance,
   canManageProblems,
-  canManageStudents,
+  canEnterAdminMode,
   canViewAcademyMenu,
   canViewAcademySubmenu,
+  canViewLearningMenu,
   canViewPayments,
-  canViewReviews,
+  canViewPlatformAdminMenu,
   canUsePrintBuilder,
+  isPlatformAdmin,
   normalizeRole,
   ROLES,
 } from "./permissions/permission-service.js";
@@ -75,6 +79,7 @@ import { appState } from "./state/app-state.js";
 import { createCreatorState } from "./state/creator-state.js";
 import { createAcademyView } from "./views/academy-view.js";
 import { createAdminView } from "./views/admin-view.js";
+import { createPlatformAdminView } from "./views/platform-admin-view.js";
 import { createExamView } from "./views/exam-view.js";
 import { createProblemCreatorView } from "./views/create-view.js";
 import { createSolveView } from "./views/solve-view.js";
@@ -91,6 +96,7 @@ const elements = {
   ...problemElements,
   ...adminElements,
   ...academyElements,
+  ...platformAdminElements,
 };
 
 if (!window.WGo) {
@@ -211,6 +217,7 @@ function handleInvalidBoardPlay(point, evaluation) {
   setFeedback("이 자리에는 둘 수 없습니다.", "wrong");
 }
 let solveView;
+let problemBankReady = false;
 const setMode = (mode) => {
   solveView.setMode(mode);
   syncBoardPreviewContext();
@@ -417,16 +424,26 @@ const {
 });
 adminEditorActions = { renderAdminEditor, closeAdminEditor };
 
+const platformAdminView = createPlatformAdminView({
+  elements,
+  escapeHtml,
+});
+
+let updatePlatformAdminMenuVisibility = () => {};
+
 const academyView = createAcademyView({
   elements,
   appState,
   getCurrentUser,
-  canViewLearningMenu,
+  canViewLearningMenu: () => canViewLearningMenu(getCurrentUser()),
   canViewAcademyMenu: () => canViewAcademyMenu(getCurrentUser()),
   canViewAcademySubmenu: (section) => canViewAcademySubmenu(getCurrentUser(), section),
   canViewAttendanceMenu,
   canViewPaymentsMenu,
+  canViewPlatformAdminMenu: () => canViewPlatformAdminMenu(getCurrentUser()),
+  updatePlatformAdminMenuVisibility: () => updatePlatformAdminMenuVisibility(),
   showSolveMode,
+  showListMode,
   renderInviteCodes,
   renderAcademyStudents,
   renderTeacherManagement,
@@ -447,6 +464,21 @@ const {
   academyView,
   closeAdminEditor,
 });
+
+const platformAdminController = createPlatformAdminController({
+  elements,
+  appState,
+  setMode,
+  getCurrentUser,
+  canViewPlatformAdminMenu: () => canViewPlatformAdminMenu(getCurrentUser()),
+  setFeedback,
+  platformAdminView,
+  updateAcademyMenuVisibility,
+});
+
+const { showPlatformAdminMenu, bindPlatformAdminEvents } = platformAdminController;
+
+updatePlatformAdminMenuVisibility = platformAdminController.updatePlatformAdminMenuVisibility;
 
 const createView = createProblemCreatorView({
   elements,
@@ -504,12 +536,32 @@ solveView = createSolveView({
   updateAcademyMenuVisibility,
   updateAdminVisibility,
   updatePrintUiVisibility,
+  renderProblemLibraryScreen: () => renderProblemLibraryScreen(),
 });
 
 const categoryCompleteModal = createCategoryCompleteModalController({
   elements,
   onAction: handleCategoryCompleteAction,
 });
+
+let authSessionNotifyFrame = 0;
+
+window.BadukAppHooks = {
+  onAuthSessionChanged() {
+    if (authSessionNotifyFrame) {
+      window.cancelAnimationFrame(authSessionNotifyFrame);
+    }
+
+    authSessionNotifyFrame = window.requestAnimationFrame(() => {
+      authSessionNotifyFrame = 0;
+      updateAcademyMenuVisibility();
+      updateAdminVisibility();
+      if (appState.mode === "list" && problemBankReady) {
+        renderProblemLibraryScreen();
+      }
+    });
+  },
+};
 
 startApplication();
 
@@ -542,6 +594,7 @@ function runApplicationBootstrap() {
     boot.run("bindAcademyMemberEvents", () => bindAcademyMemberEvents());
     boot.run("bindInviteCodeEvents", () => bindInviteCodeEvents());
     boot.run("bindAcademyEvents", () => bindAcademyEvents());
+    boot.run("bindPlatformAdminEvents", () => bindPlatformAdminEvents());
     boot.run("bindCreateEvents", () => bindCreateEvents());
     boot.run("bindOxSolveEvents", () => bindOxSolveEvents());
     boot.run("bindAdminEvents", () => bindAdminEvents());
@@ -620,10 +673,12 @@ async function initializeApp() {
     });
 
     await boot.runAsync("hydrateCategoryRegistry", () => hydrateCategoryRegistry());
+    problemBankReady = true;
     boot.run("syncCategoriesFromProblems", () => syncCategoriesFromProblems());
     boot.run("renderCategoryManager", () => renderCategoryManager());
     boot.run("renderCreatorCategoryOptions", () => renderCreatorCategoryOptions());
     boot.run("updateAcademyMenuVisibility", () => updateAcademyMenuVisibility());
+    boot.run("updateAdminVisibility", () => updateAdminVisibility());
     boot.run("updatePrintUiVisibility", () => updatePrintUiVisibility());
 
     boot.run("showInitialScreen", () => {
@@ -643,6 +698,7 @@ async function initializeApp() {
 
     try {
       replaceProblemList(ProblemStore.getDefaultProblems());
+      problemBankReady = true;
       syncCategoriesFromProblems();
       refreshProblemBank();
     } catch (recoveryError) {
@@ -712,23 +768,66 @@ function applyInitialListScreen() {
   elements.learningObjective.textContent = "학습할 문제를 선택하세요";
 }
 
+function ensureProblemLibraryElements() {
+  elements.problemLibraryBody = document.querySelector("#problem-library-body");
+  elements.categoryFilterStack = document.querySelector(
+    "#problem-library-body .category-filter-stack",
+  );
+  elements.levelGroupFilters = document.querySelector("#level-group-filters");
+  elements.categoryFilters = document.querySelector("#category-filters");
+  elements.problemCards = document.querySelector("#problem-cards");
+}
+
+function syncProblemLibraryChrome() {
+  ensureProblemLibraryElements();
+  elements.problemLibraryBody?.classList.remove("is-hidden");
+  elements.categoryFilterStack?.classList.remove("is-hidden");
+  elements.levelGroupFilters?.classList.remove("is-hidden");
+  elements.categoryFilters?.classList.remove("is-hidden");
+  elements.problemCards?.classList.remove("is-hidden");
+  updatePrintUiVisibility();
+  updateAdminVisibility();
+}
+
+function renderProblemLibraryScreen() {
+  if (!problemBankReady) {
+    return;
+  }
+
+  try {
+    ensureProblemLibraryElements();
+
+    if (!elements.levelGroupFilters) {
+      console.warn("[problem-library] missing #level-group-filters");
+      return;
+    }
+
+    syncProblemLibraryChrome();
+    renderCategoryFilters();
+    renderProblemList();
+  } catch (error) {
+    console.error("[problem-library] renderProblemLibraryScreen failed", error);
+  }
+}
+
 function refreshProblemBank() {
   logScreen("refreshProblemBank", { problemCount: problems.length });
   studyView.clearStudyHubMeta();
   appState.mode = "list";
   setMode("list");
 
-  logScreen("renderCategoryFilters");
-  renderCategoryFilters();
+  if (!problemBankReady) {
+    return;
+  }
 
-  logScreen("renderProblemList");
+  logScreen("renderProblemLibraryScreen");
   elements.meta.textContent = "Problem Library";
   elements.title.textContent = "문제은행";
   elements.description.textContent =
     "카테고리별로 문제를 살펴보고 학습할 문제를 선택하세요.";
   elements.description.classList.remove("is-hidden");
   elements.learningObjective.textContent = "학습할 문제를 선택하세요";
-  renderProblemList();
+  renderProblemLibraryScreen();
 }
 
 function resolveActiveLevelGroupForStudy(progressList) {
@@ -765,15 +864,23 @@ function buildReviewOffersByLevel(curriculumTree, progressByProblemId) {
       return;
     }
 
-    const reviewOffer = getReviewOffer(
-      levelFlow.activeCategory,
-      problems,
-      progressByProblemId,
-      { levelGroup: levelFlow.levelGroup },
-    );
+    try {
+      const reviewOffer = getReviewOffer(
+        levelFlow.activeCategory,
+        problems,
+        progressByProblemId,
+        { levelGroup: levelFlow.levelGroup },
+      );
 
-    if (reviewOffer) {
-      reviewOffersByLevel[levelFlow.levelGroup] = reviewOffer;
+      if (reviewOffer) {
+        reviewOffersByLevel[levelFlow.levelGroup] = reviewOffer;
+      }
+    } catch (error) {
+      console.error("[study] getReviewOffer failed", {
+        category: levelFlow.activeCategory,
+        levelGroup: levelFlow.levelGroup,
+        message: error?.message,
+      });
     }
   });
 
@@ -930,6 +1037,9 @@ function showEmptyProblemState() {
   appState.isAiThinking = false;
   appState.playedMoves = [];
   solveView.renderEmptyProblemState();
+  if (problemBankReady) {
+    renderProblemLibraryScreen();
+  }
 }
 
 function handleBoardClick(point, { button = "primary" } = {}) {
@@ -1074,6 +1184,11 @@ function showMainMenuTarget(menuTarget) {
     return;
   }
 
+  if (menuTarget === "platform") {
+    showPlatformAdminMenu();
+    return;
+  }
+
   showAcademyMenu(menuTarget);
 }
 
@@ -1120,7 +1235,13 @@ function formatDateTime(value) {
 }
 
 function renderCategoryFilters() {
-  renderLevelGroupFilters();
+  ensureProblemLibraryElements();
+  try {
+    renderLevelGroupFilters();
+  } catch (error) {
+    console.error("[renderCategoryFilters] renderLevelGroupFilters failed", error);
+    return;
+  }
 
   if (!elements.categoryFilters) {
     console.warn("[renderCategoryFilters] missing #category-filters element");
@@ -1128,25 +1249,44 @@ function renderCategoryFilters() {
   }
 
   const studentProgressByProblemId = getCurrentStudentProgressByProblemId();
+  const categories = getCategoryFilters();
   elements.categoryFilters.innerHTML = "";
 
-  getCategoryFilters().forEach((category) => {
-    const button = document.createElement("button");
-    button.type = "button";
-    button.className = "category-button";
-    button.dataset.category = category;
-    updateCategoryFilterButton(button, category, studentProgressByProblemId);
-    button.addEventListener("click", () => handleCategoryChipClick(category));
-    elements.categoryFilters.append(button);
+  categories.forEach((category) => {
+    try {
+      const button = document.createElement("button");
+      button.type = "button";
+      button.className = "category-button";
+      button.dataset.category = category;
+      updateCategoryFilterButton(button, category, studentProgressByProblemId);
+      button.addEventListener("click", () => handleCategoryChipClick(category));
+      elements.categoryFilters.append(button);
+    } catch (error) {
+      console.error(`[renderCategoryFilters] failed for category: ${category}`, error);
+    }
   });
 
+  if (categories.length === 0) {
+    const empty = document.createElement("p");
+    empty.className = "empty-list-message";
+    empty.textContent = "표시할 카테고리가 없습니다.";
+    elements.categoryFilters.append(empty);
+  }
+
   if (canUsePrintFeatures()) {
-    printBuilder.render();
+    try {
+      printBuilder.render();
+    } catch (error) {
+      console.error("[renderCategoryFilters] printBuilder.render failed", error);
+    }
   }
 }
 
 function renderLevelGroupFilters() {
+  ensureProblemLibraryElements();
+
   if (!elements.levelGroupFilters) {
+    console.warn("[renderLevelGroupFilters] missing #level-group-filters");
     return;
   }
 
@@ -1243,6 +1383,8 @@ function syncCreatorCategoriesForLevelGroup() {
 }
 
 function renderProblemList() {
+  ensureProblemLibraryElements();
+
   if (!elements.problemCards) {
     console.warn("[renderProblemList] missing #problem-cards element");
     return;
@@ -1618,16 +1760,11 @@ function getProblemsByCategory(category) {
 }
 
 function isCurrentUserAdmin() {
-  return canManageProblems(getCurrentUser());
+  return canEnterAdminMode(getCurrentUser());
 }
 
 function isAcademyUser() {
   return canManageAcademy(getCurrentUser());
-}
-
-function canViewLearningMenu() {
-  const currentUser = getCurrentUser();
-  return canManageStudents(currentUser) || canViewReviews(currentUser);
 }
 
 function canViewAttendanceMenu() {
@@ -1641,10 +1778,11 @@ function canViewPaymentsMenu() {
 function canAccessAcademyMenu(menuType) {
   const currentUser = getCurrentUser();
   const menuPermissions = {
-    learning: canViewLearningMenu(),
+    learning: canViewLearningMenu(currentUser),
     academy: canViewAcademyMenu(currentUser),
     attendance: canManageAttendance(currentUser),
     payments: canViewPayments(currentUser),
+    platform: canViewPlatformAdminMenu(currentUser),
   };
 
   return Boolean(menuPermissions[menuType]);
@@ -1785,9 +1923,19 @@ function buildCategoryCompletionContext(categoryName, levelGroup, progressByProb
     return null;
   }
 
-  const reviewOffer = getReviewOffer(categoryName, problems, resolvedProgressMap, {
-    levelGroup: normalizedLevelGroup,
-  });
+  let reviewOffer = null;
+  try {
+    reviewOffer = getReviewOffer(categoryName, problems, resolvedProgressMap, {
+      levelGroup: normalizedLevelGroup,
+    });
+  } catch (error) {
+    console.error("[learning] getReviewOffer failed during category completion", {
+      categoryName,
+      levelGroup: normalizedLevelGroup,
+      message: error?.message,
+    });
+  }
+
   const nextCategoryName = getNextCategoryName(categoryName, readCategories(), {
     levelGroup: normalizedLevelGroup,
   });

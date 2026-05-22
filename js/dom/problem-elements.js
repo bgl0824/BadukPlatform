@@ -25,6 +25,8 @@ export const problemElements = {
   studyCurriculumAccordion: document.querySelector("#study-curriculum-accordion"),
   studySummary: document.querySelector("#study-summary"),
   problemListScreen: document.querySelector("#problem-list-screen"),
+  problemLibraryBody: document.querySelector("#problem-library-body"),
+  categoryFilterStack: document.querySelector("#problem-library-body .category-filter-stack"),
   levelGroupFilters: document.querySelector("#level-group-filters"),
   categoryFilters: document.querySelector("#category-filters"),
   listSummary: document.querySelector("#list-summary"),

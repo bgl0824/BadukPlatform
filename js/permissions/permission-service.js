@@ -17,37 +17,72 @@ export function normalizeRole(role) {
   return aliasedRole === "academy_owner" ? ROLES.academyOwner : aliasedRole;
 }
 
-export function canManageProblems(user) {
+/** 플랫폼 운영자 — 특정 학원 scope 에 속하지 않음 */
+export function isPlatformAdmin(user) {
   return normalizeRole(user?.role) === ROLES.admin;
 }
 
+/** 문제은행 열람·학습 — academy 와 무관한 공통 학습 영역 */
+export function canAccessProblemLibrary(user) {
+  return canSolveProblems(user);
+}
+
+/** 커리큘럼·문제 CRUD — platform admin 전용 (canManageAcademy 와 분리) */
+export function canManageCurriculum(user) {
+  return isPlatformAdmin(user);
+}
+
+/** @deprecated alias — canManageCurriculum 과 동일 */
+export function canManageProblems(user) {
+  return canManageCurriculum(user);
+}
+
 export function canManageCategories(user) {
-  return canManageProblems(user);
+  return canManageCurriculum(user);
 }
 
+/** 문제은행 관리자 모드 토글 */
+export function canEnterAdminMode(user) {
+  return canManageCurriculum(user);
+}
+
+/** 학원장·선생·학생 운영 — academy_owner 전용 (admin 제외) */
 export function canManageAcademy(user) {
-  return [ROLES.admin, ROLES.academyOwner].includes(normalizeRole(user?.role));
+  return normalizeRole(user?.role) === ROLES.academyOwner;
 }
 
-/** 학원관리 메인 메뉴(학원관리 화면) — admin·학원장만 (academyId 무관) */
+/** 학원관리 메인 메뉴 — 학원장만 */
 export function canViewAcademyMenu(user) {
   return canManageAcademy(user);
 }
 
-/** 학원관리 하위 탭: invites / teachers 는 학원장·관리자만 */
+/** 플랫폼 운영 대시보드 — admin 전용 */
+export function canViewPlatformAdminMenu(user) {
+  return isPlatformAdmin(user);
+}
+
+/** 학습관리 메뉴 — 학원장·선생님 (admin 제외) */
+export function canViewLearningMenu(user) {
+  const role = normalizeRole(user?.role);
+  return [ROLES.academyOwner, ROLES.teacher].includes(role);
+}
+
+/** 학원관리 하위 탭: invites / teachers 는 학원장만 */
 export function canViewAcademySubmenu(user, section) {
   const role = normalizeRole(user?.role);
   if (section === "invites" || section === "teachers") {
-    return [ROLES.admin, ROLES.academyOwner].includes(role);
+    return role === ROLES.academyOwner;
   }
   if (section === "accounts" || section === "students") {
-    return [ROLES.admin, ROLES.academyOwner].includes(role);
+    return role === ROLES.academyOwner;
   }
   return canViewAcademyMenu(user);
 }
 
+/** 문제은행 인쇄·구성 — platform admin · 학원장 (teacher/student 제외) */
 export function canUsePrintBuilder(user) {
-  return [ROLES.admin, ROLES.academyOwner].includes(normalizeRole(user?.role));
+  const role = normalizeRole(user?.role);
+  return role === ROLES.admin || role === ROLES.academyOwner;
 }
 
 export function canManageInviteCodes(user) {
@@ -55,7 +90,7 @@ export function canManageInviteCodes(user) {
 }
 
 export function canManageStudents(user) {
-  return [ROLES.admin, ROLES.academyOwner, ROLES.teacher].includes(normalizeRole(user?.role));
+  return [ROLES.academyOwner, ROLES.teacher].includes(normalizeRole(user?.role));
 }
 
 export function canAssignStudentTeacher(user) {
@@ -67,23 +102,23 @@ export function canViewAllAcademyStudents(user) {
 }
 
 export function canResetMemberPassword(user) {
-  return [ROLES.admin, ROLES.academyOwner].includes(normalizeRole(user?.role));
+  return normalizeRole(user?.role) === ROLES.academyOwner;
 }
 
 export function canManageMemberLifecycle(user) {
-  return [ROLES.admin, ROLES.academyOwner].includes(normalizeRole(user?.role));
+  return normalizeRole(user?.role) === ROLES.academyOwner;
 }
 
 export function canManageAttendance(user) {
-  return [ROLES.admin, ROLES.academyOwner].includes(normalizeRole(user?.role));
+  return normalizeRole(user?.role) === ROLES.academyOwner;
 }
 
 export function canViewReviews(user) {
-  return [ROLES.admin, ROLES.academyOwner, ROLES.teacher].includes(normalizeRole(user?.role));
+  return [ROLES.academyOwner, ROLES.teacher].includes(normalizeRole(user?.role));
 }
 
 export function canViewPayments(user) {
-  return [ROLES.admin, ROLES.academyOwner].includes(normalizeRole(user?.role));
+  return normalizeRole(user?.role) === ROLES.academyOwner;
 }
 
 export function canSolveProblems(user) {

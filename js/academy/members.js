@@ -11,6 +11,8 @@ import {
   refreshAcademyMembersCache,
   readAcademyMembers,
   selectAcademyMembersForUser,
+  buildTeacherAssignmentMatchIds,
+  isStudentAssignedToTeacher,
   isActiveMember,
   MEMBER_STATUS,
   normalizeAcademyMemberRole,
@@ -24,6 +26,7 @@ import {
   canManageMemberLifecycle,
   canResetMemberPassword,
   canViewAllAcademyStudents,
+  isPlatformAdmin,
   normalizeRole,
   ROLES,
 } from "../permissions/permission-service.js";
@@ -310,16 +313,36 @@ export function createAcademyMemberController({
     renderAcademyMembers({ view: "accounts" });
   }
 
+  function renderPlatformAdminAcademyPlaceholder() {
+    const message =
+      '<p class="academy-empty-state">플랫폼 운영 계정은 학원별 학습·운영 데이터를 이 화면에서 조회하지 않습니다. <strong>플랫폼</strong> 메뉴를 이용해 주세요.</p>';
+
+    if (elements.academyStudentList) {
+      elements.academyStudentList.innerHTML = message;
+    }
+    if (elements.academyTeacherList) {
+      elements.academyTeacherList.innerHTML = message;
+    }
+    if (elements.academyStudentAccountList) {
+      elements.academyStudentAccountList.innerHTML = message;
+    }
+    if (elements.inviteCodeList) {
+      elements.inviteCodeList.innerHTML = message;
+    }
+  }
+
   async function renderAcademyMembers({ showTeachers = true, view } = {}) {
     const renderGeneration = ++membersRenderGeneration;
     studentListState.view = resolveMemberView({ showTeachers, view });
     studentListState.showTeachers = studentListState.view === "teachers";
     const currentUser = getCurrentUser();
-    const academyScopeId =
-      normalizeRole(currentUser?.role ?? currentUser?.userType) === ROLES.admin &&
-      !currentUser?.academyId
-        ? null
-        : resolveAcademyScopeId(currentUser);
+
+    if (isPlatformAdmin(currentUser)) {
+      renderPlatformAdminAcademyPlaceholder();
+      return;
+    }
+
+    const academyScopeId = resolveAcademyScopeId(currentUser);
     const cacheBeforeRefresh = readAcademyMembers();
 
     const refreshResult = await refreshAcademyMembersCache(academyScopeId, { user: currentUser });
@@ -398,10 +421,33 @@ export function createAcademyMemberController({
     });
     const inactiveStudentMembers = allStudentMembers.filter((member) => !isActiveMember(member));
     const inactiveTeacherMembers = allTeacherMembers.filter((member) => !isActiveMember(member));
-    const scopedActiveStudents = getScopedStudentMembers(activeStudentMembers, currentUser);
+    const selfTeacherMember =
+      activeTeacherMembers.find(
+        (member) => String(member.userId ?? "").trim() === String(currentUser?.id ?? "").trim(),
+      ) ??
+      allTeacherMembers.find(
+        (member) => String(member.userId ?? "").trim() === String(currentUser?.id ?? "").trim(),
+      ) ??
+      null;
+
+    const scopedActiveStudents = getScopedStudentMembers(activeStudentMembers, currentUser, {
+      teacherMembers: activeTeacherMembers,
+      selfTeacherMember,
+    });
     const scopedInactiveStudents = canManageLifecycle
-      ? getScopedStudentMembers(inactiveStudentMembers, currentUser)
+      ? getScopedStudentMembers(inactiveStudentMembers, currentUser, {
+          teacherMembers: activeTeacherMembers,
+          selfTeacherMember,
+        })
       : [];
+
+    logTeacherStudentAssignmentFilter({
+      currentUser,
+      selfTeacherMember,
+      teacherMembers: activeTeacherMembers,
+      activeStudentMembers,
+      scopedActiveStudents,
+    });
     const filteredActiveStudents = getVisibleStudentMembers(scopedActiveStudents, activeTeacherMembers);
     const filteredInactiveStudents = studentListState.showInactiveStudents
       ? getVisibleStudentMembers(scopedInactiveStudents, activeTeacherMembers)
@@ -483,9 +529,11 @@ export function createAcademyMemberController({
         canManageLifecycle: false,
         cardMode: isLearningStudentsView ? "learning" : "operations",
         emptyMessage: getStudentEmptyMessage({
-          activeCount: activeStudentMembers.length,
+          academyActiveCount: activeStudentMembers.length,
+          scopedActiveCount: scopedActiveStudents.length,
           inactiveCount: inactiveStudentMembers.length,
           visibleCount: filteredActiveStudents.length + filteredInactiveStudents.length,
+          isTeacherView: normalizeRole(currentUser?.role) === ROLES.teacher,
         }),
       });
     }
@@ -547,16 +595,26 @@ export function createAcademyMemberController({
     }
   }
 
-  function getStudentEmptyMessage({ activeCount, inactiveCount, visibleCount }) {
+  function getStudentEmptyMessage({
+    academyActiveCount = 0,
+    scopedActiveCount = 0,
+    inactiveCount = 0,
+    visibleCount = 0,
+    isTeacherView = false,
+  }) {
     if (visibleCount > 0) {
       return "조건에 맞는 학생이 없습니다.";
     }
 
-    if (activeCount === 0 && inactiveCount > 0 && !studentListState.showInactiveStudents) {
+    if (isTeacherView && academyActiveCount > 0 && scopedActiveCount === 0) {
+      return "담당으로 배정된 학생이 없습니다.";
+    }
+
+    if (academyActiveCount === 0 && inactiveCount > 0 && !studentListState.showInactiveStudents) {
       return "활성 학생이 없습니다. 비활성 학생 보기를 켜 주세요.";
     }
 
-    if (activeCount === 0 && inactiveCount === 0) {
+    if (academyActiveCount === 0 && inactiveCount === 0) {
       return "가입한 학생이 없습니다.";
     }
 
@@ -1092,11 +1150,7 @@ export function createAcademyMemberController({
         source: DEBUG_SOURCES.fallback,
         scopeIds,
         afterStatusFilter: afterStatusFilter.map((t) => t.userId),
-        getAcademyMembersForUserPath:
-          normalizeRole(currentUser?.role ?? currentUser?.userType) === ROLES.admin &&
-          !currentUser?.academyId
-            ? "admin-all"
-            : "academy-scope",
+        getAcademyMembersForUserPath: "academy-scope",
       });
     }
 
@@ -1126,7 +1180,7 @@ export function createAcademyMemberController({
     ].find((member) => member.userId === userId);
   }
 
-  function handleDeactivateStudent(studentUserId) {
+  async function handleDeactivateStudent(studentUserId) {
     const currentUser = getCurrentUser();
     if (!canManageMemberLifecycle(currentUser)) {
       return;
@@ -1144,18 +1198,41 @@ export function createAcademyMemberController({
       return;
     }
 
-    deactivateStudentMember({ academyId: getAcademyId(), studentUserId });
-    refreshAcademyMemberView();
+    const result = await deactivateStudentMember({
+      academyId: member.academyId || getAcademyId(),
+      studentUserId,
+    });
+
+    if (!result?.ok) {
+      window.alert(result?.message || "학생 비활성화에 실패했습니다.");
+      return;
+    }
+
+    await refreshAcademyMemberView();
   }
 
-  function handleActivateStudent(studentUserId) {
+  async function handleActivateStudent(studentUserId) {
     const currentUser = getCurrentUser();
     if (!canManageMemberLifecycle(currentUser)) {
       return;
     }
 
-    activateStudentMember({ academyId: getAcademyId(), studentUserId });
-    refreshAcademyMemberView();
+    const member = findAcademyMemberByUserId(studentUserId);
+    if (!member || member.role !== "student") {
+      return;
+    }
+
+    const result = await activateStudentMember({
+      academyId: member.academyId || getAcademyId(),
+      studentUserId,
+    });
+
+    if (!result?.ok) {
+      window.alert(result?.message || "학생 활성화에 실패했습니다.");
+      return;
+    }
+
+    await refreshAcademyMemberView();
   }
 
   async function handleDeleteStudent(studentUserId) {
@@ -1192,7 +1269,7 @@ export function createAcademyMemberController({
     await refreshAcademyMemberView();
   }
 
-  function handleDeactivateTeacher(teacherUserId) {
+  async function handleDeactivateTeacher(teacherUserId) {
     const currentUser = getCurrentUser();
     if (!canManageMemberLifecycle(currentUser)) {
       return;
@@ -1214,22 +1291,42 @@ export function createAcademyMemberController({
       return;
     }
 
-    deactivateTeacherMember({
-      academyId: getAcademyId(),
+    const result = await deactivateTeacherMember({
+      academyId: member.academyId || getAcademyId(),
       teacherUserId,
       clearAssignments: true,
     });
-    refreshAcademyMemberView();
+
+    if (!result?.ok) {
+      window.alert(result?.message || "선생님 비활성화에 실패했습니다.");
+      return;
+    }
+
+    await refreshAcademyMemberView();
   }
 
-  function handleActivateTeacher(teacherUserId) {
+  async function handleActivateTeacher(teacherUserId) {
     const currentUser = getCurrentUser();
     if (!canManageMemberLifecycle(currentUser)) {
       return;
     }
 
-    activateTeacherMember({ academyId: getAcademyId(), teacherUserId });
-    refreshAcademyMemberView();
+    const member = findAcademyMemberByUserId(teacherUserId);
+    if (!member || member.role !== "teacher") {
+      return;
+    }
+
+    const result = await activateTeacherMember({
+      academyId: member.academyId || getAcademyId(),
+      teacherUserId,
+    });
+
+    if (!result?.ok) {
+      window.alert(result?.message || "선생님 활성화에 실패했습니다.");
+      return;
+    }
+
+    await refreshAcademyMemberView();
   }
 
   async function handleEditMemberProfile(userId) {
@@ -1323,10 +1420,6 @@ export function createAcademyMemberController({
   }
 
   function canResetMemberInAcademy(currentUser, member) {
-    if (normalizeRole(currentUser?.role) === ROLES.admin) {
-      return member.role === "student" || member.role === "teacher";
-    }
-
     const academyId = resolveAcademyScopeId(currentUser);
     return (
       String(member.academyId ?? "").trim() === academyId &&
@@ -1334,19 +1427,68 @@ export function createAcademyMemberController({
     );
   }
 
-  function getScopedStudentMembers(studentMembers, currentUser) {
+  function getScopedStudentMembers(
+    studentMembers,
+    currentUser,
+    { teacherMembers = [], selfTeacherMember = null } = {},
+  ) {
     if (canViewAllAcademyStudents(currentUser)) {
-      return filterStudentsBySelectedTeacher(studentMembers);
+      return filterStudentsBySelectedTeacher(studentMembers, teacherMembers);
     }
 
     if (normalizeRole(currentUser?.role) === ROLES.teacher) {
-      return studentMembers.filter((member) => member.assignedTeacherId === currentUser.id);
+      const matchIds = buildTeacherAssignmentMatchIds(
+        currentUser,
+        teacherMembers,
+        selfTeacherMember,
+      );
+      return studentMembers.filter((member) => isStudentAssignedToTeacher(member, matchIds));
     }
 
     return studentMembers;
   }
 
-  function filterStudentsBySelectedTeacher(studentMembers) {
+  function logTeacherStudentAssignmentFilter({
+    currentUser,
+    selfTeacherMember,
+    teacherMembers,
+    activeStudentMembers,
+    scopedActiveStudents,
+  }) {
+    if (normalizeRole(currentUser?.role) !== ROLES.teacher) {
+      return;
+    }
+
+    const matchIds = buildTeacherAssignmentMatchIds(
+      currentUser,
+      teacherMembers,
+      selfTeacherMember,
+    );
+    const payload = {
+      currentUserId: currentUser?.id ?? null,
+      currentUserRole: currentUser?.role ?? null,
+      selfTeacherMemberId: selfTeacherMember?.id ?? null,
+      selfTeacherMemberUserId: selfTeacherMember?.userId ?? null,
+      matchIds: [...matchIds],
+      academyActiveStudentCount: activeStudentMembers.length,
+      scopedActiveStudentCount: scopedActiveStudents.length,
+      assignmentSamples: activeStudentMembers.slice(0, 8).map((student) => ({
+        studentUserId: student.userId,
+        assignedTeacherId: student.assignedTeacherId ?? null,
+        matchesCurrentTeacher: isStudentAssignedToTeacher(student, matchIds),
+      })),
+    };
+
+    debugLog(ACADEMY, "teacher student assignment filter", payload);
+
+    if (activeStudentMembers.length > 0 && scopedActiveStudents.length === 0) {
+      console.warn("[academy] teacher assignment filter removed all students", payload);
+    } else if (activeStudentMembers.length === 0) {
+      console.warn("[academy] teacher sees no academy students before assignment filter", payload);
+    }
+  }
+
+  function filterStudentsBySelectedTeacher(studentMembers, teacherMembers = []) {
     if (studentListState.selectedTeacherId === "all") {
       return studentMembers;
     }
@@ -1355,9 +1497,12 @@ export function createAcademyMemberController({
       return studentMembers.filter((member) => !member.assignedTeacherId);
     }
 
-    return studentMembers.filter((member) => {
-      return member.assignedTeacherId === studentListState.selectedTeacherId;
-    });
+    const matchIds = buildTeacherAssignmentMatchIds(
+      { id: studentListState.selectedTeacherId },
+      teacherMembers,
+    );
+
+    return studentMembers.filter((member) => isStudentAssignedToTeacher(member, matchIds));
   }
 
   function renderTeacherFilterBar(teacherMembers, studentMembers, canViewAllStudents) {
@@ -1377,7 +1522,7 @@ export function createAcademyMemberController({
         ${teacherMembers
           .map((teacher) => {
             const label = getMemberDisplayName(teacher);
-            const count = countStudentsByTeacher(studentMembers, teacher.userId);
+            const count = countStudentsByTeacher(studentMembers, teacher.userId, teacherMembers);
             return renderTeacherFilterChip(teacher.userId, label, count);
           })
           .join("")}
@@ -1427,10 +1572,11 @@ export function createAcademyMemberController({
     teacherMembers.forEach((teacher) => {
       const value = String(teacher?.userId ?? "").trim();
       const label = getTeacherOptionLabel(teacher);
+      const teacherMatchIds = buildTeacherAssignmentMatchIds(teacher, teacherMembers, teacher);
       rows.push({
         value,
         label,
-        selected: assignedId === value,
+        selected: isStudentAssignedToTeacher(member, teacherMatchIds),
         nameRaw: teacher?.name ?? null,
         usernameRaw: teacher?.username ?? null,
         labelIsBlank: label.length === 0,
@@ -1546,12 +1692,17 @@ export function createAcademyMemberController({
     });
   }
 
-  function getTeacherDisplayName(teacherUserId, teacherMembers) {
-    if (!teacherUserId) {
+  function getTeacherDisplayName(teacherRef, teacherMembers) {
+    const assigned = String(teacherRef ?? "").trim();
+    if (!assigned) {
       return "미배정";
     }
 
-    const teacher = teacherMembers.find((member) => member.userId === teacherUserId);
+    const teacher = teacherMembers.find(
+      (member) =>
+        String(member.userId ?? "").trim() === assigned ||
+        String(member.id ?? "").trim() === assigned,
+    );
     return teacher ? getMemberDisplayName(teacher) : "미배정";
   }
 

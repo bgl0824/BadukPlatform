@@ -102,6 +102,11 @@ const isAuthPage = document.body.dataset.page === "auth";
 const isSignupPage = document.body.dataset.page === "signup";
 const requiresAuth = document.body.dataset.requireAuth === "true";
 let authStateSubscription = null;
+let authBootstrapSettled = false;
+let resolveInitialAuthSession = null;
+const initialAuthSessionPromise = new Promise((resolve) => {
+  resolveInitialAuthSession = resolve;
+});
 /** 초대 링크(/signup?invite=) 진입 시에만 true — 일반 회원가입 폼과 분기 */
 let inviteSignupEntry = false;
 let checkedUsername = "";
@@ -140,39 +145,81 @@ authReady
     }
   });
 
+function ensureAuthStateListener() {
+  if (authStateSubscription) {
+    return;
+  }
+
+  authStateSubscription = subscribeSupabaseAuthStateChange(({ event, user }) => {
+    if (event === "INITIAL_SESSION" && resolveInitialAuthSession) {
+      resolveInitialAuthSession({ event, user });
+      resolveInitialAuthSession = null;
+    }
+
+    handleSupabaseAuthEvent(event, user);
+  });
+}
+
+function handleSupabaseAuthEvent(event, user) {
+  if (!authBootstrapSettled) {
+    return;
+  }
+
+  if (user) {
+    void applySupabaseUser(user).then(() => {
+      renderAuthStatus();
+      updateAdminModeVisibility();
+      notifyAppAuthSessionChanged();
+    });
+    return;
+  }
+
+  if (event === "SIGNED_OUT" || event === "USER_DELETED") {
+    clearSessionUser({ redirectOnProtectedPage: true });
+  }
+}
+
+function notifyAppAuthSessionChanged() {
+  if (!authBootstrapSettled) {
+    return;
+  }
+
+  window.BadukAppHooks?.onAuthSessionChanged?.();
+}
+
 async function bootstrapAuth() {
   hideTemporaryAdminEntry();
 
   if (!isSupabaseConfigured()) {
     console.warn("Supabase Auth is not configured. Login and signup are unavailable.");
-    currentUser = null;
-    localStorage.removeItem(AUTH_STORAGE_KEY);
+    currentUser = readStoredUser();
+    if (!currentUser) {
+      localStorage.removeItem(AUTH_STORAGE_KEY);
+    }
+    authBootstrapSettled = true;
     return handleAuthRedirects();
   }
 
+  ensureAuthStateListener();
+
   try {
-    const session = await getSupabaseAuthSession();
-    if (session?.user) {
-      await applySupabaseUser(session.user);
+    currentUser = readStoredUser();
+
+    const initialAuth = await Promise.race([
+      initialAuthSessionPromise,
+      new Promise((resolve) => window.setTimeout(() => resolve(null), 3000)),
+    ]);
+
+    if (initialAuth?.user) {
+      await applySupabaseUser(initialAuth.user, { notifyApp: false });
     } else {
-      currentUser = null;
-      localStorage.removeItem(AUTH_STORAGE_KEY);
-    }
-
-    if (!authStateSubscription) {
-      authStateSubscription = subscribeSupabaseAuthStateChange(({ event, user }) => {
-        if (user) {
-          void applySupabaseUser(user).then(() => {
-          renderAuthStatus();
-          updateAdminModeVisibility();
-          });
-          return;
-        }
-
-        if (event === "SIGNED_OUT" || event === "USER_DELETED") {
-          clearSessionUser({ redirectOnProtectedPage: true });
-        }
-      });
+      const session = await getSupabaseAuthSession();
+      if (session?.user) {
+        await applySupabaseUser(session.user, { notifyApp: false });
+      } else {
+        currentUser = null;
+        localStorage.removeItem(AUTH_STORAGE_KEY);
+      }
     }
   } catch (error) {
     console.error("Failed to restore Supabase session.", error);
@@ -180,6 +227,7 @@ async function bootstrapAuth() {
     localStorage.removeItem(AUTH_STORAGE_KEY);
   }
 
+  authBootstrapSettled = true;
   return handleAuthRedirects();
 }
 
@@ -216,33 +264,35 @@ async function enrichAppUserFromAcademyMember(appUser) {
     };
   }
 
-  if (String(appUser.academyId ?? "").trim()) {
-    return appUser;
-  }
-
   const { fetchAcademyMemberByUserId } = await import("./services/academy-member-service.js");
+  const { resolveMemberAcademyId } = await import("./services/academy-service.js");
   const member = await fetchAcademyMemberByUserId(appUser.id);
   if (!member) {
     return appUser;
   }
 
+  const academyId = resolveMemberAcademyId(member, appUser.id) || appUser.academyId;
+
   return {
     ...appUser,
-    academyId: member.academyId,
+    academyId,
     academyName: member.academyName || appUser.academyName,
     inviteCode: member.inviteCode || appUser.inviteCode,
   };
 }
 
-async function applySupabaseUser(supabaseUser) {
+async function applySupabaseUser(supabaseUser, { notifyApp = true } = {}) {
   const appUser = await enrichAppUserFromAcademyMember(mapSupabaseUserToAppUser(supabaseUser));
-  storeUser(appUser);
+  storeUser(appUser, { notifyApp });
 }
 
 function clearSessionUser({ redirectOnProtectedPage = false } = {}) {
   currentUser = null;
   localStorage.removeItem(AUTH_STORAGE_KEY);
   updateAdminModeVisibility();
+  if (!redirectOnProtectedPage) {
+    notifyAppAuthSessionChanged();
+  }
 
   if (redirectOnProtectedPage && requiresAuth) {
     window.location.href = "./auth.html";
@@ -1057,7 +1107,7 @@ async function hashPassword(username, password) {
     .join("");
 }
 
-function storeUser(user) {
+function storeUser(user, { notifyApp = true } = {}) {
   const { email: _internalEmail, ...sessionUser } = user;
   currentUser = {
     ...sessionUser,
@@ -1065,6 +1115,9 @@ function storeUser(user) {
   };
   localStorage.setItem(AUTH_STORAGE_KEY, JSON.stringify(currentUser));
   updateAdminModeVisibility();
+  if (notifyApp) {
+    notifyAppAuthSessionChanged();
+  }
 }
 
 function readStoredUser() {

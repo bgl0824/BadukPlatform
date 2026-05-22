@@ -7,8 +7,13 @@ import {
   debugSync,
   debugWarn,
 } from "../bootstrap/debug-logs.js";
+import { normalizeRole, ROLES } from "../permissions/permission-service.js";
 import { getSupabaseClient, isSupabaseConfigured } from "./supabase-client.js";
-import { readAcademyMembers, saveAcademyMembers } from "./academy-service.js";
+import {
+  normalizeAcademyMemberRole,
+  readAcademyMembers,
+  saveAcademyMembers,
+} from "./academy-service.js";
 
 const ACADEMY = DEBUG_CHANNELS.academy;
 const SYNC = DEBUG_CHANNELS.sync;
@@ -109,7 +114,42 @@ export async function repairAcademyMemberScope() {
   };
 }
 
-export async function fetchAcademyMembersFromSupabase({ academyId, academyIds } = {}) {
+/** 선생님/학생: 본인 row의 academy_id 를 invited_by(학원장 uid) 로 맞춤 */
+export async function repairMyAcademyMemberScope() {
+  if (!isSupabaseConfigured()) {
+    return { ok: true, source: "localStorage", fixed: false };
+  }
+
+  const client = getSupabaseClient();
+  const { data, error } = await client.rpc("repair_my_academy_member_scope");
+
+  if (error) {
+    debugWarn(ACADEMY, "repair my academy scope failed", {
+      source: DEBUG_SOURCES.supabase,
+      message: error.message,
+    });
+    return { ok: false, message: error.message };
+  }
+
+  const fixed = Boolean(data?.fixed);
+  if (fixed) {
+    debugLog(ACADEMY, "repair my academy scope", {
+      source: DEBUG_SOURCES.supabase,
+      academyId: data?.academyId ?? null,
+      invitedBy: data?.invitedBy ?? null,
+    });
+  }
+
+  return {
+    ok: true,
+    source: "supabase",
+    fixed,
+    academyId: data?.academyId ?? null,
+    invitedBy: data?.invitedBy ?? null,
+  };
+}
+
+export async function fetchAcademyMembersFromSupabase({ academyId, academyIds, user } = {}) {
   const beforeCount = readAcademyMembers().length;
   const scopeIds = [
     ...(Array.isArray(academyIds) ? academyIds : []),
@@ -160,19 +200,53 @@ export async function fetchAcademyMembersFromSupabase({ academyId, academyIds } 
           uniqueScopeIds.includes(String(member.academyId ?? "").trim()),
         )
       : readAcademyMembers();
+    console.error("[academy] academy_members fetch failed", {
+      academyId: scopeLabel,
+      status: error.code ?? null,
+      message: error.message,
+      details: error.details ?? null,
+      hint: error.hint ?? null,
+    });
     debugFetch(ACADEMY, "members fetch failed", {
       source: DEBUG_SOURCES.fallback,
       academyId: scopeLabel,
       before: beforeCount,
       after: localMembers.length,
       message: error.message,
+      details: error.details ?? null,
+      hint: error.hint ?? null,
     });
     return { ok: false, source: "localStorage", members: localMembers, message: error.message };
   }
 
   const members = (data ?? []).map(rowToMember);
+  const userRole = user ? normalizeRole(user.role ?? user.userType) : "";
+
   if (uniqueScopeIds.length === 1) {
-    syncAcademyMembersCache(uniqueScopeIds[0], members);
+    const scopeKey = uniqueScopeIds[0];
+    const incomingStudents = members.filter(
+      (member) => normalizeAcademyMemberRole(member.role) === "student",
+    );
+    const previousSlice = readAcademyMembers().filter(
+      (member) => String(member.academyId ?? "").trim() === scopeKey,
+    );
+    const hadStudents = previousSlice.some(
+      (member) => normalizeAcademyMemberRole(member.role) === "student",
+    );
+
+    if (userRole === ROLES.teacher && hadStudents && incomingStudents.length === 0) {
+      debugWarn(ACADEMY, "teacher fetch returned no students — preserving cached slice (check RLS)", {
+        source: DEBUG_SOURCES.fallback,
+        scopeKey,
+        remoteCount: members.length,
+        cachedStudents: previousSlice.filter(
+          (member) => normalizeAcademyMemberRole(member.role) === "student",
+        ).length,
+      });
+      mergeMembersIntoLocalCache(members);
+    } else {
+      syncAcademyMembersCache(scopeKey, members);
+    }
   } else if (uniqueScopeIds.length > 1) {
     uniqueScopeIds.forEach((scopeId) => {
       const slice = members.filter((member) => String(member.academyId ?? "").trim() === scopeId);
@@ -189,6 +263,65 @@ export async function fetchAcademyMembersFromSupabase({ academyId, academyIds } 
     before: beforeCount,
     after: afterCount,
     remoteCount: members.length,
+  });
+
+  return { ok: true, source: "supabase", members };
+}
+
+/** 선생님 담당 학생 — assigned_teacher_id 가 auth uid / member id 어느 쪽이든 조회 */
+export async function fetchStudentsAssignedToTeacher({ academyId, authUserId, memberId } = {}) {
+  const refs = [
+    ...new Set(
+      [authUserId, memberId]
+        .map((value) => String(value ?? "").trim())
+        .filter(Boolean),
+    ),
+  ];
+
+  if (!refs.length) {
+    return { ok: true, source: "skip", members: [] };
+  }
+
+  if (!isSupabaseConfigured()) {
+    const local = readAcademyMembers().filter(
+      (member) =>
+        normalizeAcademyMemberRole(member.role) === "student" &&
+        refs.includes(String(member.assignedTeacherId ?? "").trim()) &&
+        (!academyId || String(member.academyId ?? "").trim() === String(academyId).trim()),
+    );
+    return { ok: true, source: "localStorage", members: local };
+  }
+
+  const client = getSupabaseClient();
+  let query = client
+    .from(SUPABASE_ACADEMY_MEMBERS_TABLE)
+    .select("*")
+    .eq("role", "student")
+    .in("assigned_teacher_id", refs);
+
+  const scopeKey = String(academyId ?? "").trim();
+  if (scopeKey) {
+    query = query.eq("academy_id", scopeKey);
+  }
+
+  const { data, error } = await query;
+
+  if (error) {
+    debugWarn(ACADEMY, "assigned students fetch failed", {
+      source: DEBUG_SOURCES.supabase,
+      refs,
+      academyId: scopeKey || null,
+      message: error.message,
+    });
+    return { ok: false, message: error.message, members: [] };
+  }
+
+  const members = (data ?? []).map(rowToMember);
+  debugFetch(ACADEMY, "assigned students fetched", {
+    source: DEBUG_SOURCES.supabase,
+    refs,
+    academyId: scopeKey || null,
+    count: members.length,
   });
 
   return { ok: true, source: "supabase", members };
@@ -366,10 +499,20 @@ export async function updateAcademyMemberInSupabase(member) {
     .single();
 
   if (error) {
+    console.error("[academy] academy_members update failed", {
+      memberId: member.id,
+      academyId: row.academy_id,
+      userId: row.user_id,
+      status: row.status,
+      message: error.message,
+      details: error.details ?? null,
+      hint: error.hint ?? null,
+    });
     debugError(ACADEMY, "member update failed", {
       source: DEBUG_SOURCES.supabase,
       memberId: member.id,
       message: error.message,
+      details: error.details ?? null,
       assignedTeacherId: row.assigned_teacher_id ?? null,
     });
     return { ok: false, message: error.message };

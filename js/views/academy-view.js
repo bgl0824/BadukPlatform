@@ -16,7 +16,10 @@ export function createAcademyView({
   canViewAcademySubmenu,
   canViewAttendanceMenu,
   canViewPaymentsMenu,
+  canViewPlatformAdminMenu,
+  updatePlatformAdminMenuVisibility,
   showSolveMode,
+  showListMode,
   renderInviteCodes,
   renderAcademyStudents,
   renderTeacherManagement,
@@ -165,16 +168,22 @@ export function createAcademyView({
     setMenuButtonsVisibility([elements.academyModeButton], academyMenuVisible);
     setMenuButtonsVisibility([elements.attendanceModeButton], canViewAttendanceMenu());
     setMenuButtonsVisibility([elements.paymentsModeButton], canViewPaymentsMenu());
+    updatePlatformAdminMenuVisibility?.();
     updateAcademySubmenuVisibility();
 
     const canStayInMode =
       (appState.mode === "learning" && canViewLearningMenu()) ||
       (appState.mode === "academy" && canViewAcademyMenu()) ||
       (appState.mode === "attendance" && canViewAttendanceMenu()) ||
-      (appState.mode === "payments" && canViewPaymentsMenu());
+      (appState.mode === "payments" && canViewPaymentsMenu()) ||
+      (appState.mode === "platform" && canViewPlatformAdminMenu());
 
-    if (["learning", "academy", "attendance", "payments"].includes(appState.mode) && !canStayInMode) {
-      showSolveMode();
+    if (["learning", "academy", "attendance", "payments", "platform"].includes(appState.mode) && !canStayInMode) {
+      if (typeof showListMode === "function") {
+        showListMode();
+      } else {
+        showSolveMode();
+      }
     }
   }
 
