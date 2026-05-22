@@ -117,6 +117,7 @@ const ProblemStore = {
   migrateLegacyProblems,
   loadProblems,
   saveProblem,
+  reorderProblemsInCategory,
   deleteProblem,
   subscribe,
   isConfigured,
@@ -159,6 +160,7 @@ async function loadProblems({ seedDefaults = true } = {}) {
   const { data, error } = await client
     .from(SUPABASE_PROBLEMS_TABLE)
     .select("*")
+    .order("display_order", { ascending: true })
     .order("created_at", { ascending: true });
 
   if (error) {
@@ -170,7 +172,9 @@ async function loadProblems({ seedDefaults = true } = {}) {
     return loadProblems({ seedDefaults: false });
   }
 
-  const loadedProblems = data.map((row) => cloneProblem(fromSupabaseRow(row)));
+  const loadedProblems = sortLoadedProblems(
+    data.map((row) => cloneProblem(fromSupabaseRow(row))),
+  );
   return removeRetiredMutualAtariIntroProblems(loadedProblems);
 }
 
@@ -215,11 +219,32 @@ function readLegacyProblems() {
   }
 }
 
+function assignSeedDisplayOrders(problemList) {
+  const counters = new Map();
+
+  return problemList.map((problem) => {
+    const levelGroup = normalizeProblemLevelGroup(problem.levelGroup);
+    const key = `${levelGroup}::${problem.category}`;
+    const existingOrder = Number(problem.displayOrder);
+    const nextOrder =
+      Number.isFinite(existingOrder) && existingOrder > 0
+        ? existingOrder
+        : (counters.get(key) ?? 0) + 1;
+    counters.set(key, Math.max(counters.get(key) ?? 0, nextOrder));
+
+    return {
+      ...problem,
+      displayOrder: nextOrder,
+    };
+  });
+}
+
 async function saveProblems(problemList) {
   const client = getSupabaseClient();
+  const preparedProblems = assignSeedDisplayOrders(problemList);
   const { error } = await client
     .from(SUPABASE_PROBLEMS_TABLE)
-    .upsert(problemList.map(toSupabaseRow), { onConflict: "id" });
+    .upsert(preparedProblems.map(toSupabaseRow), { onConflict: "id" });
 
   if (error) {
     throw error;
@@ -228,9 +253,17 @@ async function saveProblems(problemList) {
 
 async function saveProblem(problem) {
   const client = getSupabaseClient();
+  const displayOrder = await resolveDisplayOrderForSave(problem);
+  const preparedProblem = {
+    ...problem,
+    category: String(problem.category ?? "").trim(),
+    levelGroup: normalizeProblemLevelGroup(problem.levelGroup),
+    displayOrder,
+  };
+  const row = toSupabaseRow(preparedProblem);
   const { data, error } = await client
     .from(SUPABASE_PROBLEMS_TABLE)
-    .upsert(toSupabaseRow(problem), { onConflict: "id" })
+    .upsert(row, { onConflict: "id" })
     .select()
     .single();
 
@@ -238,7 +271,41 @@ async function saveProblem(problem) {
     throw error;
   }
 
-  return cloneProblem(fromSupabaseRow(data));
+  const savedProblem = cloneProblem(fromSupabaseRow(data));
+  console.log("[ProblemStore] saved problem display_order", {
+    id: savedProblem.id,
+    category: savedProblem.category,
+    levelGroup: savedProblem.levelGroup,
+    displayOrder: savedProblem.displayOrder,
+    supabaseRow: data?.display_order,
+  });
+  return savedProblem;
+}
+
+async function reorderProblemsInCategory({ category, levelGroup, orderedProblemIds }) {
+  const normalizedCategory = String(category ?? "").trim();
+  const normalizedLevelGroup = normalizeProblemLevelGroup(levelGroup);
+  const safeIds = orderedProblemIds.filter(Boolean);
+
+  if (!normalizedCategory || safeIds.length === 0) {
+    return;
+  }
+
+  const client = getSupabaseClient();
+  const updates = safeIds.map((problemId, index) =>
+    client
+      .from(SUPABASE_PROBLEMS_TABLE)
+      .update({ display_order: index + 1 })
+      .eq("id", problemId)
+      .eq("category", normalizedCategory)
+      .eq("level_group", normalizedLevelGroup),
+  );
+
+  const results = await Promise.all(updates);
+  const failed = results.find((result) => result.error);
+  if (failed?.error) {
+    throw failed.error;
+  }
 }
 
 async function deleteProblem(problemId) {
@@ -337,7 +404,143 @@ function normalizeProblemLevelGroup(value) {
   return groups.includes(value) ? value : "입문";
 }
 
+function getMaxDisplayOrderInScopeMemory(categoryName, levelGroup, problemList, excludeProblemId) {
+  const normalizedCategory = String(categoryName ?? "").trim();
+  const normalizedLevelGroup = normalizeProblemLevelGroup(levelGroup);
+  let maxOrder = 0;
+
+  problemList.forEach((entry) => {
+    if (excludeProblemId && entry.id === excludeProblemId) {
+      return;
+    }
+
+    if (String(entry.category ?? "").trim() !== normalizedCategory) {
+      return;
+    }
+
+    if (normalizeProblemLevelGroup(entry.levelGroup) !== normalizedLevelGroup) {
+      return;
+    }
+
+    const order = Number(entry.displayOrder);
+    if (Number.isFinite(order) && order > maxOrder) {
+      maxOrder = order;
+    }
+  });
+
+  return maxOrder;
+}
+
+async function fetchMaxDisplayOrderInScope(categoryName, levelGroup, { excludeProblemId } = {}) {
+  const normalizedCategory = String(categoryName ?? "").trim();
+  const normalizedLevelGroup = normalizeProblemLevelGroup(levelGroup);
+
+  if (!normalizedCategory) {
+    return 0;
+  }
+
+  const client = getSupabaseClient();
+  let query = client
+    .from(SUPABASE_PROBLEMS_TABLE)
+    .select("display_order")
+    .eq("category", normalizedCategory)
+    .eq("level_group", normalizedLevelGroup)
+    .gt("display_order", 0)
+    .order("display_order", { ascending: false })
+    .limit(1);
+
+  if (excludeProblemId) {
+    query = query.neq("id", excludeProblemId);
+  }
+
+  const { data, error } = await query;
+  if (error) {
+    throw error;
+  }
+
+  const maxValue = Number(data?.[0]?.display_order);
+  return Number.isFinite(maxValue) && maxValue > 0 ? maxValue : 0;
+}
+
+async function resolveDisplayOrderForSave(problem) {
+  const category = String(problem.category ?? "").trim();
+  const levelGroup = normalizeProblemLevelGroup(problem.levelGroup);
+  const client = getSupabaseClient();
+
+  const { data: existingRow, error: existingError } = await client
+    .from(SUPABASE_PROBLEMS_TABLE)
+    .select("id, display_order")
+    .eq("id", problem.id)
+    .maybeSingle();
+
+  if (existingError) {
+    throw existingError;
+  }
+
+  const isUpdate = Boolean(existingRow?.id);
+  const requestedOrder = Number(problem.displayOrder);
+
+  if (isUpdate) {
+    if (Number.isFinite(requestedOrder) && requestedOrder > 0) {
+      return Math.floor(requestedOrder);
+    }
+
+    const storedOrder = Number(existingRow.display_order);
+    if (Number.isFinite(storedOrder) && storedOrder > 0) {
+      return Math.floor(storedOrder);
+    }
+  }
+
+  const memoryMax = getMaxDisplayOrderInScopeMemory(category, levelGroup, problems, problem.id);
+  const dbMax = await fetchMaxDisplayOrderInScope(category, levelGroup, {
+    excludeProblemId: problem.id,
+  });
+  const nextOrder = Math.max(memoryMax, dbMax) + 1;
+
+  console.log("[ProblemStore] resolve display_order (append)", {
+    id: problem.id,
+    category,
+    levelGroup,
+    isUpdate,
+    requestedOrder: Number.isFinite(requestedOrder) ? requestedOrder : null,
+    memoryMax,
+    dbMax,
+    displayOrder: nextOrder,
+  });
+
+  return nextOrder;
+}
+
+function compareProblemsForLoad(left, right) {
+  const leftRank = getLoadSortRank(left);
+  const rightRank = getLoadSortRank(right);
+  if (leftRank !== rightRank) {
+    return leftRank - rightRank;
+  }
+
+  return (
+    new Date(left.createdAt ?? 0).getTime() - new Date(right.createdAt ?? 0).getTime() ||
+    String(left.id ?? "").localeCompare(String(right.id ?? ""), "ko")
+  );
+}
+
+function getLoadSortRank(problem) {
+  const order = Number(problem.displayOrder);
+  return Number.isFinite(order) && order > 0 ? order : Number.MAX_SAFE_INTEGER;
+}
+
+function sortLoadedProblems(problemList) {
+  return [...problemList].sort(compareProblemsForLoad);
+}
+
 function toSupabaseRow(problem) {
+  const displayOrder = Number(problem.displayOrder);
+  if (!Number.isFinite(displayOrder) || displayOrder <= 0) {
+    throw new Error(
+      `display_order must be a positive integer before save (problem=${problem.id}, got=${problem.displayOrder})`,
+    );
+  }
+
   return {
     id: problem.id,
     title: problem.title,
@@ -350,6 +553,7 @@ function toSupabaseRow(problem) {
     stones: problem.stones ?? [],
     correct_move: problem.correctMove ?? null,
     correct_sequence: problem.correctSequence ?? null,
+    display_order: Math.floor(displayOrder),
   };
 }
 
@@ -372,6 +576,15 @@ function fromSupabaseRow(row) {
 
   if (Array.isArray(row.correct_sequence)) {
     problem.correctSequence = row.correct_sequence;
+  }
+
+  const displayOrder = Number(row.display_order);
+  if (Number.isFinite(displayOrder) && displayOrder > 0) {
+    problem.displayOrder = displayOrder;
+  }
+
+  if (row.created_at) {
+    problem.createdAt = row.created_at;
   }
 
   return problem;

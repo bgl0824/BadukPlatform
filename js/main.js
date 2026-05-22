@@ -44,6 +44,12 @@ import {
   syncCategoryNames,
 } from "./services/category-service.js";
 import { formatCategoryProblemLabel } from "./services/category-problem-number.js";
+import { createProblemReorderController } from "./admin/problem-reorder-manager.js";
+import {
+  assignDisplayOrderForNewProblem,
+  sortFilteredProblemEntries,
+  sortProblemsGlobally,
+} from "./services/problem-order-service.js";
 import {
   DEFAULT_LEVEL_GROUP,
   LEVEL_GROUPS,
@@ -352,6 +358,22 @@ function requireAdminModeForCategories() {
   return false;
 }
 
+const problemReorder = createProblemReorderController({
+  elements,
+  problems,
+  problemService,
+  ProblemStore,
+  adminState,
+  appState,
+  getActiveLevelGroup,
+  getFilteredProblems: () => getFilteredProblems(),
+  getCurrentUser,
+  requireAdminMode: () => requireAdminMode(),
+  setFeedback,
+  renderProblemList: () => renderProblemList(),
+  escapeHtml,
+});
+
 const {
   bindCategoryManagerEvents,
   renderCategoryManager,
@@ -387,6 +409,7 @@ const {
   handleAdminProblemSaved,
   startEditingProblem,
   deleteProblem,
+  updateProblemSortModeUi,
 } = createAdminController({
   elements,
   adminState,
@@ -411,6 +434,7 @@ const {
   cloneProblem,
   getActiveLevelGroup,
   getEditorActions: () => adminEditorActions,
+  getProblemSortHintMessage: () => problemReorder.getSortModeHintMessage(),
 });
 
 const {
@@ -619,6 +643,7 @@ function runApplicationBootstrap() {
     boot.run("bindCreateEvents", () => bindCreateEvents());
     boot.run("bindOxSolveEvents", () => bindOxSolveEvents());
     boot.run("bindAdminEvents", () => bindAdminEvents());
+    boot.run("bindProblemReorderEvents", () => problemReorder.bindProblemReorderEvents());
     boot.run("bindCategoryManagerEvents", () => bindCategoryManagerEvents());
     boot.runOptional("initPrintBuilder", () => {
       printBuilder.bind();
@@ -1504,8 +1529,18 @@ function renderProblemList() {
   }
 
   updatePrintUiVisibility();
+  updateProblemSortModeUi?.();
+  elements.problemCards.classList.toggle(
+    "is-problem-sort-mode",
+    adminState.isEnabled && adminState.problemSortMode && isCurrentUserAdmin(),
+  );
 
   const filteredProblems = getFilteredProblems();
+  const isProblemSortMode =
+    adminState.isEnabled &&
+    adminState.problemSortMode &&
+    isCurrentUserAdmin() &&
+    problemReorder.canReorderInCurrentView();
   const studentProgressByProblemId = getCurrentStudentProgressByProblemId();
   const canPrint = canUsePrintFeatures();
   elements.problemCards.innerHTML = "";
@@ -1527,24 +1562,30 @@ function renderProblemList() {
     return;
   }
 
-  filteredProblems.forEach(({ problem, index }) => {
+  filteredProblems.forEach(({ problem, index }, filteredIndex) => {
     try {
       const progressView = getProblemProgressView(problem, studentProgressByProblemId);
       const card = document.createElement("article");
       card.className = "problem-card";
+      if (isProblemSortMode) {
+        card.classList.add("is-reorderable");
+      }
       card.dataset.problemId = problem.id;
       card.dataset.progressStatus = progressView.status;
       card.classList.toggle(
         "is-selected",
         canPrint && appState.selectedPrintProblemIds.has(problem.id),
       );
-      const problemNumberLabel = escapeHtml(formatCategoryProblemLabel(problem, problems));
+      const displayNumber = filteredIndex + 1;
+      const problemNumberLabel = isProblemSortMode
+        ? escapeHtml(`${displayNumber}번`)
+        : escapeHtml(formatCategoryProblemLabel(problem, problems));
       const categoryLabel = escapeHtml(problem.category ?? "");
       const levelLabel = escapeHtml(problem.level ?? "");
       const hasStatusRow = Boolean(levelLabel || progressView.badge);
 
       card.innerHTML = `
-        <button class="problem-card-main" type="button">
+        <button class="problem-card-main" type="button"${isProblemSortMode ? " disabled" : ""}>
           <div class="problem-card-header">
             <div class="problem-card-meta-row">
               <div class="problem-card-meta-primary">
@@ -1593,9 +1634,22 @@ function renderProblemList() {
         printSelectLabel?.addEventListener("click", (event) => event.stopPropagation());
       }
 
-      card.querySelector(".problem-card-main")?.addEventListener("click", () => selectProblemById(problem.id));
+      if (!isProblemSortMode) {
+        card.querySelector(".problem-card-main")?.addEventListener("click", () =>
+          selectProblemById(problem.id),
+        );
+      }
 
-      if (adminState.isEnabled && isCurrentUserAdmin()) {
+      if (isProblemSortMode && problemReorder.canReorderInCurrentView()) {
+        card.prepend(
+          problemReorder.renderProblemReorderChrome(card, {
+            problemNumber: displayNumber,
+            isFirst: filteredIndex === 0,
+            isLast: filteredIndex === filteredProblems.length - 1,
+            problemId: problem.id,
+          }),
+        );
+      } else if (adminState.isEnabled && isCurrentUserAdmin() && !isProblemSortMode) {
         const actions = document.createElement("div");
         actions.className = "admin-card-actions";
         actions.innerHTML = `
@@ -1604,10 +1658,10 @@ function renderProblemList() {
         `;
         actions
           .querySelector('[data-admin-action="edit"]')
-          ?.addEventListener("click", () => startEditingProblem(index));
+          ?.addEventListener("click", () => startEditingProblem(problem.id));
         actions
           .querySelector('[data-admin-action="delete"]')
-          ?.addEventListener("click", () => deleteProblem(index));
+          ?.addEventListener("click", () => deleteProblem(problem.id));
         card.append(actions);
       }
 
@@ -1823,7 +1877,7 @@ function getWgoMarkType(mark) {
 function getFilteredProblems() {
   const levelGroup = getActiveLevelGroup();
 
-  return problems
+  const filtered = problems
     .map((problem, index) => ({ problem, index }))
     .filter(({ problem }) => {
       if (normalizeLevelGroup(problem.levelGroup) !== levelGroup) {
@@ -1836,6 +1890,8 @@ function getFilteredProblems() {
 
       return problem.category === appState.selectedCategory;
     });
+
+  return sortFilteredProblemEntries(filtered);
 }
 
 function getCategoryCount(category) {
@@ -1925,7 +1981,7 @@ function updatePrintUiVisibility() {
 }
 
 function replaceProblemList(nextProblems) {
-  problems.splice(0, problems.length, ...nextProblems);
+  problems.splice(0, problems.length, ...sortProblemsGlobally(nextProblems));
 }
 
 function syncCategoriesFromProblems() {
@@ -1969,6 +2025,10 @@ function getProblemStoreErrorMessage(error, actionLabel) {
 
   if (message.includes("correct_move") || message.includes("correct_sequence")) {
     return "Supabase problems 테이블에 correct_move/correct_sequence 컬럼이 필요합니다.";
+  }
+
+  if (message.includes("display_order")) {
+    return "Supabase problems 테이블에 display_order 컬럼이 필요합니다. scripts/supabase-problems-display-order.sql 을 실행해 주세요.";
   }
 
   if (message.includes("column")) {

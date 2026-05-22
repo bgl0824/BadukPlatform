@@ -58,6 +58,8 @@ export function createAdminController({
 
   getEditorActions,
 
+  getProblemSortHintMessage,
+
 }) {
 
   function bindAdminEvents() {
@@ -67,6 +69,8 @@ export function createAdminController({
     elements.addCategoryButton?.addEventListener("click", addAdminCategory);
 
     elements.addProblemButton?.addEventListener("click", startAddingProblem);
+
+    elements.adminProblemSortToggle?.addEventListener("click", toggleProblemSortMode);
 
     elements.adminPanelTabs?.addEventListener("click", handleAdminPanelTabClick);
 
@@ -152,6 +156,8 @@ export function createAdminController({
 
       adminState.listPanel = "problems";
 
+      adminState.problemSortMode = false;
+
     }
 
 
@@ -174,7 +180,63 @@ export function createAdminController({
 
     updateAdminVisibility();
 
+    updateProblemSortModeUi();
+
     renderProblemList();
+
+  }
+
+
+
+  function toggleProblemSortMode() {
+
+    if (!requireAdminMode()) {
+
+      return;
+
+    }
+
+
+
+    adminState.problemSortMode = !adminState.problemSortMode;
+
+    if (adminState.problemSortMode) {
+
+      getEditorActions().closeAdminEditor();
+
+    }
+
+
+
+    updateProblemSortModeUi();
+
+    renderProblemList();
+
+  }
+
+
+
+  function updateProblemSortModeUi() {
+
+    const isActive = adminState.isEnabled && adminState.problemSortMode;
+
+    elements.adminProblemSortToggle?.classList.toggle("is-active", isActive);
+
+    elements.adminProblemSortToggle?.setAttribute("aria-pressed", String(isActive));
+
+    elements.adminProblemSortHint?.classList.toggle("is-hidden", !isActive);
+
+    if (elements.adminProblemSortHint && isActive) {
+
+      elements.adminProblemSortHint.textContent =
+
+        typeof getProblemSortHintMessage === "function"
+
+          ? getProblemSortHintMessage()
+
+          : "";
+
+    }
 
   }
 
@@ -328,9 +390,19 @@ export function createAdminController({
 
 
 
-  function startEditingProblem(index) {
+  function startEditingProblem(problemId) {
 
     if (!requireAdminMode()) {
+
+      return;
+
+    }
+
+
+
+    const index = problems.findIndex((entry) => entry.id === problemId);
+
+    if (index === -1) {
 
       return;
 
@@ -352,7 +424,7 @@ export function createAdminController({
 
 
 
-  async function deleteProblem(index) {
+  async function deleteProblem(problemId) {
 
     if (!requireAdminMode()) {
 
@@ -361,6 +433,8 @@ export function createAdminController({
     }
 
 
+
+    const index = problems.findIndex((entry) => entry.id === problemId);
 
     const problem = problems[index];
 
@@ -463,6 +537,10 @@ export function createAdminController({
     startEditingProblem,
 
     deleteProblem,
+
+    toggleProblemSortMode,
+
+    updateProblemSortModeUi,
 
   };
 

@@ -264,8 +264,21 @@
             </nav>
             <div id="admin-problems-panel" class="admin-panel">
               <div id="admin-problems-toolbar" class="admin-problems-toolbar">
-                <p class="admin-panel-summary">문제 추가·수정·삭제를 빠르게 처리합니다.</p>
-                <button id="add-problem" class="primary-button" type="button">새 문제 추가</button>
+                <div class="admin-problems-toolbar-copy">
+                  <p class="admin-panel-summary">문제 추가·수정·삭제를 빠르게 처리합니다.</p>
+                  <p id="admin-problem-sort-hint" class="admin-problem-sort-hint is-hidden" aria-live="polite"></p>
+                </div>
+                <div class="admin-problems-toolbar-actions">
+                  <button
+                    id="admin-problem-sort-toggle"
+                    class="secondary-button"
+                    type="button"
+                    aria-pressed="false"
+                  >
+                    순서 편집
+                  </button>
+                  <button id="add-problem" class="primary-button" type="button">새 문제 추가</button>
+                </div>
               </div>
               <section id="admin-editor" class="admin-editor is-hidden" aria-label="문제 편집"></section>
             </div>

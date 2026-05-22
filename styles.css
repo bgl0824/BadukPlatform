@@ -4059,7 +4059,7 @@ h2 {
 
 .admin-problems-toolbar {
   display: flex;
-  align-items: center;
+  align-items: flex-start;
   justify-content: space-between;
   gap: 12px;
   position: sticky;
@@ -4067,6 +4067,97 @@ h2 {
   z-index: 3;
   padding: 10px 0;
   background: linear-gradient(180deg, rgba(255, 249, 238, 0.98) 75%, rgba(255, 249, 238, 0));
+}
+
+.admin-problems-toolbar-copy {
+  display: grid;
+  gap: 4px;
+  min-width: 0;
+}
+
+.admin-problems-toolbar-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  align-items: center;
+}
+
+.admin-problem-sort-hint {
+  margin: 0;
+  color: var(--primary-dark);
+  font-size: 0.82rem;
+  font-weight: 700;
+}
+
+#admin-problem-sort-toggle.is-active {
+  border-color: rgba(47, 111, 237, 0.45);
+  background: rgba(232, 241, 255, 0.95);
+  color: var(--primary-dark);
+}
+
+.problem-cards.is-problem-sort-mode {
+  display: grid;
+  gap: 10px;
+}
+
+.problem-card.is-reorderable {
+  display: grid;
+  grid-template-columns: auto minmax(0, 1fr);
+  gap: 10px;
+  align-items: start;
+}
+
+.problem-card.is-reorderable .problem-card-main:disabled {
+  cursor: default;
+  opacity: 1;
+}
+
+.problem-reorder-chrome {
+  display: grid;
+  gap: 8px;
+  align-content: start;
+  padding-top: 8px;
+}
+
+.problem-drag-handle {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  min-width: 34px;
+  min-height: 34px;
+  border: 1px dashed var(--line);
+  border-radius: 10px;
+  background: rgba(255, 255, 255, 0.8);
+  color: var(--muted);
+  font-weight: 900;
+  cursor: grab;
+  user-select: none;
+  touch-action: none;
+  -webkit-user-drag: element;
+}
+
+.problem-drag-handle:active {
+  cursor: grabbing;
+}
+
+.problem-reorder-order {
+  display: grid;
+  gap: 6px;
+}
+
+.problem-move-button {
+  min-width: 38px;
+  padding: 0 10px;
+}
+
+.problem-card.is-dragging {
+  opacity: 0.92;
+  border-color: rgba(47, 111, 237, 0.45);
+  box-shadow: 0 10px 24px rgba(47, 111, 237, 0.16);
+}
+
+.problem-card.is-dragging-ghost {
+  background: rgba(232, 241, 255, 0.95);
 }
 
 .admin-panel-summary {

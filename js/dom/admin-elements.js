@@ -16,6 +16,10 @@ export const adminElements = {
 
   adminProblemsToolbar: document.querySelector("#admin-problems-toolbar"),
 
+  adminProblemSortToggle: document.querySelector("#admin-problem-sort-toggle"),
+
+  adminProblemSortHint: document.querySelector("#admin-problem-sort-hint"),
+
   categoryManager: document.querySelector("#category-manager"),
 
   categoryManagerList: document.querySelector("#category-manager-list"),

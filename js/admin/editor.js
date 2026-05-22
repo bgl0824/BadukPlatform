@@ -1,5 +1,9 @@
 import { isBoardProblem, isOxProblem, PROBLEM_TYPE } from "../game/problem-type.js";
 import { LEVEL_GROUPS, normalizeLevelGroup } from "../services/level-group-service.js";
+import {
+  assignDisplayOrderForNewProblem,
+  sortProblemsGlobally,
+} from "../services/problem-order-service.js";
 
 export function createAdminEditorController({
   elements,
@@ -423,7 +427,20 @@ export function createAdminEditorController({
       return;
     }
 
-    const savedProblemDraft = cloneProblem(adminState.draft);
+    const isNewProblem = adminState.editingIndex === null;
+    const savedProblemDraft = isNewProblem
+      ? assignDisplayOrderForNewProblem(cloneProblem(adminState.draft), problems)
+      : cloneProblem(adminState.draft);
+
+    if (isNewProblem) {
+      console.log("[Admin] new problem display_order (client estimate before save)", {
+        id: savedProblemDraft.id,
+        category: savedProblemDraft.category,
+        levelGroup: savedProblemDraft.levelGroup,
+        displayOrder: savedProblemDraft.displayOrder,
+      });
+    }
+
     const saveButton = elements.adminEditor.querySelector("#admin-save");
     saveButton.disabled = true;
     setAdminEditorStatus("Supabase에 문제를 저장하는 중입니다...");
@@ -435,12 +452,34 @@ export function createAdminEditorController({
         ProblemStore,
       });
 
+      if (isNewProblem) {
+        console.log("[Admin] new problem display_order (saved from Supabase)", {
+          id: savedProblem.id,
+          category: savedProblem.category,
+          levelGroup: savedProblem.levelGroup,
+          displayOrder: savedProblem.displayOrder,
+        });
+      }
+
       if (adminState.editingIndex === null) {
         problems.push(cloneProblem(savedProblem));
       } else {
         problems[adminState.editingIndex] = cloneProblem(savedProblem);
         if (appState.mode === "solve" && appState.currentProblemIndex === adminState.editingIndex) {
           loadProblem(adminState.editingIndex);
+        }
+      }
+
+      const sortedProblems = sortProblemsGlobally(problems);
+      problems.splice(0, problems.length, ...sortedProblems);
+      if (isNewProblem) {
+        const savedIndex = problems.findIndex((entry) => entry.id === savedProblem.id);
+        appState.currentProblemIndex =
+          savedIndex === -1 ? Math.max(0, problems.length - 1) : savedIndex;
+      } else if (appState.mode === "solve") {
+        const nextIndex = problems.findIndex((entry) => entry.id === savedProblem.id);
+        if (nextIndex !== -1) {
+          appState.currentProblemIndex = nextIndex;
         }
       }
     } catch (error) {
@@ -450,10 +489,6 @@ export function createAdminEditorController({
       setFeedback(errorMessage, "wrong");
       saveButton.disabled = false;
       return;
-    }
-
-    if (adminState.editingIndex === null) {
-      appState.currentProblemIndex = problems.length - 1;
     }
 
     closeAdminEditor();

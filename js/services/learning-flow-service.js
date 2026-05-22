@@ -1,5 +1,6 @@
 import { DEFAULT_LEVEL_GROUP, getLevelGroupInfo, LEVEL_GROUPS, normalizeLevelGroup } from "./level-group-service.js";
 import { getNextCategoryName, getOrderedCategoryNames } from "./category-service.js";
+import { compareProblemsInCategory } from "./problem-order-service.js";
 import { getProgressStatus, PROGRESS_STATUS } from "./student-progress-service.js";
 
 export function getProblemsInCategoryOrder(categoryName, problems, { levelGroup } = {}) {
@@ -18,7 +19,8 @@ export function getProblemsInCategoryOrder(categoryName, problems, { levelGroup 
       }
 
       return true;
-    });
+    })
+    .sort((left, right) => compareProblemsInCategory(left.problem, right.problem));
 }
 
 export function getActiveCategoryName({ progressList, categoryNames, problems, levelGroup }) {

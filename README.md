@@ -35,6 +35,7 @@ window.BadukConfig.debugLogs = true;
 
 접두사: `[Auth]`, `[Invite]`, `[Academy]`, `[Category]`, `[Progress]`, `[Problem]`, `[Cache]`, `[Sync]`, `[UI]`  
 `source=supabase` / `local-cache` / `fallback` 및 hydrate `before`/`after` count 포함.
+
 - `js/main.js`: 문제 진행, 정답 판정, 화면 상태 관리
 - `js/board.js`: WGo.js 바둑판 래퍼
 - `js/problems.js`: `id`, `title`, `description`, `level`, `category`, `stones`, `correctMove`를 가진 문제 데이터 배열
@@ -88,7 +89,8 @@ create table if not exists public.problems (
   correct_move jsonb,
   correct_sequence jsonb,
   created_at timestamptz not null default now(),
-  updated_at timestamptz not null default now()
+  updated_at timestamptz not null default now(),
+  display_order integer not null default 0
 );
 
 create or replace function public.set_problem_updated_at()
@@ -110,27 +112,25 @@ execute function public.set_problem_updated_at();
 alter table public.problems enable row level security;
 ```
 
-문제 테이블 RLS(읽기 공개 / 쓰기는 admin·academy_owner·teacher만)는 **`scripts/supabase-problems-rls.sql`** 을 SQL Editor에서 실행하세요. `user_metadata.role`(또는 `userType`)이 JWT에 포함되어야 합니다.
+문제 테이블 RLS(읽기 공개 / 쓰기는 admin·academy_owner·teacher만)는 `**scripts/supabase-problems-rls.sql**` 을 SQL Editor에서 실행하세요. `user_metadata.role`(또는 `userType`)이 JWT에 포함되어야 합니다.
+
+기존 DB에 문제 표시 순서(`display_order`)를 추가·백필하려면 `**scripts/supabase-problems-display-order.sql**` 을 SQL Editor에서 실행하세요. 카테고리·단계별 공용 순서이며, 관리자 모드의 **순서 편집**에서 변경하면 모든 역할에 실시간 반영됩니다.
 
 실시간 반영을 쓰려면 Supabase Dashboard의 `Database` → `Replication`에서 `problems` 테이블의 Realtime을 켜 주세요.
 
 ## Supabase Auth (회원가입·로그인 — 우선 적용)
 
-1. **SQL Editor**에서 아래 파일 **전체를 한 번만** 실행합니다.  
-   **`scripts/supabase-is-auth-email-available.sql`**  
-   - `public.is_auth_username_available`  
-   - `public.is_auth_email_available`  
-   - 여러 번 실행해도 안전합니다 (`drop if exists` + `create or replace`).
-
+1. **SQL Editor**에서 아래 파일 **전체를 한 번만** 실행합니다.
+  `**scripts/supabase-is-auth-email-available.sql`**  
+  - `public.is_auth_username_available`  
+  - `public.is_auth_email_available`  
+  - 여러 번 실행해도 안전합니다 (`drop if exists` + `create or replace`).
 2. **Authentication → Providers → Email**
-   - **Minimum password length = 6**
-   - **Confirm email = OFF** (필수 — ON이면 `signUp`마다 확인 메일 발송 → 429 `email rate limit exceeded`)
-   - 자세한 Dashboard 경로: `scripts/supabase-auth-dashboard-setup.md`
-
+  - **Minimum password length = 6**
+  - **Confirm email = OFF** (필수 — ON이면 `signUp`마다 확인 메일 발송 → 429 `email rate limit exceeded`)
+  - 자세한 Dashboard 경로: `scripts/supabase-auth-dashboard-setup.md`
 3. 로그인/가입 시 Supabase에는 `user_{해시}@baduk.app` 영문 가상 이메일만 저장되고, 화면 아이디(`user_metadata.username`)는 한글 그대로 유지됩니다.
-
 4. signUp 디버그: `js/runtime-config.js`에 `debugAuth: true` 추가 시 콘솔에 signUp payload 로그(비밀번호 제외).
-
 5. 중복확인 RPC 404 시: Database → Functions 에 두 함수 존재 여부 확인 → API 스키마 reload 후 재시도.
 
 ### 기본 관리자 계정 (admin)
@@ -153,7 +153,7 @@ npm run create-admin
 
 수동 metadata 보정만 필요하면 `scripts/create-admin-user.sql` 참고.
 
-문제 테이블 RLS는 **`scripts/supabase-problems-rls.sql`** — 로그인/가입 안정화 **이후** 적용을 권장합니다.
+문제 테이블 RLS는 `**scripts/supabase-problems-rls.sql**` — 로그인/가입 안정화 **이후** 적용을 권장합니다.
 
 Vercel 배포에서는 기본으로 아래 Supabase 프로젝트가 `js/runtime-config.js`에 설정되어 있습니다. 다른 프로젝트를 쓰려면 환경변수로 덮어쓸 수 있습니다.
 
@@ -191,7 +191,7 @@ git add .
 git commit -m "Initial BadukPlatform deploy setup"
 ```
 
-3. GitHub repository 주소를 연결하고 업로드합니다.
+1. GitHub repository 주소를 연결하고 업로드합니다.
 
 ```bash
 git remote add origin https://github.com/<YOUR_ID>/BadukPlatform.git
@@ -201,7 +201,7 @@ git push -u origin main
 
 ## Vercel 무료 배포
 
-**상세 절차(최신 Auth·admin 로그인 포함):** [`docs/vercel-deploy-auth.md`](docs/vercel-deploy-auth.md)
+**상세 절차(최신 Auth·admin 로그인 포함):** `[docs/vercel-deploy-auth.md](docs/vercel-deploy-auth.md)`
 
 요약:
 
@@ -221,3 +221,14 @@ git push -u origin main
 - KataGo 연동 시 `js/ai-response.js`의 `getTemporaryAiResponse()`를 비동기 API 호출로 교체합니다.
 - SGF 기반 문제 로딩은 `js/sgf.js`에 파서를 추가하고 `js/problems.js`의 데이터 형식으로 변환하면 됩니다.
 - 관리자 변경사항 영구 저장은 `localStorage` 또는 JSON export 기능으로 확장할 수 있습니다.
+
+```
+## 중요 운영 규칙
+
+- 프론트 코드 변경 시 Supabase schema 동기화 필수
+- scripts/*.sql 적용 여부 확인
+- 신규 컬럼 추가 시:
+  - migration SQL 생성
+  - PROJECT_HANDOFF.md 기록
+```
+
