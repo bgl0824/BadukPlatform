@@ -1,9 +1,18 @@
-import { DEBUG_CHANNELS, DEBUG_SOURCES, debugSync } from "../bootstrap/debug-logs.js";
+import { DEBUG_CHANNELS, DEBUG_SOURCES, debugSync, debugWarn } from "../bootstrap/debug-logs.js";
 import { normalizeRole, ROLES } from "../permissions/permission-service.js";
+import {
+  deleteStudentProgressForUserInSupabase,
+  fetchStudentProgressFromSupabase,
+  mergeProgressRecords,
+  upsertStudentProgressBatchToSupabase,
+  upsertStudentProgressToSupabase,
+} from "./student-progress-persistence-service.js";
 
 const PROGRESS = DEBUG_CHANNELS.progress;
 
 const STUDENT_PROGRESS_STORAGE_KEY = "BADUK_STUDENT_PROGRESS";
+
+let remotePersistChain = Promise.resolve();
 
 export const PROGRESS_STATUS = {
   notStarted: "NOT_STARTED",
@@ -109,6 +118,7 @@ export function updateStudentProgressRecord(studentUserId, problemId, updater) {
   ];
 
   saveStudentProgress(nextProgressList);
+  queueRemotePersist(nextProgress);
   return nextProgress;
 }
 
@@ -194,6 +204,8 @@ export function deleteStudentProgressByUserId(userId) {
   const removedCount = allProgress.length - nextProgress.length;
   saveStudentProgress(nextProgress);
 
+  void deleteStudentProgressForUserInSupabase(userId);
+
   debugSync(PROGRESS, "progress purged for user", {
     source: DEBUG_SOURCES.localCache,
     userId,
@@ -203,6 +215,68 @@ export function deleteStudentProgressByUserId(userId) {
   });
 
   return { removedCount };
+}
+
+/**
+ * 로그인·세션 복구 시 Supabase 진도를 localStorage에 반영 (기기 간 동기화).
+ * - 원격 데이터가 있으면 problemId 기준 updatedAt 병합 (최신 우선)
+ * - 원격이 비어 있고 로컬만 있으면 로컬 → Supabase 업로드
+ */
+export async function hydrateStudentProgressCache(userId) {
+  if (!userId) {
+    return { ok: false, count: 0 };
+  }
+
+  const allProgress = readStudentProgress();
+  const localForUser = allProgress
+    .filter((progress) => progress.userId === userId)
+    .map(normalizeProgress);
+  const others = allProgress.filter((progress) => progress.userId !== userId);
+
+  const remoteResult = await fetchStudentProgressFromSupabase(userId);
+  if (!remoteResult.ok) {
+    debugWarn(PROGRESS, "hydrate skipped — using local cache", {
+      source: DEBUG_SOURCES.fallback,
+      userId,
+      localCount: localForUser.length,
+      message: remoteResult.message,
+    });
+    return { ok: false, source: DEBUG_SOURCES.fallback, count: localForUser.length };
+  }
+
+  const remoteProgress = remoteResult.progress.map(normalizeProgress);
+  const mergedForUser = mergeProgressRecords(remoteProgress, localForUser);
+  saveStudentProgress([...mergedForUser, ...others]);
+
+  debugSync(PROGRESS, "hydrate complete", {
+    source: DEBUG_SOURCES.supabase,
+    userId,
+    remoteCount: remoteProgress.length,
+    localCount: localForUser.length,
+    mergedCount: mergedForUser.length,
+  });
+
+  if (remoteProgress.length === 0 && mergedForUser.length > 0) {
+    await upsertStudentProgressBatchToSupabase(mergedForUser);
+  } else {
+    const needsPush = mergedForUser.some((progress) => {
+      const remote = remoteProgress.find((entry) => entry.problemId === progress.problemId);
+      return (
+        !remote ||
+        new Date(progress.updatedAt ?? progress.solvedAt ?? 0).getTime() >
+          new Date(remote.updatedAt ?? remote.solvedAt ?? 0).getTime()
+      );
+    });
+    if (needsPush) {
+      await upsertStudentProgressBatchToSupabase(mergedForUser);
+    }
+  }
+
+  return {
+    ok: true,
+    source: DEBUG_SOURCES.supabase,
+    count: mergedForUser.length,
+  };
 }
 
 export function getStudentProgressSummary(userId, totalProblemCount = 0) {
@@ -277,7 +351,16 @@ function upsertStudentProgress(user, problem, updateProgress) {
   ];
 
   saveStudentProgress(nextProgressList);
+  queueRemotePersist(nextProgress);
   return nextProgress;
+}
+
+function queueRemotePersist(progress) {
+  remotePersistChain = remotePersistChain
+    .then(() => upsertStudentProgressToSupabase(progress))
+    .catch((error) => {
+      console.warn("Failed to sync student progress to Supabase.", error);
+    });
 }
 
 function createStudentProgress(user, problem, progressId) {
@@ -427,6 +510,7 @@ function createProgressId(userId, problemId) {
 export const studentProgressService = {
   readStudentProgress,
   saveStudentProgress,
+  hydrateStudentProgressCache,
   markProblemInProgress,
   recordWrongMove,
   markProblemSolved,

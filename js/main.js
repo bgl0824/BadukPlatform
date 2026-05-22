@@ -545,6 +545,8 @@ const categoryCompleteModal = createCategoryCompleteModalController({
 });
 
 let authSessionNotifyFrame = 0;
+let studentProgressHydrateUserId = null;
+let studentProgressHydratePromise = null;
 
 window.BadukAppHooks = {
   onAuthSessionChanged() {
@@ -556,9 +558,9 @@ window.BadukAppHooks = {
       authSessionNotifyFrame = 0;
       updateAcademyMenuVisibility();
       updateAdminVisibility();
-      if (appState.mode === "list" && problemBankReady) {
-        renderProblemLibraryScreen();
-      }
+      void refreshStudentProgressFromRemote().then(() => {
+        refreshScreensAfterProgressSync();
+      });
     });
   },
 };
@@ -673,6 +675,7 @@ async function initializeApp() {
     });
 
     await boot.runAsync("hydrateCategoryRegistry", () => hydrateCategoryRegistry());
+    await boot.runAsync("hydrateStudentProgress", () => refreshStudentProgressFromRemote({ force: true }));
     problemBankReady = true;
     boot.run("syncCategoriesFromProblems", () => syncCategoriesFromProblems());
     boot.run("renderCategoryManager", () => renderCategoryManager());
@@ -885,6 +888,44 @@ function buildReviewOffersByLevel(curriculumTree, progressByProblemId) {
   });
 
   return reviewOffersByLevel;
+}
+
+async function refreshStudentProgressFromRemote({ force = false } = {}) {
+  const currentUser = getCurrentUser();
+  if (!currentUser?.id || normalizeRole(currentUser.role) !== ROLES.student) {
+    studentProgressHydrateUserId = null;
+    return { ok: false, skipped: true };
+  }
+
+  if (!force && studentProgressHydrateUserId === currentUser.id && studentProgressHydratePromise) {
+    return studentProgressHydratePromise;
+  }
+
+  studentProgressHydrateUserId = currentUser.id;
+  studentProgressHydratePromise = studentProgressService
+    .hydrateStudentProgressCache(currentUser.id)
+    .finally(() => {
+      if (studentProgressHydrateUserId === currentUser.id) {
+        studentProgressHydratePromise = null;
+      }
+    });
+
+  return studentProgressHydratePromise;
+}
+
+function refreshScreensAfterProgressSync() {
+  if (appState.mode === "study") {
+    const progressList = getCurrentUser()?.id
+      ? studentProgressService.getStudentProgressByUserId(getCurrentUser().id)
+      : [];
+    studyView.renderStudyHubMeta(resolveActiveLevelGroupForStudy(progressList));
+    renderStudyScreen();
+    return;
+  }
+
+  if (appState.mode === "list" && problemBankReady) {
+    renderProblemLibraryScreen();
+  }
 }
 
 function renderStudyScreen() {
