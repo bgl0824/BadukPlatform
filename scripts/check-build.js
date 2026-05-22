@@ -10,6 +10,8 @@ const requiredFiles = [
   "signup.html",
   "styles.css",
   "vendor/wgo.min.js",
+  "vendor/wood1.jpg",
+  "favicon.svg",
   "js/runtime-config.js",
   "js/problems.js",
   "js/ai-response.js",

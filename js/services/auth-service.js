@@ -1,11 +1,23 @@
+import {
+  DEBUG_CHANNELS,
+  DEBUG_SOURCES,
+  debugError,
+  debugFetch,
+  debugLog,
+  debugRpc,
+  debugWarn,
+  isDebugLogsEnabled,
+} from "../bootstrap/debug-logs.js";
 import { normalizeRole } from "../permissions/permission-service.js";
 import { getSupabaseClient, isSupabaseConfigured } from "./supabase-client.js";
+
+const AUTH = DEBUG_CHANNELS.auth;
 
 export { isSupabaseConfigured, getSupabaseClient };
 
 export const USERNAME_MIN_LENGTH = 2;
 export const PASSWORD_MIN_LENGTH = 6;
-export const DEFAULT_RESET_PASSWORD = "0000";
+export const DEFAULT_RESET_PASSWORD = "000000";
 
 export function validateAuthUsername(username) {
   const value = normalizeAuthUsername(username);
@@ -31,8 +43,14 @@ export function validateAuthPassword(password) {
   return { ok: true, value };
 }
 
-/** Supabase Auth 전용 가상 도메인 (.local 은 Auth에서 거부됨) */
-const INVITE_EMAIL_DOMAIN = "invite.baduk.app";
+/**
+ * Auth email 단일 규칙: username → user_{hash}@baduk.app
+ *
+ * - 로그인·가입·비밀번호 변경·중복확인: 모두 이 규칙 (usernameToAuthEmail)
+ * - 초대 vs 일반 가입: auth email 로 구분하지 않음
+ *   → user_metadata (inviteCode, academyId, role, userType) + academy_members
+ * - 레거시 invite_*@invite.baduk.app 계정: 로그인 시 RPC로 저장된 email 조회 후 시도
+ */
 export const USERNAME_AUTH_EMAIL_DOMAIN = "baduk.app";
 const AUTH_EMAIL_SLUG_LENGTH = 12;
 
@@ -87,22 +105,8 @@ export function isUsernameAuthEmail(email) {
   );
 }
 
-export function isInviteAuthEmail(email) {
-  const normalizedEmail = String(email ?? "").toLowerCase();
-  return (
-    normalizedEmail.endsWith(`@${INVITE_EMAIL_DOMAIN}`) &&
-    /^invite_[a-f0-9]+@/.test(normalizedEmail)
-  );
-}
-
-/** 초대 가입용 안전 이메일 (`invite_...@invite.baduk.app`) */
-export async function buildInviteSignupEmail(inviteCode, username) {
-  const normalizedCode = String(inviteCode ?? "").trim().toLowerCase();
-  const normalizedUsername = normalizeAuthUsername(username);
-  const slug = await hashSeedToAuthSlug(`invite:${normalizedCode}:${normalizedUsername.toLowerCase()}`);
-
-  return `invite_${slug || "000000000000"}@${INVITE_EMAIL_DOMAIN}`;
-}
+/** 가입·중복확인용 canonical auth email (초대/일반 동일) */
+export const resolveCanonicalAuthEmail = usernameToAuthEmail;
 
 function resolveUsernameFromSupabaseUser(supabaseUser, metadata) {
   const metadataUsername = normalizeAuthUsername(metadata.username);
@@ -139,12 +143,117 @@ export async function getAuthEmailForPasswordChange(appUser) {
     return sessionEmail;
   }
 
-  const inviteCode = String(appUser?.inviteCode ?? "").trim();
-  if (inviteCode && appUser?.username) {
-    return buildInviteSignupEmail(inviteCode, appUser.username);
+  const storedEmail = await fetchStoredAuthEmailForUsername(appUser?.username ?? "");
+  if (storedEmail) {
+    return storedEmail;
   }
 
   return usernameToAuthEmail(appUser?.username ?? "");
+}
+
+/** auth.users 에 저장된 실제 이메일 (레거시 invite_* 포함) */
+export async function fetchStoredAuthEmailForUsername(username) {
+  const normalizedUsername = normalizeAuthUsername(username);
+  if (!normalizedUsername || !isSupabaseConfigured()) {
+    return "";
+  }
+
+  const client = getSupabaseClient();
+  const { data, error } = await client.rpc("resolve_auth_email_for_login", {
+    check_username: normalizedUsername,
+  });
+
+  if (error) {
+    debugRpc(AUTH, "resolve_auth_email_for_login", {
+      payload: { check_username: normalizedUsername },
+      error,
+    });
+    return "";
+  }
+
+  const email = normalizeAuthEmail(data);
+  if (email) {
+    debugFetch(AUTH, "resolved stored auth email", {
+      source: DEBUG_SOURCES.supabase,
+      username: normalizedUsername,
+      email,
+    });
+  }
+  return email || "";
+}
+
+/** 로그인 시도용 이메일: DB 저장값(레거시) → canonical user_* */
+export async function buildLoginAuthEmailCandidates(username) {
+  const normalizedUsername = normalizeAuthUsername(username);
+  if (!normalizedUsername) {
+    return [];
+  }
+
+  const candidates = [];
+  const pushCandidate = async (resolver) => {
+    const email = normalizeAuthEmail(await resolver());
+    if (email && !candidates.includes(email)) {
+      candidates.push(email);
+    }
+  };
+
+  await pushCandidate(() => fetchStoredAuthEmailForUsername(normalizedUsername));
+  await pushCandidate(() => usernameToAuthEmail(normalizedUsername));
+
+  return candidates;
+}
+
+function isInvalidLoginCredentials(message = "") {
+  return String(message).toLowerCase().includes("invalid login credentials");
+}
+
+/** 아이디·비밀번호 로그인 — 저장 이메일(레거시) → user_*@baduk.app */
+export async function signInWithUsernamePassword({ username, password }) {
+  debugLog(AUTH, "signIn start", { username });
+
+  const candidates = await buildLoginAuthEmailCandidates(username);
+  debugLog(AUTH, "resolved login email candidates", {
+    count: candidates.length,
+    primary: candidates[0] ?? null,
+  });
+
+  if (!candidates.length) {
+    debugError(AUTH, "signIn aborted: no email candidates", { username });
+    return { ok: false, message: "아이디를 확인해 주세요." };
+  }
+
+  let lastResult = { ok: false, message: "아이디 또는 비밀번호가 올바르지 않습니다." };
+
+  for (let index = 0; index < candidates.length; index += 1) {
+    const email = candidates[index];
+    const result = await signInWithEmailPassword({ email, password });
+    if (result.ok) {
+      if (index > 0) {
+        debugWarn(AUTH, "signIn succeeded with fallback email", {
+          source: DEBUG_SOURCES.fallback,
+          username,
+          email,
+          attempt: index + 1,
+        });
+      } else {
+        debugLog(AUTH, "signIn success", {
+          source: DEBUG_SOURCES.supabase,
+          userId: result.user?.id,
+          email,
+        });
+      }
+      return result;
+    }
+
+    lastResult = result;
+    if (!isInvalidLoginCredentials(result.message)) {
+      debugError(AUTH, "signIn failed", { email, message: result.message });
+      break;
+    }
+  }
+
+  debugWarn(AUTH, "signIn failed: invalid credentials", { username });
+  return lastResult;
 }
 
 export function isSupabaseAuthUser(user) {
@@ -176,21 +285,9 @@ export function subscribeSupabaseAuthStateChange(callback) {
   });
 }
 
-export async function resolveSignupAuthEmail({
-  username,
-  inviteCode = "",
-  inviteSignupEntry = false,
-}) {
-  const normalizedUsername = normalizeAuthUsername(username);
-  if (!normalizedUsername) {
-    return "";
-  }
-
-  if (inviteSignupEntry && inviteCode) {
-    return buildInviteSignupEmail(inviteCode, normalizedUsername);
-  }
-
-  return usernameToAuthEmail(normalizedUsername);
+/** @deprecated resolveCanonicalAuthEmail / usernameToAuthEmail 사용 */
+export async function resolveSignupAuthEmail({ username }) {
+  return resolveCanonicalAuthEmail(username);
 }
 
 /** user_metadata.username 기준 중복 확인 — RPC `is_auth_username_available` */
@@ -259,11 +356,7 @@ export async function checkAuthEmailAvailable(email) {
   };
 }
 
-export async function checkSignupUsernameAvailability({
-  username,
-  inviteCode = "",
-  inviteSignupEntry = false,
-}) {
+export async function checkSignupUsernameAvailability({ username }) {
   const usernameValidation = validateAuthUsername(username);
   if (!usernameValidation.ok) {
     return usernameValidation;
@@ -274,11 +367,7 @@ export async function checkSignupUsernameAvailability({
     return usernameAvailability;
   }
 
-  const authEmail = await resolveSignupAuthEmail({
-    username: usernameValidation.value,
-    inviteCode,
-    inviteSignupEntry,
-  });
+  const authEmail = await resolveCanonicalAuthEmail(usernameValidation.value);
 
   const emailAvailability = await checkAuthEmailAvailable(authEmail);
   if (!emailAvailability.ok) {
@@ -297,20 +386,15 @@ export async function checkSignupUsernameAvailability({
 }
 
 function isAuthDebugEnabled() {
-  return Boolean(window.BadukConfig?.debugAuth);
+  return isDebugLogsEnabled();
 }
 
-/** signUp 요청 구조 로그 (debugAuth=true 일 때만, 비밀번호 미포함) */
+/** signUp 요청 구조 로그 (비밀번호 미포함) */
 export function logAuthSignUpRequest(request) {
-  if (!isAuthDebugEnabled()) {
-    return;
-  }
-
-  console.info("[Auth] signUp request", {
+  debugLog(AUTH, "signUp request", {
     email: request.email,
     metadata: request.metadata,
     optionKeys: Object.keys(request.options ?? {}),
-    timestamp: new Date().toISOString(),
   });
 }
 
@@ -342,13 +426,11 @@ export async function signUpWithEmail({ email, password, metadata = {} }) {
       error.status === 429 ||
       String(error.message ?? "").toLowerCase().includes("rate limit");
 
-    if (isAuthDebugEnabled()) {
-      console.warn("[Auth] signUp error", {
-        status: error.status,
-        message: error.message,
-        email: normalizedEmail,
-      });
-    }
+    debugError(AUTH, "signUp error", {
+      status: error.status,
+      message: error.message,
+      email: normalizedEmail,
+    });
 
     return {
       ok: false,
@@ -361,14 +443,13 @@ export async function signUpWithEmail({ email, password, metadata = {} }) {
 
   const requiresEmailConfirmation = Boolean(data.user && !data.session);
 
-  if (isAuthDebugEnabled()) {
-    console.info("[Auth] signUp success", {
-      userId: data.user?.id,
-      hasSession: Boolean(data.session),
-      requiresEmailConfirmation,
-      email: normalizedEmail,
-    });
-  }
+  debugLog(AUTH, "signUp success", {
+    source: DEBUG_SOURCES.supabase,
+    userId: data.user?.id,
+    hasSession: Boolean(data.session),
+    requiresEmailConfirmation,
+    email: normalizedEmail,
+  });
 
   return {
     ok: true,
@@ -591,6 +672,70 @@ export async function updateUserProfile({
     usernameChanged,
     passwordReset: usernameChanged && resetPasswordOnUsernameChange,
     defaultPassword,
+  };
+}
+
+/** Supabase Auth 계정 비밀번호 초기화 (학원장/관리자 RPC) */
+export async function resetSupabaseUserPassword({
+  userId,
+  username,
+  inviteCode = "",
+  password = DEFAULT_RESET_PASSWORD,
+}) {
+  if (!userId || String(userId).startsWith("local-")) {
+    return { ok: false, message: "Supabase 계정만 초기화할 수 있습니다." };
+  }
+
+  if (!isSupabaseConfigured()) {
+    return { ok: false, message: "Supabase 설정이 없습니다." };
+  }
+
+  const passwordValidation = validateAuthPassword(password);
+  if (!passwordValidation.ok) {
+    return passwordValidation;
+  }
+
+  const client = getSupabaseClient();
+  const { data, error } = await client.rpc("reset_auth_user_password", {
+    target_user_id: userId,
+    new_password: password,
+  });
+
+  if (error) {
+    debugRpc(AUTH, "reset_auth_user_password", {
+      payload: { target_user_id: userId },
+      error,
+    });
+    const hint =
+      error.message?.includes("Could not find the function") ||
+      error.code === "PGRST202"
+        ? " Supabase SQL Editor에서 scripts/supabase-reset-auth-password.sql 을 실행해 주세요."
+        : "";
+    return {
+      ok: false,
+      message: `${formatSupabaseAuthError(error.message)}${hint}`,
+    };
+  }
+
+  let authEmail = "";
+  try {
+    authEmail =
+      (await fetchStoredAuthEmailForUsername(username ?? "")) ||
+      (await usernameToAuthEmail(username ?? ""));
+  } catch {
+    authEmail = "";
+  }
+
+  debugRpc(AUTH, "reset_auth_user_password", {
+    payload: { target_user_id: userId },
+  });
+
+  return {
+    ok: true,
+    password,
+    authEmail,
+    data,
+    message: `비밀번호가 ${password}으로 초기화되었습니다.`,
   };
 }
 

@@ -4,11 +4,14 @@
     <meta charset="UTF-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
     <title>바둑 문제풀이</title>
+    <link rel="icon" href="./favicon.svg" type="image/svg+xml" />
+    <link rel="alternate icon" href="./favicon.svg" />
     <link rel="stylesheet" href="./styles.css" />
-    <script src="./vendor/wgo.min.js"></script>
+    <link rel="dns-prefetch" href="https://cdn.jsdelivr.net" />
+    <script defer src="./vendor/wgo.min.js"></script>
     <script defer src="./js/runtime-config.js"></script>
+    <script type="module" src="./js/bootstrap/debug-logs.js"></script>
     <script defer src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
-    <script defer src="https://t1.daumcdn.net/mapjsapi/bundle/postcode/prod/postcode.v2.js"></script>
     <script defer src="./js/problems.js"></script>
     <script defer src="./js/ai-response.js"></script>
     <script defer src="./js/sgf.js"></script>
@@ -165,7 +168,36 @@
         </aside>
 
         <section class="board-card" aria-label="13줄 바둑판">
-          <div id="board" class="board"></div>
+          <div class="board-stage">
+            <div id="board" class="board"></div>
+            <div
+              id="board-overlay-layer"
+              class="board-overlay-layer"
+              aria-hidden="true"
+            >
+              <div id="feedback-message-layer" class="feedback-message-layer" role="status" aria-live="polite">
+                <div
+                  id="board-feedback-content"
+                  class="feedback-message-content is-hidden"
+                >
+                  <p id="board-feedback-title" class="feedback-message-title"></p>
+                  <p id="board-feedback-subtitle" class="feedback-message-subtitle"></p>
+                </div>
+              </div>
+              <div
+                class="board-character-layer"
+                data-board-feedback-slot="character"
+                hidden
+                aria-hidden="true"
+              ></div>
+              <div
+                class="board-speech-layer"
+                data-board-feedback-slot="speech"
+                hidden
+                aria-hidden="true"
+              ></div>
+            </div>
+          </div>
           <section
             id="create-ox-answer-panel"
             class="create-ox-answer-panel ox-choice-panel is-hidden"
@@ -567,6 +599,52 @@
           </div>
             </div>
           </div>
+        </div>
+      </div>
+      <div
+        id="student-learning-detail-modal"
+        class="answer-modal student-learning-detail-modal is-hidden"
+        role="dialog"
+        aria-live="polite"
+        aria-modal="true"
+        aria-labelledby="student-learning-detail-title"
+      >
+        <div class="answer-modal-card student-learning-detail-modal-card">
+          <button
+            id="close-student-learning-detail-modal"
+            class="auth-close"
+            type="button"
+            aria-label="학습 상세 닫기"
+          >
+            ×
+          </button>
+          <header class="student-learning-detail-header">
+            <p class="eyebrow">Learning Report</p>
+            <h2 id="student-learning-detail-title">학습 상세</h2>
+            <p id="student-learning-detail-meta" class="student-learning-detail-meta"></p>
+          </header>
+          <nav
+            id="student-learning-detail-level-nav"
+            class="student-learning-detail-level-nav"
+            aria-label="급수 선택"
+            role="tablist"
+          ></nav>
+          <div
+            id="student-learning-detail-body"
+            class="student-learning-detail-body"
+            role="tabpanel"
+            aria-live="polite"
+          ></div>
+          <footer class="student-learning-detail-footer">
+            <button
+              id="student-learning-detail-open-review"
+              class="secondary-button"
+              type="button"
+              data-open-review-from-detail
+            >
+              오답노트 보기
+            </button>
+          </footer>
         </div>
       </div>
       <div id="student-review-modal" class="answer-modal is-hidden" role="dialog" aria-live="polite" aria-modal="true">

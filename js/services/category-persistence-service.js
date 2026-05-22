@@ -1,4 +1,13 @@
+import {
+  DEBUG_CHANNELS,
+  DEBUG_SOURCES,
+  debugFetch,
+  debugLog,
+  debugWarn,
+} from "../bootstrap/debug-logs.js";
 import { getSupabaseClient, isSupabaseConfigured } from "./supabase-client.js";
+
+const CATEGORY = DEBUG_CHANNELS.category;
 
 export const SUPABASE_CURRICULUM_CATEGORIES_TABLE = "curriculum_categories";
 
@@ -29,8 +38,11 @@ function categoryToRow(category) {
 
 export async function fetchCategoriesFromSupabase() {
   if (!isSupabaseConfigured()) {
+    debugFetch(CATEGORY, "categories fetch skipped", { source: DEBUG_SOURCES.localCache });
     return { ok: false, source: "local", categories: [] };
   }
+
+  debugFetch(CATEGORY, "categories fetch start", { source: DEBUG_SOURCES.supabase });
 
   const client = getSupabaseClient();
   const { data, error } = await client
@@ -41,14 +53,23 @@ export async function fetchCategoriesFromSupabase() {
     .order("sort_order", { ascending: true });
 
   if (error) {
-    console.warn("[Category] fetch.error", error.message);
+    debugWarn(CATEGORY, "categories fetch failed", {
+      source: DEBUG_SOURCES.fallback,
+      message: error.message,
+    });
     return { ok: false, categories: [], message: error.message };
   }
+
+  const categories = (data ?? []).map(rowToCategory).filter(Boolean);
+  debugFetch(CATEGORY, "categories fetched", {
+    source: DEBUG_SOURCES.supabase,
+    count: categories.length,
+  });
 
   return {
     ok: true,
     source: "supabase",
-    categories: (data ?? []).map(rowToCategory).filter(Boolean),
+    categories,
   };
 }
 
@@ -66,11 +87,19 @@ export async function persistCategoriesToSupabase(categories) {
     .from(SUPABASE_CURRICULUM_CATEGORIES_TABLE)
     .upsert(rows, { onConflict: "id" });
 
-  console.info("[Category] persist", { count: rows.length, ok: !error, error: error?.message });
-
   if (error) {
+    debugWarn(CATEGORY, "persist failed", {
+      source: DEBUG_SOURCES.supabase,
+      count: rows.length,
+      message: error.message,
+    });
     return { ok: false, message: error.message };
   }
+
+  debugLog(CATEGORY, "persist success", {
+    source: DEBUG_SOURCES.supabase,
+    count: rows.length,
+  });
 
   return { ok: true };
 }

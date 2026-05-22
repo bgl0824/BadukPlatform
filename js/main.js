@@ -50,6 +50,14 @@ import {
   PRINT_SELECTION_MODE,
 } from "./services/print-selection-service.js";
 import { createPrintBuilderController } from "./ui/print-builder.js";
+import {
+  DEBUG_CHANNELS,
+  DEBUG_SOURCES,
+  debugError,
+  debugFetch,
+  debugLog,
+  debugSync,
+} from "./bootstrap/debug-logs.js";
 import { createBootLogger, safeOn } from "./bootstrap/boot-logger.js";
 import {
   getCategoryProgressRow,
@@ -70,6 +78,7 @@ import { createAdminView } from "./views/admin-view.js";
 import { createExamView } from "./views/exam-view.js";
 import { createProblemCreatorView } from "./views/create-view.js";
 import { createSolveView } from "./views/solve-view.js";
+import { createBoardFeedbackOverlay } from "./ui/board-feedback-overlay.js";
 import { createCategoryCompleteModalController } from "./ui/category-complete-modal-controller.js";
 import { createStudyView } from "./views/study-view.js";
 
@@ -91,6 +100,16 @@ if (!window.WGo) {
 }
 
 const creatorState = createCreatorState(CREATOR_CATEGORIES);
+
+const boardFeedbackOverlay = createBoardFeedbackOverlay({
+  overlayLayer: elements.boardOverlayLayer,
+  messageLayer: elements.feedbackMessageLayer,
+  contentEl: elements.boardFeedbackContent,
+  titleEl: elements.boardFeedbackTitle,
+  subtitleEl: elements.boardFeedbackSubtitle,
+  characterSlot: elements.boardCharacterLayer,
+  speechSlot: elements.boardSpeechLayer,
+});
 
 const boardController = new BoardController(elements.board, {
   size: BOARD_SIZE,
@@ -401,6 +420,7 @@ adminEditorActions = { renderAdminEditor, closeAdminEditor };
 const academyView = createAcademyView({
   elements,
   appState,
+  getCurrentUser,
   canViewLearningMenu,
   canViewAcademyMenu: () => canViewAcademyMenu(getCurrentUser()),
   canViewAcademySubmenu: (section) => canViewAcademySubmenu(getCurrentUser(), section),
@@ -546,16 +566,6 @@ function runApplicationBootstrap() {
         () => createInviteCode("student"),
         { stepName: "createStudentCodeButton" },
       );
-      safeOn(
-        elements.answerModal,
-        "click",
-        () => {
-          if (appState.canDismissAnswerModal) {
-            hideAnswerModal();
-          }
-        },
-        { stepName: "answerModal" },
-      );
     });
     boot.run("bindCategoryCompleteModal", () => categoryCompleteModal.bind());
     boot.summary();
@@ -574,9 +584,19 @@ async function initializeApp() {
   try {
     await boot.runAsync("loadProblems", async () => {
       try {
+        debugFetch(DEBUG_CHANNELS.problem, "load start", { source: DEBUG_SOURCES.supabase });
         const migrationResult = await ProblemStore.migrateLegacyProblems();
+        if (migrationResult.migratedCount > 0) {
+          debugSync(DEBUG_CHANNELS.problem, "legacy problems migrated", {
+            source: DEBUG_SOURCES.localCache,
+            count: migrationResult.migratedCount,
+          });
+        }
         const loadedProblems = await ProblemStore.loadProblems();
         replaceProblemList(loadedProblems);
+        debugFetch(DEBUG_CHANNELS.problem, `loaded count=${loadedProblems.length}`, {
+          source: DEBUG_SOURCES.supabase,
+        });
         ProblemStore.subscribe(handleRealtimeProblemUpdate);
         if (migrationResult.migratedCount > 0) {
           setFeedback(
@@ -585,8 +605,16 @@ async function initializeApp() {
           );
         }
       } catch (error) {
+        debugError(DEBUG_CHANNELS.problem, "load failed — using defaults", {
+          source: DEBUG_SOURCES.fallback,
+          message: error?.message,
+        });
         console.error("Failed to load Supabase problems.", error);
-        replaceProblemList(ProblemStore.getDefaultProblems());
+        const defaults = ProblemStore.getDefaultProblems();
+        replaceProblemList(defaults);
+        debugFetch(DEBUG_CHANNELS.problem, `loaded count=${defaults.length}`, {
+          source: DEBUG_SOURCES.fallback,
+        });
         setFeedback("Supabase 문제 데이터를 불러오지 못해 기본 문제를 표시합니다.", "wrong");
       }
     });
@@ -839,8 +867,7 @@ function loadReviewProblem(queueIndex) {
   clearPendingAiMove();
   clearAutoNext();
   clearWrongTimers();
-  hideAnswerModal();
-  hideWrongModal();
+  hideBoardFeedback();
   setMode("solve");
   appState.currentProblemIndex = reviewItem.index;
   appState.solvedAnswerKeys = new Set();
@@ -879,8 +906,7 @@ function loadProblem(index) {
   clearPendingAiMove();
   clearAutoNext();
   clearWrongTimers();
-  hideAnswerModal();
-  hideWrongModal();
+  hideBoardFeedback();
   setMode("solve");
   appState.currentProblemIndex = index;
   appState.solvedAnswerKeys = new Set();
@@ -896,8 +922,7 @@ function showEmptyProblemState() {
   clearPendingAiMove();
   clearAutoNext();
   clearWrongTimers();
-  hideAnswerModal();
-  hideWrongModal();
+  hideBoardFeedback();
   setMode("list");
   appState.currentProblemIndex = 0;
   appState.solvedAnswerKeys = new Set();
@@ -933,7 +958,7 @@ function handleOxAnswer(userOxAnswer) {
   }
 
   if (appState.isSolved) {
-    setFeedback("이미 정답을 찾았습니다. 다음 문제로 넘어가 보세요.", "correct");
+    boardFeedbackOverlay.showCorrectPreset("correct", { duration: 800 });
     return;
   }
 
@@ -964,7 +989,7 @@ function handleUserMove(point) {
   const problem = getCurrentProblem();
 
   if (appState.isSolved) {
-    setFeedback("이미 정답을 찾았습니다. 다음 문제로 넘어가 보세요.", "correct");
+    boardFeedbackOverlay.showCorrectPreset("correct", { duration: 800 });
     return;
   }
 
@@ -998,7 +1023,7 @@ function handleUserMove(point) {
     appState.solvedAnswerKeys = sequenceResult.solvedAnswerKeys;
     if (sequenceResult.shouldContinue) {
       setStatus(`${getStoneLabel(STONE.black)} 차례입니다.`);
-      setFeedback(`좋아요. 활로 정답이 ${sequenceResult.remainingMoves}수 남았습니다.`, "correct");
+      boardFeedbackOverlay.showCorrectSequenceRemaining(sequenceResult.remainingMoves);
       appState.playedMoves.push(userMove);
       return;
     }
@@ -1832,7 +1857,7 @@ function completeProblem(problem) {
     { levelGroup },
   ).isComplete;
 
-  hideWrongModal();
+  hideBoardFeedback();
   appState.isSolved = true;
   syncBoardPreviewContext();
   solveView.renderProblemSolveMode(problem);
@@ -1846,10 +1871,7 @@ function completeProblem(problem) {
   const progressAfterSolve = buildStudentProgressMap(savedProgress);
   setStatus("정답입니다.");
   setFeedback(
-    isOxProblem(problem)
-      ? "정답입니다! 판정이 맞습니다."
-      : "좋습니다! 핵심 급소를 정확히 찾았습니다.",
-    "correct",
+    isOxProblem(problem) ? "O/X 판정이 맞습니다." : "핵심 급소를 찾았습니다.",
   );
   logSgfForExtension(problem);
 
@@ -1861,21 +1883,17 @@ function completeProblem(problem) {
       });
     });
     const nextReviewProblem = getNextReviewProblemInSession();
-    showAnswerModal(
-      nextReviewProblem
-        ? "정답입니다. 1초 후 다음 복습 문제로 이동합니다."
-        : "정답입니다. 복습을 마쳤습니다.",
-      !nextReviewProblem,
-    );
+    const preset = nextReviewProblem ? "correctReviewNext" : "correctReviewDone";
+    boardFeedbackOverlay.showCorrectPreset(preset, { duration: 1000 });
 
     if (nextReviewProblem) {
       appState.autoNextTimeout = window.setTimeout(() => {
-        hideAnswerModal();
+        hideBoardFeedback();
         loadReviewProblem(appState.reviewSession.currentIndex + 1);
       }, 1000);
     } else {
       appState.autoNextTimeout = window.setTimeout(() => {
-        hideAnswerModal();
+        hideBoardFeedback();
         clearReviewSession();
         showStudyMode();
       }, 1000);
@@ -1889,23 +1907,19 @@ function completeProblem(problem) {
 
   if (completionContext) {
     clearAutoNext();
-    hideAnswerModal();
+    hideBoardFeedback();
     showCategoryCompleteModal(completionContext);
     renderStudyScreen();
     return;
   }
 
   const nextProblem = getNextProblemInCurrentCategory();
-  showAnswerModal(
-    nextProblem
-      ? "정답입니다. 1초 후 다음 문제로 이동합니다."
-      : "정답입니다. 이 카테고리의 마지막 문제입니다.",
-    !nextProblem,
-  );
+  const preset = nextProblem ? "correctNext" : "correctLast";
+  boardFeedbackOverlay.showCorrectPreset(preset, { duration: 1000 });
 
   if (nextProblem) {
     appState.autoNextTimeout = window.setTimeout(() => {
-      hideAnswerModal();
+      hideBoardFeedback();
       loadProblem(nextProblem.index);
     }, 1000);
   }
@@ -1935,18 +1949,14 @@ function resetCurrentProblemAfterWrongMove(problem) {
   syncBoardPreviewContext();
   solveView.renderProblemSolveMode(problem);
   setStatus("오답입니다.");
-  setFeedback(
-    isOxProblem(problem)
-      ? "오답입니다. O/X 중 다시 선택해 보세요."
-      : "오답 착수를 확인한 뒤 문제가 초기 상태로 돌아갑니다.",
-    "wrong",
-  );
+  setFeedback(isOxProblem(problem) ? "O/X를 다시 선택해 보세요." : "다시 도전해 보세요.");
 
   clearWrongTimers();
-  appState.wrongResetTimeout = window.setTimeout(() => {
-    appState.wrongResetTimeout = null;
-    showWrongModal(problem, () => restoreProblemInitialStateAfterWrong(problem));
-  }, 150);
+  const preset = isOxProblem(problem) ? "wrongOx" : "wrong";
+  boardFeedbackOverlay.showWrongPreset(preset, {
+    duration: 1000,
+    onHidden: () => restoreProblemInitialStateAfterWrong(problem),
+  });
 }
 
 function restoreProblemInitialStateAfterWrong(problem) {
@@ -1958,7 +1968,7 @@ function restoreProblemInitialStateAfterWrong(problem) {
     syncBoardPreviewContext();
     solveView.renderProblemSolveMode(problem);
     setStatus("O/X 판정");
-    setFeedback("오답입니다. O/X 중 다시 선택해 보세요.", "wrong");
+    setFeedback("O/X 중 정답을 선택하세요.");
     return;
   }
 
@@ -1966,7 +1976,7 @@ function restoreProblemInitialStateAfterWrong(problem) {
   boardController.loadPosition(cloneBoardStones(appState.initialBoardStones ?? problem.stones));
   syncBoardPreviewContext();
   setStatus(`${getStoneLabel(STONE.black)} 차례입니다.`);
-  setFeedback("오답입니다. 문제를 초기 상태로 되돌렸습니다.", "wrong");
+  setFeedback(getProblemStartFeedback(problem));
 }
 
 function getNextProblemInCurrentCategory() {
@@ -1982,41 +1992,21 @@ function getNextProblemInCurrentCategory() {
   return filteredProblems[currentIndex + 1];
 }
 
-function showAnswerModal(message, canDismiss = false) {
-  elements.answerModalMessage.textContent = message;
-  appState.canDismissAnswerModal = canDismiss;
-  elements.answerModal.classList.remove("is-hidden");
+function hideBoardFeedback() {
+  boardFeedbackOverlay.hide();
+  boardFeedbackOverlay.clearTimers();
 }
 
 function hideAnswerModal() {
-  appState.canDismissAnswerModal = false;
-  elements.answerModal.classList.add("is-hidden");
-}
-
-function showWrongModal(problem, onHidden) {
-  if (elements.wrongModalMessage) {
-    elements.wrongModalMessage.textContent = isOxProblem(problem)
-      ? "O/X 중 다시 선택해 보세요."
-      : "문제가 초기 상태로 돌아갑니다. 다시 시도해 보세요.";
-  }
-
-  elements.wrongModal.classList.remove("is-hidden");
-  appState.wrongModalTimeout = window.setTimeout(() => {
-    appState.wrongModalTimeout = null;
-    hideWrongModal();
-    onHidden?.();
-  }, 1000);
+  hideBoardFeedback();
 }
 
 function hideWrongModal() {
-  elements.wrongModal.classList.add("is-hidden");
+  hideBoardFeedback();
 }
 
 function clearWrongTimers() {
-  if (appState.wrongModalTimeout) {
-    window.clearTimeout(appState.wrongModalTimeout);
-    appState.wrongModalTimeout = null;
-  }
+  boardFeedbackOverlay.clearTimers();
 
   if (appState.wrongResetTimeout) {
     window.clearTimeout(appState.wrongResetTimeout);
@@ -2088,7 +2078,7 @@ function createProblemId(title, category) {
 }
 
 function escapeHtml(value) {
-  return value
+  return String(value ?? "")
     .replaceAll("&", "&amp;")
     .replaceAll("<", "&lt;")
     .replaceAll(">", "&gt;")

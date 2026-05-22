@@ -9,6 +9,9 @@ const STONE_MARK_TYPES = {
 };
 
 const TOUCH_CONFIRM_QUERY = "(hover: none) and (pointer: coarse)";
+/** WGo 기본 wood1.jpg — vendor/ 에 배치 (404 시 CSS 색으로 대체) */
+const BOARD_BACKGROUND_IMAGE = "./vendor/wood1.jpg";
+const BOARD_BACKGROUND_COLOR = "#f3d08a";
 const GHOST_PREVIEW_TYPE = "GHOST_PREVIEW";
 const GHOST_PREVIEW_STATUS = {
   legal: "legal",
@@ -128,6 +131,27 @@ function registerGhostPreviewHandlers() {
 registerGhostPreviewHandlers();
 
 class BoardController {
+  applyBoardBackgroundFallback() {
+    const applyColorFallback = () => {
+      if (!this.element) {
+        return;
+      }
+
+      this.element.style.backgroundImage = "";
+      this.element.style.backgroundColor = BOARD_BACKGROUND_COLOR;
+    };
+
+    const probe = new Image();
+    probe.decoding = "async";
+    probe.onerror = applyColorFallback;
+    probe.onload = () => {
+      if (!probe.naturalWidth) {
+        applyColorFallback();
+      }
+    };
+    probe.src = BOARD_BACKGROUND_IMAGE;
+  }
+
   constructor(element, { size, onPlay, onSecondaryPlay, onInvalidPlay, preview } = {}) {
     this.element = element;
     this.size = size;
@@ -153,6 +177,7 @@ class BoardController {
     this.board = new WGo.Board(this.element, {
       size: this.size,
       width: this.getResponsiveWidth(),
+      background: BOARD_BACKGROUND_IMAGE,
       section: {
         top: 0,
         right: 0,
@@ -160,6 +185,8 @@ class BoardController {
         left: 0,
       },
     });
+
+    this.applyBoardBackgroundFallback();
 
     this.bindPointerEvents();
     window.addEventListener("resize", () => this.resize());

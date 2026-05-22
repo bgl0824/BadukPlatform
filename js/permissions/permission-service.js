@@ -29,9 +29,9 @@ export function canManageAcademy(user) {
   return [ROLES.admin, ROLES.academyOwner].includes(normalizeRole(user?.role));
 }
 
-/** 학원관리 메인 메뉴(학원관리 화면) 진입 */
+/** 학원관리 메인 메뉴(학원관리 화면) — admin·학원장만 (academyId 무관) */
 export function canViewAcademyMenu(user) {
-  return [ROLES.admin, ROLES.academyOwner, ROLES.teacher].includes(normalizeRole(user?.role));
+  return canManageAcademy(user);
 }
 
 /** 학원관리 하위 탭: invites / teachers 는 학원장·관리자만 */
@@ -41,7 +41,7 @@ export function canViewAcademySubmenu(user, section) {
     return [ROLES.admin, ROLES.academyOwner].includes(role);
   }
   if (section === "accounts" || section === "students") {
-    return [ROLES.admin, ROLES.academyOwner, ROLES.teacher].includes(role);
+    return [ROLES.admin, ROLES.academyOwner].includes(role);
   }
   return canViewAcademyMenu(user);
 }

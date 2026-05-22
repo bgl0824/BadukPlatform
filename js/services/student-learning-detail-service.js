@@ -1,4 +1,5 @@
-import { getOrderedCategoryNames } from "./category-service.js";
+import { getCategoryByName, getOrderedCategoryNames, readCategories } from "./category-service.js";
+import { LEVEL_GROUPS, getLevelGroupInfo, normalizeLevelGroup } from "./level-group-service.js";
 import { getCategoryProblemNumberForProblem } from "./category-problem-number.js";
 import {
   getContinueTargetForCategory,
@@ -18,26 +19,67 @@ import {
 export function getStudentLearningDetail(studentUserId, problems) {
   const progressList = getStudentProgressByUserId(studentUserId);
   const progressByProblemId = new Map(progressList.map((progress) => [progress.problemId, progress]));
-  const categoryNames = getOrderedCategoryNames();
+  const categories = readCategories();
+  const rows = [];
 
-  return categoryNames
-    .map((categoryName) => {
-      return buildCategoryLearningRow(categoryName, problems, progressByProblemId, progressList);
-    })
-    .filter(Boolean);
+  LEVEL_GROUPS.forEach((levelGroup) => {
+    getOrderedCategoryNames(categories, { levelGroup }).forEach((categoryName) => {
+      const row = buildCategoryLearningRow(
+        categoryName,
+        levelGroup,
+        problems,
+        progressByProblemId,
+        progressList,
+        categories,
+      );
+      if (row) {
+        rows.push(row);
+      }
+    });
+  });
+
+  return rows;
 }
 
-function buildCategoryLearningRow(categoryName, problems, progressByProblemId, progressList) {
-  const row = getCategoryProgressRow(categoryName, problems, progressByProblemId);
+/** levelGroup 섹션 단위로 묶기 (탭 전 단계) */
+export function groupLearningDetailByLevelGroup(rows = []) {
+  return LEVEL_GROUPS.map((levelGroup) => {
+    const sectionRows = rows.filter(
+      (row) => normalizeLevelGroup(row.levelGroup) === levelGroup,
+    );
+    return {
+      levelGroup,
+      title: levelGroup,
+      description: getLevelGroupInfo(levelGroup).description,
+      rows: sectionRows,
+    };
+  }).filter((section) => section.rows.length > 0);
+}
+
+function buildCategoryLearningRow(
+  categoryName,
+  levelGroup,
+  problems,
+  progressByProblemId,
+  progressList,
+  categories,
+) {
+  const normalizedLevelGroup = normalizeLevelGroup(levelGroup);
+  const row = getCategoryProgressRow(categoryName, problems, progressByProblemId, {
+    levelGroup: normalizedLevelGroup,
+  });
   if (row.total === 0) {
     return null;
   }
 
-  const categoryProblems = getProblemsInCategoryOrder(categoryName, problems);
+  const categoryProblems = getProblemsInCategoryOrder(categoryName, problems, {
+    levelGroup: normalizedLevelGroup,
+  });
   const continueTarget = getContinueTargetForCategory(categoryName, {
     progressList,
     problems,
     progressByProblemId,
+    levelGroup: normalizedLevelGroup,
   });
 
   let unresolvedReviewCount = 0;
@@ -64,8 +106,13 @@ function buildCategoryLearningRow(categoryName, problems, progressByProblemId, p
   const recentLabel = formatRecentProblemLabel(recentEntry, problems);
   const continueLabel = formatContinueLabel(continueTarget, row);
 
+  const registryCategory = getCategoryByName(categoryName, categories, {
+    levelGroup: normalizedLevelGroup,
+  });
+
   return {
     categoryName,
+    levelGroup: registryCategory?.levelGroup ?? normalizedLevelGroup,
     solved: row.solved,
     total: row.total,
     status: row.isComplete ? "complete" : row.isInProgress ? "in_progress" : "not_started",

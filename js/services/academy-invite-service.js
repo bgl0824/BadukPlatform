@@ -1,3 +1,10 @@
+import {
+  DEBUG_CHANNELS,
+  DEBUG_SOURCES,
+  debugFetch,
+  debugLog,
+  debugWarn,
+} from "../bootstrap/debug-logs.js";
 import { getSupabaseClient, isSupabaseConfigured } from "./supabase-client.js";
 import {
   isInviteCodeActive,
@@ -9,18 +16,27 @@ import {
 export const SUPABASE_ACADEMY_INVITE_TABLE = "academy_invite_codes";
 
 const LOCAL_INVITE_MIGRATED_KEY = "BADUK_ACADEMY_INVITE_CODES_MIGRATED";
-
-function shouldLogInvite() {
-  return Boolean(window.BadukConfig?.debugAuth);
-}
+const INVITE = DEBUG_CHANNELS.invite;
 
 export function logInvite(scope, detail = {}) {
   const payload = { table: SUPABASE_ACADEMY_INVITE_TABLE, ...detail };
-  if (shouldLogInvite()) {
-    console.info(`[Invite] ${scope}`, payload);
-  } else if (scope.endsWith(".error") || scope === "signup.lookup.miss") {
-    console.warn(`[Invite] ${scope}`, payload);
+  const isFallback = scope.includes("fallback") || scope.includes("miss") || detail.source === "localStorage";
+  const isValidated = scope.includes("validated") || (detail.found && !isFallback);
+
+  if (isValidated) {
+    debugLog(INVITE, scope, payload);
+    return;
   }
+
+  if (isFallback || scope.endsWith(".error") || scope === "signup.lookup.miss") {
+    debugWarn(INVITE, scope, { ...payload, source: detail.source ?? DEBUG_SOURCES.fallback });
+    return;
+  }
+
+  debugFetch(INVITE, scope, {
+    source: detail.source ?? DEBUG_SOURCES.supabase,
+    ...payload,
+  });
 }
 
 function rowToInvite(row) {
@@ -255,7 +271,18 @@ export async function findInviteCodeByCode(code) {
   }
 
   const invite = rowToInvite(data);
-  return isInviteCodeActive(invite, normalizedCode) ? invite : null;
+  if (isInviteCodeActive(invite, normalizedCode)) {
+    logInvite("invite code validated", {
+      code: normalizedCode,
+      source: DEBUG_SOURCES.supabase,
+      academyId: invite.academyId,
+      role: invite.role,
+    });
+    return invite;
+  }
+
+  logInvite("signup.lookup.inactive", { code: normalizedCode, source: DEBUG_SOURCES.supabase });
+  return null;
 }
 
 export async function deleteInviteCodeFromSupabase({ code, academyId }) {

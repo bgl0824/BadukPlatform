@@ -1,4 +1,7 @@
+import { DEBUG_CHANNELS, DEBUG_SOURCES, debugSync } from "../bootstrap/debug-logs.js";
 import { normalizeRole, ROLES } from "../permissions/permission-service.js";
+
+const PROGRESS = DEBUG_CHANNELS.progress;
 
 const STUDENT_PROGRESS_STORAGE_KEY = "BADUK_STUDENT_PROGRESS";
 
@@ -190,6 +193,15 @@ export function deleteStudentProgressByUserId(userId) {
   const nextProgress = allProgress.filter((progress) => progress.userId !== userId);
   const removedCount = allProgress.length - nextProgress.length;
   saveStudentProgress(nextProgress);
+
+  debugSync(PROGRESS, "progress purged for user", {
+    source: DEBUG_SOURCES.localCache,
+    userId,
+    before: allProgress.length,
+    after: nextProgress.length,
+    removedCount,
+  });
+
   return { removedCount };
 }
 

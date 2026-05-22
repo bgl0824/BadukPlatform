@@ -5,9 +5,12 @@ const ACADEMY_SECTIONS = {
   accounts: "accounts",
 };
 
+import { DEBUG_CHANNELS, debugLog } from "../bootstrap/debug-logs.js";
+
 export function createAcademyView({
   elements,
   appState,
+  getCurrentUser,
   canViewLearningMenu,
   canViewAcademyMenu,
   canViewAcademySubmenu,
@@ -148,8 +151,18 @@ export function createAcademyView({
   }
 
   function updateAcademyMenuVisibility() {
+    const user = getCurrentUser?.() ?? null;
+    const academyMenuVisible = canViewAcademyMenu();
+
+    debugLog(DEBUG_CHANNELS.ui, "academy menu visibility", {
+      role: user?.role ?? null,
+      userType: user?.userType ?? user?.role ?? null,
+      academyId: user?.academyId ?? null,
+      visible: academyMenuVisible,
+    });
+
     setMenuButtonsVisibility(elements.learningMenuButtons, canViewLearningMenu());
-    setMenuButtonsVisibility([elements.academyModeButton], canViewAcademyMenu());
+    setMenuButtonsVisibility([elements.academyModeButton], academyMenuVisible);
     setMenuButtonsVisibility([elements.attendanceModeButton], canViewAttendanceMenu());
     setMenuButtonsVisibility([elements.paymentsModeButton], canViewPaymentsMenu());
     updateAcademySubmenuVisibility();

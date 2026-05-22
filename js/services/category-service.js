@@ -1,4 +1,13 @@
+import {
+  DEBUG_CHANNELS,
+  DEBUG_SOURCES,
+  debugFetch,
+  debugSync,
+  debugWarn,
+} from "../bootstrap/debug-logs.js";
 import { DEFAULT_LEVEL_GROUP, normalizeLevelGroup } from "./level-group-service.js";
+
+const CATEGORY = DEBUG_CHANNELS.category;
 
 const CATEGORIES_STORAGE_KEY = "BADUK_CURRICULUM_CATEGORIES";
 const SUPPRESSED_CATEGORIES_KEY = "BADUK_SUPPRESSED_CATEGORIES";
@@ -59,6 +68,9 @@ export function saveCategories(categories) {
 }
 
 export async function hydrateCategoryRegistry(defaultNames = DEFAULT_CATEGORY_NAMES) {
+  const beforeCount = readCategories().length;
+  debugSync(CATEGORY, "hydrate start", { before: beforeCount });
+
   const { fetchCategoriesFromSupabase, persistCategoriesToSupabase } = await import(
     "./category-persistence-service.js",
   );
@@ -66,11 +78,22 @@ export async function hydrateCategoryRegistry(defaultNames = DEFAULT_CATEGORY_NA
 
   if (remote.ok && remote.categories.length > 0) {
     saveCategories(remote.categories);
-    return readCategories();
+    const after = readCategories();
+    debugSync(CATEGORY, "hydrate from supabase", {
+      source: DEBUG_SOURCES.supabase,
+      before: beforeCount,
+      after: after.length,
+    });
+    return after;
   }
 
   const local = readCategories();
   if (local.length > 0) {
+    debugWarn(CATEGORY, "hydrate fallback local cache", {
+      source: DEBUG_SOURCES.fallback,
+      before: beforeCount,
+      after: local.length,
+    });
     await persistCategoriesToSupabase(local);
     return local;
   }
@@ -79,6 +102,10 @@ export async function hydrateCategoryRegistry(defaultNames = DEFAULT_CATEGORY_NA
     createCategoryRecord(name, order, DEFAULT_LEVEL_GROUP),
   );
   saveCategories(seeded);
+  debugFetch(CATEGORY, "hydrate seeded defaults", {
+    source: DEBUG_SOURCES.localCache,
+    count: seeded.length,
+  });
   return readCategories();
 }
 

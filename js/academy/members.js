@@ -5,13 +5,18 @@ import {
   countStudentsByTeacher,
   deactivateStudentMember,
   deactivateTeacherMember,
-  deleteInactiveStudentMember,
+  explainAcademyMemberFilter,
   getAcademyMembersByAcademyId,
+  getAcademyMembersByAcademyScope,
   refreshAcademyMembersCache,
   readAcademyMembers,
+  selectAcademyMembersForUser,
   isActiveMember,
   MEMBER_STATUS,
+  normalizeAcademyMemberRole,
   normalizeMemberStatus,
+  resolveAcademyScopeId,
+  resolveAcademyScopeIds,
   transferStudentsToTeacher,
 } from "../services/academy-service.js";
 import {
@@ -22,8 +27,23 @@ import {
   normalizeRole,
   ROLES,
 } from "../permissions/permission-service.js";
+import {
+  DEBUG_CHANNELS,
+  DEBUG_SOURCES,
+  debugLog,
+  debugWarn,
+  isDebugLogsEnabled,
+} from "../bootstrap/debug-logs.js";
+
+const UI = DEBUG_CHANNELS.ui;
+
+const ACADEMY = DEBUG_CHANNELS.academy;
 import { DEFAULT_RESET_PASSWORD } from "../services/auth-service.js";
-import { getStudentLearningDetail } from "../services/student-learning-detail-service.js";
+import {
+  getStudentLearningDetail,
+  groupLearningDetailByLevelGroup,
+} from "../services/student-learning-detail-service.js";
+import { normalizeLevelGroup } from "../services/level-group-service.js";
 import { getCategoryProblemNumberForProblem } from "../services/category-problem-number.js";
 import { getTotalWrongCount } from "../services/review-service.js";
 import {
@@ -63,6 +83,14 @@ export function createAcademyMemberController({
     accountSortOrder: "name-asc",
     showInactiveStudentAccounts: false,
   };
+  let membersRenderGeneration = 0;
+
+  const activeLearningDetailState = {
+    studentId: null,
+    activeLevelTab: null,
+    sections: [],
+  };
+
   const reviewModalDragState = {
     x: 0,
     y: 0,
@@ -106,6 +134,12 @@ export function createAcademyMemberController({
       const resetButton = event.target.closest("[data-reset-password-user-id]");
       if (resetButton) {
         handleMemberPasswordReset(resetButton.dataset.resetPasswordUserId);
+        return;
+      }
+
+      const learningDetailButton = event.target.closest("[data-learning-detail-student-id]");
+      if (learningDetailButton) {
+        openStudentLearningDetailModal(learningDetailButton.dataset.learningDetailStudentId);
         return;
       }
 
@@ -168,6 +202,21 @@ export function createAcademyMemberController({
     });
     elements.academyStudentList?.addEventListener("change", handleStudentAssignChange);
     elements.closeStudentReviewModal?.addEventListener("click", closeStudentReviewModal);
+    elements.closeStudentLearningDetailModal?.addEventListener("click", closeStudentLearningDetailModal);
+    elements.studentLearningDetailOpenReview?.addEventListener("click", () => {
+      const studentId = activeLearningDetailState.studentId;
+      if (!studentId) {
+        return;
+      }
+      closeStudentLearningDetailModal();
+      openStudentReviewModal(studentId);
+    });
+    elements.studentLearningDetailModal?.addEventListener("click", (event) => {
+      if (event.target === elements.studentLearningDetailModal) {
+        closeStudentLearningDetailModal();
+      }
+    });
+    elements.studentLearningDetailLevelNav?.addEventListener("click", handleLearningDetailLevelTabClick);
     elements.toggleArchivedReviewNotes?.addEventListener("click", () => {
       activeReviewState.showArchived = !activeReviewState.showArchived;
       syncArchivedReviewToggle();
@@ -262,20 +311,91 @@ export function createAcademyMemberController({
   }
 
   async function renderAcademyMembers({ showTeachers = true, view } = {}) {
+    const renderGeneration = ++membersRenderGeneration;
     studentListState.view = resolveMemberView({ showTeachers, view });
     studentListState.showTeachers = studentListState.view === "teachers";
     const currentUser = getCurrentUser();
     const academyScopeId =
-      normalizeRole(currentUser?.role) === ROLES.admin && !currentUser?.academyId
+      normalizeRole(currentUser?.role ?? currentUser?.userType) === ROLES.admin &&
+      !currentUser?.academyId
         ? null
-        : currentUser?.academyId || currentUser?.id;
-    await refreshAcademyMembersCache(academyScopeId);
+        : resolveAcademyScopeId(currentUser);
+    const cacheBeforeRefresh = readAcademyMembers();
+
+    const refreshResult = await refreshAcademyMembersCache(academyScopeId, { user: currentUser });
+
+    if (renderGeneration !== membersRenderGeneration) {
+      debugWarn(DEBUG_CHANNELS.sync, "renderAcademyMembers aborted (stale async)", {
+        source: DEBUG_SOURCES.fallback,
+        renderGeneration,
+        latestGeneration: membersRenderGeneration,
+        view: studentListState.view,
+      });
+      return;
+    }
+
+    const membersSnapshot = refreshResult.cacheAfterSync ?? readAcademyMembers();
+    const scopeIds = resolveAcademyScopeIds(currentUser);
+
+    debugLog(DEBUG_CHANNELS.sync, "members render cache timeline", {
+      source: refreshResult?.source ?? DEBUG_SOURCES.localCache,
+      renderGeneration,
+      academyScopeId: academyScopeId ?? "all",
+      scopeIds,
+      cacheBeforeRefresh: cacheBeforeRefresh.length,
+      cacheAfterSync: membersSnapshot.length,
+      teachersBeforeFetch: refreshResult.teachersBeforeFetch ?? null,
+      teachersRemote: refreshResult.teachersRemote ?? null,
+      teachersAfterSync: refreshResult.teachersAfterSync ?? null,
+      sameSnapshotReference: membersSnapshot === refreshResult.cacheAfterSync,
+    });
+
     const canViewAllStudents = canViewAllAcademyStudents(currentUser);
     const canManageLifecycle = canManageMemberLifecycle(currentUser);
-    const activeTeacherMembers = getAcademyMembersForUser(currentUser, { role: "teacher", status: "active" });
-    const allTeacherMembers = getAcademyMembersForUser(currentUser, { role: "teacher", status: "all" });
-    const activeStudentMembers = getAcademyMembersForUser(currentUser, { role: "student", status: "active" });
-    const allStudentMembers = getAcademyMembersForUser(currentUser, { role: "student", status: "all" });
+    const activeTeacherMembers = selectAcademyMembersForUser(membersSnapshot, currentUser, {
+      role: "teacher",
+      status: "active",
+    });
+
+    debugLog(ACADEMY, "activeTeacherMembers raw", {
+      renderGeneration,
+      source: refreshResult?.source ?? DEBUG_SOURCES.localCache,
+      scopeIds,
+      count: activeTeacherMembers.length,
+      membersSnapshotCount: membersSnapshot.length,
+      readAcademyMembersCount: readAcademyMembers().length,
+      snapshotMatchesLiveCache: membersSnapshot.length === readAcademyMembers().length,
+      teachers: activeTeacherMembers.map((teacher) => ({
+        userId: teacher.userId,
+        academyId: teacher.academyId,
+        role: teacher.role,
+        status: teacher.status,
+      })),
+    });
+
+    traceTeacherDropdownPipeline({
+      currentUser,
+      academyScopeId,
+      fetchSource: refreshResult?.source,
+      activeTeacherMembers,
+      membersSnapshot,
+      renderGeneration,
+      scopeIds,
+      view: studentListState.view,
+      canAssignTeacher: canAssignStudentTeacher(currentUser),
+    });
+    const allTeacherMembers = selectAcademyMembersForUser(membersSnapshot, currentUser, {
+      role: "teacher",
+      status: "all",
+    });
+    const activeStudentMembers = selectAcademyMembersForUser(membersSnapshot, currentUser, {
+      role: "student",
+      status: "active",
+    });
+    const allStudentMembers = selectAcademyMembersForUser(membersSnapshot, currentUser, {
+      role: "student",
+      status: "all",
+    });
     const inactiveStudentMembers = allStudentMembers.filter((member) => !isActiveMember(member));
     const inactiveTeacherMembers = allTeacherMembers.filter((member) => !isActiveMember(member));
     const scopedActiveStudents = getScopedStudentMembers(activeStudentMembers, currentUser);
@@ -351,7 +471,7 @@ export function createAcademyMemberController({
       if (elements.academyStudentsDescription) {
         elements.academyStudentsDescription.textContent = isLearningStudentsView
           ? "학생별 진도, 오답노트, 학습 상세를 확인하는 학습 분석 메뉴입니다."
-          : "담당 배정과 진도 요약 중심의 운영 관리 카드입니다. 학습 분석은 학습관리 메뉴를 이용해 주세요.";
+          : "담당 배정·진도 요약 중심의 운영 카드입니다. 학습 분석은 학습관리 메뉴를 이용해 주세요.";
       }
 
       renderTeacherFilterBar(activeTeacherMembers, activeStudentMembers, canViewAllStudents && isStudentsView);
@@ -593,6 +713,10 @@ export function createAcademyMemberController({
         });
       })
       .join("");
+
+    if (canAssignTeacher && cardMode === "operations") {
+      queueMicrotask(() => logTeacherSelectDomState(element));
+    }
   }
 
   function renderTeacherCard(member, { canResetPassword, canManageLifecycle, activeTeacherMembers, allStudentMembers }) {
@@ -719,24 +843,24 @@ export function createAcademyMemberController({
     member,
     { teacherMembers, canAssignTeacher, canResetPassword, canManageLifecycle, cardMode = "learning" },
   ) {
-    if (cardMode === "operations") {
-      return renderStudentOperationsCard(member, { teacherMembers, canAssignTeacher });
-    }
-
-    return renderStudentLearningCard(member, {
+    return renderStudentSummaryCard(member, {
       teacherMembers,
       canAssignTeacher,
+      cardMode,
     });
   }
 
-  function renderStudentOperationsCard(member, { teacherMembers, canAssignTeacher }) {
+  /** operations = 운영 summary, learning = 학습 분석 + 액션 */
+  function renderStudentSummaryCard(member, { teacherMembers, canAssignTeacher, cardMode = "operations" }) {
     const progress = getStudentProgress(member);
     const assignedTeacherName = getTeacherDisplayName(member.assignedTeacherId, teacherMembers);
     const isInactive = !isActiveMember(member);
     const statusLabel = isInactive ? "비활성" : "활성";
+    const isLearningCard = cardMode === "learning";
+    const cardVariant = isLearningCard ? "learning" : "operations";
 
     return `
-      <article class="academy-member-card academy-student-card academy-student-card--operations${isInactive ? " is-inactive-member" : ""}" data-student-id="${escapeHtml(member.userId)}">
+      <article class="academy-member-card academy-student-card academy-student-card--summary academy-student-card--${cardVariant}${isInactive ? " is-inactive-member" : ""}" data-student-id="${escapeHtml(member.userId)}">
         <div class="student-card-header student-card-header--compact">
           <div>
             <strong>${escapeHtml(member.name || member.username)}</strong>
@@ -745,81 +869,62 @@ export function createAcademyMemberController({
           <span class="member-status-badge">${statusLabel}</span>
         </div>
         ${canAssignTeacher && !isInactive ? renderAssignTeacherSelect(member, teacherMembers) : ""}
-        <dl class="student-progress-summary student-progress-summary--compact">
-          <div>
-            <dt>전체 문제</dt>
-            <dd>${progress.totalProblemCount}문제</dd>
-          </div>
-          <div>
-            <dt>완료 문제</dt>
-            <dd>${progress.solvedProblemCount}문제</dd>
-          </div>
-          <div>
-            <dt>진도율</dt>
-            <dd>${progress.progressRate}%</dd>
-          </div>
-          <div>
-            <dt>가입일</dt>
-            <dd>${formatDateTime(member.joinedAt)}</dd>
-          </div>
-          <div>
-            <dt>계정 상태</dt>
-            <dd>${statusLabel}</dd>
-          </div>
+        <dl class="student-progress-summary student-progress-summary--summary">
+          ${renderStudentSummaryMetrics(progress, { includeLevel: isLearningCard })}
         </dl>
+        ${isLearningCard ? renderStudentLearningActionButtons(member) : ""}
       </article>
     `;
   }
 
-  function renderStudentLearningCard(member, { teacherMembers, canAssignTeacher }) {
-    const progress = getStudentProgress(member);
-    const assignedTeacherName = getTeacherDisplayName(member.assignedTeacherId, teacherMembers);
-    const isInactive = !isActiveMember(member);
+  function renderStudentSummaryMetrics(progress, { includeLevel = false } = {}) {
+    const rows = [
+      `
+        <div>
+          <dt>진도율</dt>
+          <dd>${progress.progressRate}% · ${progress.solvedProblemCount}/${progress.totalProblemCount}문제</dd>
+        </div>
+        <div>
+          <dt>최근 학습</dt>
+          <dd>${escapeHtml(progress.recentCategory)}</dd>
+        </div>
+      `,
+    ];
+
+    if (includeLevel) {
+      rows.push(`
+        <div>
+          <dt>급수</dt>
+          <dd>${escapeHtml(progress.level)}</dd>
+        </div>
+      `);
+    }
+
+    return rows.join("");
+  }
+
+  function renderStudentLearningActionButtons(member) {
+    if (!isActiveMember(member)) {
+      return "";
+    }
 
     return `
-      <article class="academy-member-card academy-student-card academy-student-card--learning${isInactive ? " is-inactive-member" : ""}" data-student-id="${escapeHtml(member.userId)}">
-        <div class="student-card-header">
-          <div>
-            <strong>${escapeHtml(member.name || member.username)}</strong>
-            <p class="student-assigned-teacher">담당: ${escapeHtml(assignedTeacherName)}</p>
-            ${isInactive ? `<span class="member-status-badge">비활성</span>` : ""}
-          </div>
-          <span class="student-level-badge">${escapeHtml(progress.level)}</span>
-        </div>
-        ${canAssignTeacher && !isInactive ? renderAssignTeacherSelect(member, teacherMembers) : ""}
-        <dl class="student-progress-summary">
-          <div>
-            <dt>전체 문제</dt>
-            <dd>${progress.totalProblemCount}문제</dd>
-          </div>
-          <div>
-            <dt>완료 문제</dt>
-            <dd>${progress.solvedProblemCount}문제</dd>
-          </div>
-          <div>
-            <dt>진도율</dt>
-            <dd>${progress.progressRate}%</dd>
-          </div>
-          <div>
-            <dt>최근 카테고리</dt>
-            <dd>${escapeHtml(progress.recentCategory)}</dd>
-          </div>
-          <div>
-            <dt>가입일</dt>
-            <dd>${formatDateTime(member.joinedAt)}</dd>
-          </div>
-        </dl>
-        ${isInactive ? "" : renderStudentLearningDetailPanel(member.userId)}
-        <div class="student-card-actions">
-          ${
-            isInactive
-              ? ""
-              : `<button class="secondary-button student-review-button" type="button" data-review-student-id="${escapeHtml(member.userId)}">
-                  오답노트
-                </button>`
-          }
-        </div>
-      </article>
+      <div class="student-card-actions student-card-actions--split">
+        <button
+          class="secondary-button student-learning-detail-button"
+          type="button"
+          data-learning-detail-student-id="${escapeHtml(member.userId)}"
+        >
+          상세
+        </button>
+        <button
+          class="secondary-button student-review-button"
+          type="button"
+          data-review-student-id="${escapeHtml(member.userId)}"
+        >
+          오답노트
+        </button>
+      </div>
     `;
   }
 
@@ -872,19 +977,152 @@ export function createAcademyMemberController({
       return;
     }
 
-    window.alert(`비밀번호가 ${DEFAULT_RESET_PASSWORD}으로 초기화되었습니다.`);
+    const loginHint = member?.username
+      ? `\n\n로그인: 아이디 ${member.username} / 비밀번호 ${DEFAULT_RESET_PASSWORD}`
+      : "";
+    window.alert(`비밀번호가 ${DEFAULT_RESET_PASSWORD}으로 초기화되었습니다.${loginHint}`);
   }
 
   function getAcademyId() {
-    const currentUser = getCurrentUser();
-    return currentUser?.academyId || currentUser?.id;
+    return resolveAcademyScopeId(getCurrentUser());
+  }
+
+  function traceTeacherDropdownPipeline({
+    currentUser,
+    academyScopeId,
+    fetchSource,
+    activeTeacherMembers,
+    membersSnapshot,
+    renderGeneration,
+    scopeIds: scopeIdsInput,
+    view,
+    canAssignTeacher,
+  }) {
+    const scopeIds = scopeIdsInput ?? resolveAcademyScopeIds(currentUser);
+    const scopeId = String(academyScopeId ?? scopeIds[0] ?? "").trim();
+    const scopeIdSet = new Set(scopeIds);
+    const filterOptions = { role: "teacher", status: "active" };
+    const allMembers = membersSnapshot ?? readAcademyMembers();
+    const liveCacheMembers = readAcademyMembers();
+    const teachersGlobal = allMembers.filter(
+      (member) => normalizeAcademyMemberRole(member.role) === "teacher",
+    );
+    const teachersLiveCache = liveCacheMembers.filter(
+      (member) => normalizeAcademyMemberRole(member.role) === "teacher",
+    );
+
+    teachersGlobal.forEach((teacher) => {
+      const filterTrace = explainAcademyMemberFilter(teacher, scopeIds, filterOptions);
+      debugLog(ACADEMY, "teacher row", {
+        userId: teacher.userId,
+        academyId: teacher.academyId,
+        role: teacher.role,
+        status: teacher.status,
+        userType: teacher.userType ?? null,
+        matchesOwnerScope: scopeIdSet.has(String(teacher.academyId ?? "").trim()),
+        ownerAuthId: currentUser?.id ?? null,
+        dropdownFilter: filterTrace,
+      });
+    });
+
+    const membersBeforeFilter = teachersGlobal;
+    const afterScopeFilter = teachersGlobal.filter((member) =>
+      scopeIdSet.has(String(member.academyId ?? "").trim()),
+    );
+    const afterRoleFilter = afterScopeFilter.filter(
+      (member) => normalizeAcademyMemberRole(member.role) === "teacher",
+    );
+    const afterStatusFilter = afterRoleFilter.filter((member) => isActiveMember(member));
+    const assignableTeachers = getAcademyMembersByAcademyScope(scopeIds, filterOptions, allMembers);
+
+    debugLog(ACADEMY, "teacher candidates", {
+      source: fetchSource ?? DEBUG_SOURCES.localCache,
+      renderGeneration,
+      scopeId,
+      scopeIds,
+      view,
+      dataSource: {
+        usesSnapshot: Boolean(membersSnapshot),
+        snapshotTeacherCount: teachersGlobal.length,
+        liveCacheTeacherCount: teachersLiveCache.length,
+        snapshotDiffersFromLiveCache: teachersGlobal.length !== teachersLiveCache.length,
+      },
+      ownerSession: {
+        id: currentUser?.id,
+        role: currentUser?.role,
+        userType: currentUser?.userType,
+        roleNormalized: normalizeRole(currentUser?.role ?? currentUser?.userType),
+        academyIdMeta: currentUser?.academyId ?? null,
+        scopeMatchesOwnerId: scopeId === String(currentUser?.id ?? "").trim(),
+      },
+      memberRoleField: "academy_members.role (auth userType/type 무관)",
+      filterPipeline: {
+        membersBeforeFilter: membersBeforeFilter.length,
+        afterScopeFilter: afterScopeFilter.length,
+        afterRoleFilter: afterRoleFilter.length,
+        afterStatusFilter: afterStatusFilter.length,
+        getAcademyMembersByAcademyScope: assignableTeachers.length,
+        activeTeacherMembers: activeTeacherMembers.length,
+      },
+      rejectSamples: membersBeforeFilter
+        .map((teacher) => explainAcademyMemberFilter(teacher, scopeIds, filterOptions))
+        .filter((trace) => !trace.included)
+        .slice(0, 5),
+    });
+
+    debugLog(ACADEMY, "assignable teachers (dropdown source)", {
+      source: fetchSource ?? DEBUG_SOURCES.localCache,
+      scopeId,
+      scopeIds,
+      count: activeTeacherMembers.length,
+      canAssignTeacher,
+      renderAssignTeacherSelectWillRun: canAssignTeacher && activeTeacherMembers.length > 0,
+      teachers: activeTeacherMembers.map((teacher) => ({
+        userId: teacher.userId,
+        name: teacher.name,
+        username: teacher.username,
+        academyId: teacher.academyId,
+        role: teacher.role,
+        status: teacher.status,
+      })),
+    });
+
+    if (afterStatusFilter.length > 0 && activeTeacherMembers.length === 0) {
+      debugWarn(ACADEMY, "dropdown emptied between filter and getAcademyMembersForUser", {
+        source: DEBUG_SOURCES.fallback,
+        scopeIds,
+        afterStatusFilter: afterStatusFilter.map((t) => t.userId),
+        getAcademyMembersForUserPath:
+          normalizeRole(currentUser?.role ?? currentUser?.userType) === ROLES.admin &&
+          !currentUser?.academyId
+            ? "admin-all"
+            : "academy-scope",
+      });
+    }
+
+    const mismatchedTeachers = teachersGlobal.filter(
+      (teacher) => !scopeIdSet.has(String(teacher.academyId ?? "").trim()),
+    );
+    if (mismatchedTeachers.length > 0 && scopeId) {
+      debugWarn(ACADEMY, "teacher academy_id mismatch — run repair_academy_member_scope SQL", {
+        source: DEBUG_SOURCES.fallback,
+        ownerAuthId: currentUser?.id ?? null,
+        expectedScopeIds: scopeIds,
+        mismatched: mismatchedTeachers.map((teacher) => ({
+          userId: teacher.userId,
+          academyId: teacher.academyId,
+          role: teacher.role,
+          status: teacher.status,
+        })),
+      });
+    }
   }
 
   function findAcademyMemberByUserId(userId) {
-    const academyId = getAcademyId();
+    const scopeIds = resolveAcademyScopeIds(getCurrentUser());
     return [
-      ...getAcademyMembersByAcademyId(academyId, { role: "teacher", status: "all" }),
-      ...getAcademyMembersByAcademyId(academyId, { role: "student", status: "all" }),
+      ...getAcademyMembersByAcademyScope(scopeIds, { role: "teacher", status: "all" }),
+      ...getAcademyMembersByAcademyScope(scopeIds, { role: "student", status: "all" }),
     ].find((member) => member.userId === userId);
   }
 
@@ -940,20 +1178,18 @@ export function createAcademyMemberController({
     }
 
     const academyId = getAcademyId();
-    const authResult = await window.BadukAuth?.deleteMemberAccount?.({ userId: studentUserId, academyId });
-    if (!authResult?.ok) {
-      window.alert(authResult?.message || "계정 삭제에 실패했습니다.");
+    const deleteResult = await window.BadukAuth?.deleteMemberAccount?.({
+      userId: studentUserId,
+      academyId,
+      member,
+    });
+    if (!deleteResult?.ok) {
+      window.alert(deleteResult?.message || "계정 삭제에 실패했습니다.");
       return;
     }
 
-    const removeResult = deleteInactiveStudentMember({ academyId, studentUserId });
-    if (!removeResult.ok) {
-      window.alert(removeResult.message || "학원 멤버 목록 정리에 실패했습니다.");
-      return;
-    }
-
-    window.alert("학생과 학습 기록이 삭제되었습니다.");
-    refreshAcademyMemberView();
+    window.alert(deleteResult.message || "학생과 학습 기록이 삭제되었습니다.");
+    await refreshAcademyMemberView();
   }
 
   function handleDeactivateTeacher(teacherUserId) {
@@ -1082,27 +1318,8 @@ export function createAcademyMemberController({
     refreshAcademyMemberView();
   }
 
-  function getAcademyMembersForUser(currentUser, options = {}) {
-    const role = normalizeRole(currentUser?.role);
-    const academyId = currentUser?.academyId || currentUser?.id;
-
-    if (role === ROLES.admin && !currentUser?.academyId) {
-      const statusFilter = options.status ?? MEMBER_STATUS.active;
-
-      return readAcademyMembers().filter((member) => {
-        const memberStatus = normalizeMemberStatus(member.status);
-        const matchesStatus =
-          statusFilter === "all" ? true : memberStatus === normalizeMemberStatus(statusFilter);
-        const matchesRole = options.role ? member.role === options.role : true;
-        const matchesTeacher =
-          options.assignedTeacherId === undefined
-            ? true
-            : member.assignedTeacherId === options.assignedTeacherId;
-        return matchesStatus && matchesRole && matchesTeacher;
-      });
-    }
-
-    return getAcademyMembersByAcademyId(academyId, options);
+  function getAcademyMembersForUser(currentUser, options = {}, membersList) {
+    return selectAcademyMembersForUser(membersList ?? readAcademyMembers(), currentUser, options);
   }
 
   function canResetMemberInAcademy(currentUser, member) {
@@ -1110,8 +1327,11 @@ export function createAcademyMemberController({
       return member.role === "student" || member.role === "teacher";
     }
 
-    const academyId = currentUser?.academyId || currentUser?.id;
-    return member.academyId === academyId && (member.role === "student" || member.role === "teacher");
+    const academyId = resolveAcademyScopeId(currentUser);
+    return (
+      String(member.academyId ?? "").trim() === academyId &&
+      ["student", "teacher"].includes(normalizeAcademyMemberRole(member.role))
+    );
   }
 
   function getScopedStudentMembers(studentMembers, currentUser) {
@@ -1179,23 +1399,151 @@ export function createAcademyMemberController({
     `;
   }
 
-  function renderAssignTeacherSelect(member, teacherMembers) {
-    const options = [
-      `<option value=""${!member.assignedTeacherId ? " selected" : ""}>미배정</option>`,
-      ...teacherMembers.map((teacher) => {
-        const selected = member.assignedTeacherId === teacher.userId ? " selected" : "";
-        return `<option value="${escapeHtml(teacher.userId)}"${selected}>${escapeHtml(getMemberDisplayName(teacher))}</option>`;
-      }),
+  function getTeacherOptionLabel(teacher) {
+    const name = String(teacher?.name ?? "").trim();
+    const username = String(teacher?.username ?? "").trim();
+    if (name) {
+      return name;
+    }
+    if (username) {
+      return username;
+    }
+    const userId = String(teacher?.userId ?? "").trim();
+    return userId ? `선생님 (${userId.slice(0, 8)})` : "이름 없음";
+  }
+
+  function buildTeacherAssignSelectOptions(member, teacherMembers) {
+    const assignedId = String(member?.assignedTeacherId ?? "").trim();
+    const rows = [
+      {
+        value: "",
+        label: "미배정",
+        selected: !assignedId,
+        nameRaw: null,
+        usernameRaw: null,
+      },
     ];
 
-    return `
+    teacherMembers.forEach((teacher) => {
+      const value = String(teacher?.userId ?? "").trim();
+      const label = getTeacherOptionLabel(teacher);
+      rows.push({
+        value,
+        label,
+        selected: assignedId === value,
+        nameRaw: teacher?.name ?? null,
+        usernameRaw: teacher?.username ?? null,
+        labelIsBlank: label.length === 0,
+        labelCharCodes: [...label].slice(0, 12).map((ch) => ch.charCodeAt(0)),
+      });
+    });
+
+    return rows;
+  }
+
+  function renderAssignTeacherSelect(member, teacherMembers) {
+    const optionRows = buildTeacherAssignSelectOptions(member, teacherMembers);
+    const optionHtml = optionRows
+      .map((row) => {
+        const selectedAttr = row.selected ? " selected" : "";
+        return `<option value="${escapeHtml(row.value)}"${selectedAttr}>${escapeHtml(row.label)}</option>`;
+      })
+      .join("");
+    const selectHtml = `
       <label class="student-assign-teacher">
-        담당 선생님
-        <select data-assign-student-id="${escapeHtml(member.userId)}">
-          ${options.join("")}
+        <span class="student-assign-teacher-label">담당 선생님</span>
+        <select data-assign-student-id="${escapeHtml(String(member?.userId ?? ""))}" aria-label="담당 선생님 선택">
+          ${optionHtml}
         </select>
       </label>
-    `;
+    `.trim();
+
+    debugLog(ACADEMY, "renderAssignTeacherSelect", {
+      studentUserId: member?.userId ?? null,
+      assignedTeacherId: member?.assignedTeacherId ?? null,
+      dropdownOptionCount: teacherMembers.length,
+      teacherUserIds: teacherMembers.map((teacher) => teacher.userId),
+    });
+
+    debugLog(UI, "teacher option labels", {
+      studentUserId: member?.userId ?? null,
+      options: optionRows,
+    });
+
+    debugLog(UI, "teacher select html", {
+      studentUserId: member?.userId ?? null,
+      html: selectHtml,
+      optionCount: optionRows.length,
+      hasEmptyLabel: optionRows.some((row) => row.labelIsBlank),
+    });
+
+    return selectHtml;
+  }
+
+  function logTeacherSelectDomState(rootElement) {
+    if (!isDebugLogsEnabled() || !rootElement) {
+      return;
+    }
+
+    const selects = rootElement.querySelectorAll(".student-assign-teacher select[data-assign-student-id]");
+    selects.forEach((select) => {
+      const label = select.closest(".student-assign-teacher");
+      const styles = window.getComputedStyle(select);
+      const labelStyles = label ? window.getComputedStyle(label) : null;
+      const rect = select.getBoundingClientRect();
+      const options = [...select.options].map((option) => ({
+        value: option.value,
+        text: option.text,
+        textLength: option.text.length,
+        textTrimmedLength: option.text.trim().length,
+        selected: option.selected,
+        disabled: option.disabled,
+        hidden: option.hidden,
+      }));
+
+      debugLog(UI, "teacher select dom state", {
+        studentUserId: select.dataset.assignStudentId ?? null,
+        outerHtml: select.outerHTML.slice(0, 800),
+        options,
+        selectedIndex: select.selectedIndex,
+        value: select.value,
+        disabled: select.disabled,
+        hidden: select.hidden,
+        ariaHidden: select.getAttribute("aria-hidden"),
+        tabIndex: select.tabIndex,
+        offsetSize: { width: select.offsetWidth, height: select.offsetHeight },
+        clientRect: {
+          width: rect.width,
+          height: rect.height,
+          top: rect.top,
+          left: rect.left,
+        },
+        isVisible: rect.width > 0 && rect.height > 0 && styles.visibility !== "hidden" && styles.display !== "none",
+        selectComputed: {
+          color: styles.color,
+          backgroundColor: styles.backgroundColor,
+          opacity: styles.opacity,
+          visibility: styles.visibility,
+          display: styles.display,
+          overflow: styles.overflow,
+          zIndex: styles.zIndex,
+          fontSize: styles.fontSize,
+          lineHeight: styles.lineHeight,
+          WebkitAppearance: styles.getPropertyValue("-webkit-appearance"),
+          appearance: styles.appearance,
+        },
+        labelComputed: labelStyles
+          ? {
+              color: labelStyles.color,
+              opacity: labelStyles.opacity,
+              overflow: labelStyles.overflow,
+            }
+          : null,
+        parentCardOverflow: select.closest(".academy-member-card")
+          ? window.getComputedStyle(select.closest(".academy-member-card")).overflow
+          : null,
+      });
+    });
   }
 
   function getTeacherDisplayName(teacherUserId, teacherMembers) {
@@ -1208,7 +1556,7 @@ export function createAcademyMemberController({
   }
 
   function getMemberDisplayName(member) {
-    return member?.name || member?.username || "이름 없음";
+    return getTeacherOptionLabel(member);
   }
 
   function handleTeacherFilterClick(event) {
@@ -1221,20 +1569,35 @@ export function createAcademyMemberController({
     refreshAcademyMemberView();
   }
 
-  function handleStudentAssignChange(event) {
+  async function handleStudentAssignChange(event) {
     const select = event.target.closest("[data-assign-student-id]");
     if (!select) {
       return;
     }
 
     const currentUser = getCurrentUser();
-    const academyId = currentUser?.academyId || currentUser?.id;
-    assignStudentTeacher({
+    const academyId = resolveAcademyScopeId(currentUser);
+    const studentUserId = select.dataset.assignStudentId;
+    const teacherUserId = select.value || null;
+    const previousMember = findAcademyMemberByUserId(studentUserId);
+    const previousAssignedTeacherId = previousMember?.assignedTeacherId ?? null;
+
+    const result = await assignStudentTeacher({
       academyId,
-      studentUserId: select.dataset.assignStudentId,
-      teacherUserId: select.value || null,
+      studentUserId,
+      teacherUserId,
     });
-    refreshAcademyMemberView();
+
+    if (!result?.ok) {
+      select.value = previousAssignedTeacherId ?? "";
+      if (result?.message) {
+        window.alert(result.message);
+      }
+      refreshAcademyMemberView();
+      return;
+    }
+
+    await refreshAcademyMemberView();
   }
 
   function getStudentProgressPlaceholder() {
@@ -1301,20 +1664,183 @@ export function createAcademyMemberController({
     return String(value ?? "").trim().toLowerCase();
   }
 
-  function renderStudentLearningDetailPanel(studentUserId) {
+  function loadStudentLearningDetailSections(studentUserId) {
     const categoryRows = getStudentLearningDetail(studentUserId, getProblems());
-    if (categoryRows.length === 0) {
+    return groupLearningDetailByLevelGroup(categoryRows);
+  }
+
+  function resolveInitialLevelTab(sections, progress) {
+    if (!sections.length) {
+      return null;
+    }
+
+    const preferred = normalizeLevelGroup(progress?.level);
+    if (sections.some((section) => section.levelGroup === preferred)) {
+      return preferred;
+    }
+
+    return sections[0].levelGroup;
+  }
+
+  function renderLearningDetailLevelNav(sections, activeLevelTab) {
+    if (!sections.length) {
       return "";
     }
 
+    return sections
+      .map((section) => {
+        const isActive = section.levelGroup === activeLevelTab;
+        return `
+          <button
+            id="learning-level-tab-${escapeHtml(section.levelGroup)}"
+            class="student-learning-level-chip${isActive ? " is-active" : ""}"
+            type="button"
+            role="tab"
+            aria-selected="${isActive}"
+            data-learning-level-tab="${escapeHtml(section.levelGroup)}"
+          >
+            ${escapeHtml(section.levelGroup)}
+            <span class="student-learning-level-chip-count">${section.rows.length}</span>
+          </button>
+        `;
+      })
+      .join("");
+  }
+
+  function renderLearningDetailLevelBody(section) {
+    if (!section) {
+      return `<p class="student-learning-detail-empty">선택한 급수에 표시할 카테고리가 없습니다.</p>`;
+    }
+
+    if (!section.rows.length) {
+      return `<p class="student-learning-detail-empty">${escapeHtml(section.levelGroup)} 과정 학습 기록이 없습니다.</p>`;
+    }
+
     return `
-      <details class="student-learning-detail">
-        <summary class="student-learning-detail-summary">학습 상세 보기</summary>
+      <section class="student-learning-level-panel" data-level-group="${escapeHtml(section.levelGroup)}">
+        <p class="student-learning-level-panel-meta">${escapeHtml(section.description)}</p>
         <ul class="student-category-detail-list">
-          ${categoryRows.map((row) => renderCategoryDetailRow(row)).join("")}
+          ${section.rows.map((row) => renderCategoryDetailRow(row)).join("")}
         </ul>
-      </details>
+      </section>
     `;
+  }
+
+  function refreshStudentLearningDetailModal() {
+    const studentId = activeLearningDetailState.studentId;
+    if (!studentId) {
+      return;
+    }
+
+    const student = findRenderedStudent(studentId);
+    const progress = student ? getStudentProgress(student) : getStudentProgressPlaceholder();
+    const sections = activeLearningDetailState.sections.length
+      ? activeLearningDetailState.sections
+      : loadStudentLearningDetailSections(studentId);
+
+    activeLearningDetailState.sections = sections;
+
+    if (!sections.length) {
+      activeLearningDetailState.activeLevelTab = null;
+      if (elements.studentLearningDetailLevelNav) {
+        elements.studentLearningDetailLevelNav.innerHTML = "";
+      }
+      if (elements.studentLearningDetailBody) {
+        elements.studentLearningDetailBody.innerHTML =
+          `<p class="student-learning-detail-empty">아직 학습 기록이 없습니다.</p>`;
+      }
+      return;
+    }
+
+    if (
+      !activeLearningDetailState.activeLevelTab ||
+      !sections.some((section) => section.levelGroup === activeLearningDetailState.activeLevelTab)
+    ) {
+      activeLearningDetailState.activeLevelTab = resolveInitialLevelTab(sections, progress);
+    }
+
+    const activeSection = sections.find(
+      (section) => section.levelGroup === activeLearningDetailState.activeLevelTab,
+    );
+
+    if (elements.studentLearningDetailLevelNav) {
+      elements.studentLearningDetailLevelNav.innerHTML = renderLearningDetailLevelNav(
+        sections,
+        activeLearningDetailState.activeLevelTab,
+      );
+    }
+
+    if (elements.studentLearningDetailBody) {
+      elements.studentLearningDetailBody.innerHTML = renderLearningDetailLevelBody(activeSection);
+      elements.studentLearningDetailBody.setAttribute(
+        "aria-labelledby",
+        `learning-level-tab-${activeLearningDetailState.activeLevelTab}`,
+      );
+    }
+  }
+
+  function handleLearningDetailLevelTabClick(event) {
+    const tabButton = event.target.closest("[data-learning-level-tab]");
+    if (!tabButton || !activeLearningDetailState.studentId) {
+      return;
+    }
+
+    const nextTab = tabButton.dataset.learningLevelTab;
+    if (!nextTab || nextTab === activeLearningDetailState.activeLevelTab) {
+      return;
+    }
+
+    activeLearningDetailState.activeLevelTab = nextTab;
+    refreshStudentLearningDetailModal();
+  }
+
+  function openStudentLearningDetailModal(studentId) {
+    const student = findRenderedStudent(studentId);
+    if (!student) {
+      return;
+    }
+
+    activeLearningDetailState.studentId = studentId;
+    activeLearningDetailState.sections = loadStudentLearningDetailSections(studentId);
+    const progress = getStudentProgress(student);
+    activeLearningDetailState.activeLevelTab = resolveInitialLevelTab(
+      activeLearningDetailState.sections,
+      progress,
+    );
+
+    const teacherMembers = getAcademyMembersByAcademyId(getAcademyId(), {
+      role: "teacher",
+      status: "all",
+    });
+
+    if (elements.studentLearningDetailTitle) {
+      elements.studentLearningDetailTitle.textContent = `${getMemberDisplayName(student)} 학습 상세`;
+    }
+
+    if (elements.studentLearningDetailMeta) {
+      elements.studentLearningDetailMeta.textContent = `담당 ${getTeacherDisplayName(student.assignedTeacherId, teacherMembers)} · 진도 ${progress.progressRate}% · ${progress.level}`;
+    }
+
+    if (elements.studentLearningDetailOpenReview) {
+      elements.studentLearningDetailOpenReview.dataset.reviewStudentId = studentId;
+    }
+
+    refreshStudentLearningDetailModal();
+    elements.studentLearningDetailModal?.classList.remove("is-hidden");
+  }
+
+  function closeStudentLearningDetailModal() {
+    activeLearningDetailState.studentId = null;
+    activeLearningDetailState.activeLevelTab = null;
+    activeLearningDetailState.sections = [];
+    elements.studentLearningDetailModal?.classList.add("is-hidden");
+    if (elements.studentLearningDetailLevelNav) {
+      elements.studentLearningDetailLevelNav.innerHTML = "";
+    }
+    if (elements.studentLearningDetailBody) {
+      elements.studentLearningDetailBody.innerHTML = "";
+      elements.studentLearningDetailBody.removeAttribute("aria-labelledby");
+    }
   }
 
   function renderCategoryDetailRow(row) {

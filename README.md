@@ -21,6 +21,20 @@ npm run build
 - `index.html`: 페이지 마크업 및 로컬 WGo.js 로드
 - `styles.css`: 모바일 반응형 UI 스타일
 - `vendor/wgo.min.js`: WGo.js 로컬 사본
+- `vendor/wood1.jpg`: WGo 바둑판 배경 텍스처 (없으면 `#f3d08a` CSS로 대체)
+- `favicon.svg`: 파비콘 (`/favicon.ico` 는 Vercel에서 svg로 연결)
+
+### 디버그 로그 (데이터 흐름 추적)
+
+브라우저 콘솔에서:
+
+```js
+window.BadukConfig.debugLogs = true;
+// 새로고침
+```
+
+접두사: `[Auth]`, `[Invite]`, `[Academy]`, `[Category]`, `[Progress]`, `[Problem]`, `[Cache]`, `[Sync]`, `[UI]`  
+`source=supabase` / `local-cache` / `fallback` 및 hydrate `before`/`after` count 포함.
 - `js/main.js`: 문제 진행, 정답 판정, 화면 상태 관리
 - `js/board.js`: WGo.js 바둑판 래퍼
 - `js/problems.js`: `id`, `title`, `description`, `level`, `category`, `stones`, `correctMove`를 가진 문제 데이터 배열

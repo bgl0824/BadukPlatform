@@ -15,10 +15,8 @@ import {
   updateAcademyMemberProfile,
 } from "./services/academy-service.js";
 import {
-  buildInviteSignupEmail,
   checkSignupUsernameAvailability,
   DEFAULT_RESET_PASSWORD,
-  deleteUserById,
   findUserById,
   formatSupabaseAuthError,
   getAuthEmailForPasswordChange,
@@ -27,9 +25,11 @@ import {
   isSupabaseConfigured,
   mapSupabaseUserToAppUser,
   normalizeAuthUsername,
+  resetSupabaseUserPassword,
   resetUserPassword,
   usernameToAuthEmail,
   signInWithEmailPassword,
+  signInWithUsernamePassword,
   signOutSupabase,
   signUpWithEmail,
   subscribeSupabaseAuthStateChange,
@@ -40,7 +40,12 @@ import {
   validateAuthUsername,
   validatePasswordChange,
 } from "./services/auth-service.js";
-import { deleteStudentProgressByUserId } from "./services/student-progress-service.js";
+import {
+  DEBUG_CHANNELS,
+  debugLog,
+} from "./bootstrap/debug-logs.js";
+import { loadPostcodeScript } from "./services/postcode-loader.js";
+import { deleteMemberAccountFully } from "./services/user-delete-service.js";
 
 (function () {
 const AUTH_STORAGE_KEY = "BADUK_AUTH_USER";
@@ -198,7 +203,20 @@ function hideTemporaryAdminEntry() {
 }
 
 async function enrichAppUserFromAcademyMember(appUser) {
-  if (!appUser?.id || String(appUser.academyId ?? "").trim()) {
+  if (!appUser?.id) {
+    return appUser;
+  }
+
+  const role = normalizeRole(appUser.role);
+  if (role === ROLES.academyOwner) {
+    return {
+      ...appUser,
+      academyId: appUser.id,
+      academyName: appUser.academyName || appUser.name || appUser.username,
+    };
+  }
+
+  if (String(appUser.academyId ?? "").trim()) {
     return appUser;
   }
 
@@ -245,9 +263,13 @@ function bindAuthEvents() {
   elements.accountSettingsForm?.addEventListener("submit", handleAccountSettingsSubmit);
   elements.signupDuplicateButton?.addEventListener("click", checkSignupUsername);
   elements.signupUsername?.addEventListener("input", resetUsernameCheck);
-  elements.signupAddressButton?.addEventListener("click", openAddressSearch);
+  elements.signupAddressButton?.addEventListener("click", () => {
+    void openAddressSearch();
+  });
   elements.postcodeLayerClose?.addEventListener("click", closeAddressSearch);
-  elements.postcodePopupButton?.addEventListener("click", openAddressSearchPopup);
+  elements.postcodePopupButton?.addEventListener("click", () => {
+    void openAddressSearchPopup();
+  });
   elements.postcodeLayer?.addEventListener("click", (event) => {
     if (event.target === elements.postcodeLayer) {
       closeAddressSearch();
@@ -261,27 +283,63 @@ function bindAuthEvents() {
   updateInviteSignupMode();
 
   document.querySelectorAll("[data-auth-close]").forEach((button) => {
-    button.addEventListener("click", closeAuthModals);
-  });
-
-  [elements.loginModal, elements.signupModal, elements.accountSettingsModal].forEach((modal) => {
-    if (!modal) {
-      return;
-    }
-
-    modal.addEventListener("click", (event) => {
-      if (event.target === modal) {
-        closeAuthModals();
-      }
+    button.addEventListener("click", (event) => {
+      event.preventDefault();
+      closeAuthModals();
     });
   });
 
+  [elements.loginModal, elements.signupModal, elements.accountSettingsModal].forEach((modal) => {
+    bindAuthModalBackdropDismiss(modal);
+  });
+
   document.addEventListener("keydown", (event) => {
-    if (event.key === "Escape") {
+    if (event.key === "Escape" && isAnyAuthModalOpen()) {
       closeAuthModals();
+    }
+    if (event.key === "Escape") {
       closeAddressSearch();
     }
   });
+}
+
+/** 배경 클릭만 닫기 — 입력란에서 드래그 후 바깥 mouseup 시 click으로 닫히지 않게 함 */
+function bindAuthModalBackdropDismiss(modal) {
+  if (!modal) {
+    return;
+  }
+
+  let backdropPointerDown = false;
+  const dialogCard = modal.querySelector(".auth-modal-card");
+
+  modal.addEventListener(
+    "pointerdown",
+    (event) => {
+      backdropPointerDown = event.target === modal;
+    },
+    true,
+  );
+
+  dialogCard?.addEventListener("pointerdown", () => {
+    backdropPointerDown = false;
+  });
+
+  modal.addEventListener("click", (event) => {
+    if (event.target === modal && backdropPointerDown) {
+      closeAuthModals();
+    }
+    backdropPointerDown = false;
+  });
+
+  modal.addEventListener("pointercancel", () => {
+    backdropPointerDown = false;
+  });
+}
+
+function isAnyAuthModalOpen() {
+  return [elements.loginModal, elements.signupModal, elements.accountSettingsModal].some(
+    (modal) => modal && !modal.classList.contains("is-hidden"),
+  );
 }
 
 function renderAuthStatus() {
@@ -484,8 +542,8 @@ async function handleLoginSubmit(event) {
   }
 
   await runAuthRequest(elements.loginForm, elements.loginMessage, async () => {
-    const signInResult = await signInWithEmailPassword({
-      email: await usernameToAuthEmail(username),
+    const signInResult = await signInWithUsernamePassword({
+      username,
       password,
     });
     if (!signInResult.ok) {
@@ -493,6 +551,11 @@ async function handleLoginSubmit(event) {
     }
 
     let appUser = mapSupabaseUserToAppUser(signInResult.user);
+    debugLog(DEBUG_CHANNELS.auth, "login session established", {
+      userId: appUser.id,
+      role: appUser.role,
+      academyId: appUser.academyId || null,
+    });
     appUser = await enrichAppUserFromAcademyMember(appUser);
     const academyMember = readAcademyMembers().find((member) => member.userId === appUser.id);
     if (academyMember && !isActiveMember(academyMember)) {
@@ -564,9 +627,7 @@ async function handleSignupSubmit(event) {
     await runAuthRequest(elements.signupForm, elements.signupMessage, async () => {
     const isInviteLinkFlow = isInviteSignupEntry() && Boolean(invite);
     const userRole = invite?.role ?? normalizeRole(payload.userType);
-    const authEmail = isInviteLinkFlow
-      ? await buildInviteSignupEmail(invite.code, payload.username)
-      : await usernameToAuthEmail(payload.username);
+    const authEmail = await usernameToAuthEmail(payload.username);
     const metadata = {
       username: payload.username,
       name: isInviteLinkFlow ? payload.username : payload.name || payload.username,
@@ -688,11 +749,7 @@ async function checkSignupUsername() {
   setAuthMessage(elements.signupUsernameMessage, "확인 중입니다...");
 
   try {
-    const result = await checkSignupUsernameAvailability({
-      username,
-      inviteCode: payload.inviteCode,
-      inviteSignupEntry: isInviteSignupEntry(),
-    });
+    const result = await checkSignupUsernameAvailability({ username });
 
     if (!result.ok) {
       resetUsernameCheck();
@@ -859,11 +916,12 @@ function updateAcademyFieldVisibility() {
   }
 }
 
-function openAddressSearch() {
-  if (!window.daum?.Postcode) {
+async function openAddressSearch() {
+  const loadResult = await loadPostcodeScript();
+  if (!loadResult.ok) {
     setAuthMessage(
       elements.signupMessage,
-      "주소 검색 스크립트를 불러오지 못했습니다. 잠시 후 다시 시도해 주세요.",
+      "주소 검색을 불러오지 못했습니다. 네트워크 확인 후 다시 시도해 주세요.",
       "error",
     );
     return;
@@ -906,8 +964,9 @@ function isLocalPostcodeHost() {
   return ["localhost", "127.0.0.1", "::1"].includes(window.location.hostname);
 }
 
-function openAddressSearchPopup() {
-  if (!window.daum?.Postcode) {
+async function openAddressSearchPopup() {
+  const loadResult = await loadPostcodeScript();
+  if (!loadResult.ok) {
     return;
   }
 
@@ -1046,15 +1105,33 @@ async function resetUserPasswordForMember(userId) {
     return { ok: false, message: "비밀번호 초기화 권한이 없습니다." };
   }
 
+  const member = readAcademyMembers().find((entry) => entry.userId === userId);
+  const username = member?.username ?? "";
+
+  if (userId && !String(userId).startsWith("local-")) {
+    return resetSupabaseUserPassword({
+      userId,
+      username,
+      inviteCode: member?.inviteCode ?? "",
+      password: DEFAULT_RESET_PASSWORD,
+    });
+  }
+
   const users = readUsers();
   const result = await resetUserPassword({
     users,
     userId,
+    password: DEFAULT_RESET_PASSWORD,
     hashPassword,
   });
 
   if (result.ok) {
     saveUsers(result.users);
+    return {
+      ok: true,
+      password: DEFAULT_RESET_PASSWORD,
+      message: `비밀번호가 ${DEFAULT_RESET_PASSWORD}으로 초기화되었습니다.`,
+    };
   }
 
   return result;
@@ -1089,24 +1166,24 @@ async function updateMemberAccountForAcademy({ userId, academyId, name, username
   return result;
 }
 
-async function deleteMemberAccountForAcademy({ userId, academyId }) {
+async function deleteMemberAccountForAcademy({ userId, academyId, member = null }) {
   if (!canManageMemberLifecycle(currentUser)) {
     return { ok: false, message: "계정 삭제 권한이 없습니다." };
   }
 
-  const users = readUsers();
-  const authResult = deleteUserById({ users, userId });
-  if (!authResult.ok) {
-    return authResult;
+  const resolvedMember =
+    member ??
+    readAcademyMembers().find((entry) => entry.academyId === academyId && entry.userId === userId);
+
+  if (!resolvedMember) {
+    return { ok: false, message: "학원 멤버 정보를 찾을 수 없습니다." };
   }
 
-  saveUsers(authResult.users);
-  const progressResult = deleteStudentProgressByUserId(userId);
-  return {
-    ok: true,
-    removedProgressCount: progressResult.removedCount,
+  return deleteMemberAccountFully({
+    userId,
     academyId,
-  };
+    member: resolvedMember,
+  });
 }
 
 })();

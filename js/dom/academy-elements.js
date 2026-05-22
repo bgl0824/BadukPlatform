@@ -95,6 +95,20 @@ export const academyElements = {
 
   closeStudentReviewModal: document.querySelector("#close-student-review-modal"),
 
+  studentLearningDetailModal: document.querySelector("#student-learning-detail-modal"),
+
+  studentLearningDetailTitle: document.querySelector("#student-learning-detail-title"),
+
+  studentLearningDetailMeta: document.querySelector("#student-learning-detail-meta"),
+
+  studentLearningDetailBody: document.querySelector("#student-learning-detail-body"),
+
+  studentLearningDetailLevelNav: document.querySelector("#student-learning-detail-level-nav"),
+
+  closeStudentLearningDetailModal: document.querySelector("#close-student-learning-detail-modal"),
+
+  studentLearningDetailOpenReview: document.querySelector("#student-learning-detail-open-review"),
+
   createTeacherCodeButton: document.querySelector("#create-teacher-code"),
 
   createStudentCodeButton: document.querySelector("#create-student-code"),
