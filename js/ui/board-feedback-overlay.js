@@ -69,6 +69,17 @@ export function createBoardFeedbackOverlay({
     }
   }
 
+  function resetMessageContent() {
+    contentEl?.classList.add("is-hidden");
+    contentEl?.classList.remove("is-correct", "is-wrong");
+    if (titleEl) {
+      titleEl.textContent = "";
+    }
+    if (subtitleEl) {
+      subtitleEl.textContent = "";
+    }
+  }
+
   function hide() {
     clearTimers();
     overlayLayer?.classList.remove("is-visible");
@@ -77,15 +88,19 @@ export function createBoardFeedbackOverlay({
 
     fadeOutTimer = window.setTimeout(() => {
       fadeOutTimer = null;
-      contentEl?.classList.add("is-hidden");
-      contentEl?.classList.remove("is-correct", "is-wrong");
-      if (titleEl) {
-        titleEl.textContent = "";
-      }
-      if (subtitleEl) {
-        subtitleEl.textContent = "";
-      }
+      resetMessageContent();
     }, FADE_MS);
+  }
+
+  /** Fade 없이 즉시 숨김 (모달 등 상위 UI가 열릴 때). */
+  function forceHide() {
+    clearTimers();
+    overlayLayer?.classList.remove("is-visible");
+    messageLayer?.classList.remove("is-visible");
+    overlayLayer?.setAttribute("aria-hidden", "true");
+    resetMessageContent();
+    characterSlot?.setAttribute("hidden", "");
+    speechSlot?.setAttribute("hidden", "");
   }
 
   /**
@@ -156,6 +171,7 @@ export function createBoardFeedbackOverlay({
 
   return {
     hide,
+    forceHide,
     clearTimers,
     show,
     showCorrectPreset,

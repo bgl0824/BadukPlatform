@@ -99,11 +99,18 @@ body.category-complete-modal-open {
   overflow: hidden;
 }
 
+body.category-complete-modal-open #study-layout,
 body.category-complete-modal-open .board-card,
 body.category-complete-modal-open #board,
 body.category-complete-modal-open #board .wgo-board,
-body.category-complete-modal-open #board canvas {
+body.category-complete-modal-open #board canvas,
+body.category-complete-modal-open .board-overlay-layer {
+  visibility: hidden !important;
   pointer-events: none !important;
+}
+
+body.category-complete-modal-open .board-overlay-layer {
+  opacity: 0 !important;
 }
 
 .category-complete-modal {

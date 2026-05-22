@@ -1956,6 +1956,10 @@ function buildCategoryCompletionContext(categoryName, levelGroup, progressByProb
 }
 
 function showCategoryCompleteModal(context) {
+  hideBoardFeedback({ immediate: true });
+  boardController.clearPreview();
+  syncBoardPreviewContext();
+  setMode("study");
   appState.pendingCategoryCompletion = context;
   categoryCompleteModal.show(context);
 }
@@ -2055,7 +2059,6 @@ function completeProblem(problem) {
 
   if (completionContext) {
     clearAutoNext();
-    hideBoardFeedback();
     showCategoryCompleteModal(completionContext);
     renderStudyScreen();
     return;
@@ -2140,9 +2143,13 @@ function getNextProblemInCurrentCategory() {
   return filteredProblems[currentIndex + 1];
 }
 
-function hideBoardFeedback() {
-  boardFeedbackOverlay.hide();
+function hideBoardFeedback({ immediate = false } = {}) {
   boardFeedbackOverlay.clearTimers();
+  if (immediate) {
+    boardFeedbackOverlay.forceHide();
+    return;
+  }
+  boardFeedbackOverlay.hide();
 }
 
 function hideAnswerModal() {
