@@ -1047,12 +1047,16 @@ h2 {
   min-width: 0;
   padding: clamp(12px, 3vw, 28px);
   border-radius: 28px;
+  touch-action: manipulation;
 }
 
 .board-stage {
   position: relative;
   width: min(100%, 640px);
   aspect-ratio: 1 / 1;
+  touch-action: manipulation;
+  -webkit-touch-callout: none;
+  user-select: none;
 }
 
 .board {
@@ -1061,10 +1065,14 @@ h2 {
   border-radius: 14px;
   background: #f3d08a;
   overflow: hidden;
+  touch-action: manipulation;
+  -webkit-touch-callout: none;
+  user-select: none;
 }
 
 .board canvas {
   border-radius: 14px;
+  touch-action: manipulation;
 }
 
 .board-overlay-layer {

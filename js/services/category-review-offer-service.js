@@ -57,20 +57,15 @@ export function getPendingCategoryReviewOffersForUser(userId, { levelGroup = nul
 
   const normalizedLevelGroup = levelGroup ? normalizeLevelGroup(levelGroup) : null;
 
-  return readCategoryReviewOffers()
-    .filter((offer) => {
-      if (offer.userId !== userId || offer.status !== CATEGORY_REVIEW_OFFER_STATUS.pending) {
-        return false;
-      }
-      if (normalizedLevelGroup && normalizeLevelGroup(offer.levelGroup) !== normalizedLevelGroup) {
-        return false;
-      }
-      return Array.isArray(offer.problemIds) && offer.problemIds.length > 0;
-    })
-    .sort(
-      (left, right) =>
-        new Date(right.createdAt ?? 0).getTime() - new Date(left.createdAt ?? 0).getTime(),
-    );
+  return readCategoryReviewOffers().filter((offer) => {
+    if (offer.userId !== userId || offer.status !== CATEGORY_REVIEW_OFFER_STATUS.pending) {
+      return false;
+    }
+    if (normalizedLevelGroup && normalizeLevelGroup(offer.levelGroup) !== normalizedLevelGroup) {
+      return false;
+    }
+    return Array.isArray(offer.problemIds) && offer.problemIds.length > 0;
+  });
 }
 
 /**

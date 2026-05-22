@@ -3,7 +3,9 @@ import {
   ensureCategoryReviewOfferFromReviewOffer,
   getPendingCategoryReviewOffersForUser,
 } from "./category-review-offer-service.js";
+import { getOrderedCategoryNames, readCategories } from "./category-service.js";
 import { getProblemsInCategoryOrder } from "./learning-flow-service.js";
+import { normalizeLevelGroup } from "./level-group-service.js";
 import { getAttempts, isReviewArchived, isReviewDeleted, isReviewResolved } from "./student-progress-service.js";
 
 export const REVIEW_MIN_WRONG_COUNT = 2;
@@ -210,7 +212,31 @@ export function getPersistentReviewOffersForLevel({
       offersByCategory.set(row.name, liveOffer);
     });
 
-  return [...offersByCategory.values()];
+  return orderReviewOffersByCurriculum([...offersByCategory.values()], {
+    levelGroup: normalizedLevelGroup,
+  });
+}
+
+/** 커리큘럼 카테고리 순서 기준 stable sort (복습 완료 후에도 순서 고정) */
+export function orderReviewOffersByCurriculum(offers, { levelGroup } = {}) {
+  if (!Array.isArray(offers) || offers.length <= 1) {
+    return offers ?? [];
+  }
+
+  const normalizedLevelGroup = levelGroup ? normalizeLevelGroup(levelGroup) : null;
+  const categoryOrder = getOrderedCategoryNames(readCategories(), {
+    levelGroup: normalizedLevelGroup,
+  });
+  const orderIndex = new Map(categoryOrder.map((name, index) => [name, index]));
+
+  return [...offers].sort((left, right) => {
+    const leftIndex = orderIndex.get(left?.categoryName) ?? Number.MAX_SAFE_INTEGER;
+    const rightIndex = orderIndex.get(right?.categoryName) ?? Number.MAX_SAFE_INTEGER;
+    if (leftIndex !== rightIndex) {
+      return leftIndex - rightIndex;
+    }
+    return String(left?.categoryName ?? "").localeCompare(String(right?.categoryName ?? ""), "ko");
+  });
 }
 
 /** @deprecated study 화면은 getPersistentReviewOffersForLevel 사용 */

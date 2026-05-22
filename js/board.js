@@ -8,7 +8,8 @@ const STONE_MARK_TYPES = {
   cross: "MA",
 };
 
-const TOUCH_CONFIRM_QUERY = "(hover: none) and (pointer: coarse)";
+/** 마우스 호버 프리뷰: 터치·펜 일반 입력에서는 비활성 (1탭 즉시 착수) */
+const HOVER_PREVIEW_QUERY = "(hover: hover) and (pointer: fine)";
 /** WGo 기본 wood1.jpg — vendor/ 에 배치 (404 시 CSS 색으로 대체) */
 const BOARD_BACKGROUND_IMAGE = "./vendor/wood1.jpg";
 const BOARD_BACKGROUND_COLOR = "#f3d08a";
@@ -166,8 +167,7 @@ class BoardController {
       getActiveColor: preview?.getActiveColor ?? (() => STONE.black),
       evaluatePoint: preview?.evaluatePoint ?? (() => ({ status: "legal" })),
     };
-    this.touchConfirmMode =
-      preview?.touchConfirmMode ?? (() => window.matchMedia(TOUCH_CONFIRM_QUERY).matches);
+    this.touchConfirmMode = preview?.touchConfirmMode ?? (() => false);
     this.previewState = null;
     this.pendingConfirmPoint = null;
     this.previewFrameId = null;
@@ -189,6 +189,7 @@ class BoardController {
     this.applyBoardBackgroundFallback();
 
     this.bindPointerEvents();
+    this.bindBoardGestureGuards();
     window.addEventListener("resize", () => this.resize());
   }
 
@@ -232,8 +233,30 @@ class BoardController {
     this.element.addEventListener("mouseleave", this.boundMouseLeave);
   }
 
+  bindBoardGestureGuards() {
+    const blockGesture = (event) => {
+      event.preventDefault();
+    };
+
+    this.element.addEventListener("dblclick", blockGesture);
+    this.element.addEventListener("gesturestart", blockGesture, { passive: false });
+
+    this.element.querySelectorAll("canvas").forEach((canvas) => {
+      canvas.addEventListener("dblclick", blockGesture);
+      canvas.addEventListener("gesturestart", blockGesture, { passive: false });
+    });
+  }
+
   shouldUseHoverPreview() {
-    return this.isPreviewEnabled() && !this.isTouchConfirmMode();
+    if (!this.isPreviewEnabled()) {
+      return false;
+    }
+
+    if (typeof window.matchMedia !== "function") {
+      return true;
+    }
+
+    return window.matchMedia(HOVER_PREVIEW_QUERY).matches;
   }
 
   isTouchConfirmMode() {
