@@ -34,6 +34,7 @@ import {
 } from "./permissions/permission-service.js";
 import { createProblemPrintController } from "./problem/print.js";
 import {
+  getDefaultCategoryNameForLevelGroup,
   getNextCategoryName,
   getOrderedCategoryNames,
   hydrateCategoryRegistry,
@@ -82,7 +83,11 @@ import {
   getPersistentReviewOffersForLevel,
 } from "./services/review-service.js";
 import { problemService } from "./services/problem-service.js";
-import { PROGRESS_STATUS, studentProgressService } from "./services/student-progress-service.js";
+import {
+  invalidateStudentProgressHydrateCache,
+  PROGRESS_STATUS,
+  studentProgressService,
+} from "./services/student-progress-service.js";
 import { adminState } from "./state/admin-state.js";
 import { appState } from "./state/app-state.js";
 import { createCreatorState } from "./state/creator-state.js";
@@ -264,7 +269,8 @@ const {
     }
 
     appState.selectedLevelGroup = normalizeLevelGroup(problem.levelGroup);
-    appState.selectedCategory = problem.category || "전체";
+    appState.selectedCategory =
+      problem.category || resolveDefaultSelectedCategory(appState.selectedLevelGroup);
     showListMode();
     renderLevelGroupFilters();
     renderCategoryFilters();
@@ -565,11 +571,15 @@ window.BadukAppHooks = {
 
     authSessionNotifyFrame = window.requestAnimationFrame(() => {
       authSessionNotifyFrame = 0;
+      invalidateStudentProgressHydrateCache();
       updateAcademyMenuVisibility();
       updateAdminVisibility();
       void refreshStudentProgressFromRemote().then(() => {
         refreshScreensAfterProgressSync();
       });
+      if (appState.mode === "academy" || appState.mode === "learning") {
+        refreshAcademyMemberView();
+      }
     });
   },
 };
@@ -783,6 +793,7 @@ function applyInitialListScreen() {
   appState.isAiThinking = false;
   appState.isSolved = false;
   appState.playedMoves = [];
+  ensureDefaultCategorySelection();
   appState.mode = "list";
   setMode("list");
   studyView.clearStudyHubMeta();
@@ -821,6 +832,7 @@ function renderProblemLibraryScreen() {
   }
 
   try {
+    ensureDefaultCategorySelection();
     ensureProblemLibraryElements();
 
     if (!elements.levelGroupFilters) {
@@ -839,6 +851,7 @@ function renderProblemLibraryScreen() {
 function refreshProblemBank() {
   logScreen("refreshProblemBank", { problemCount: problems.length });
   studyView.clearStudyHubMeta();
+  ensureDefaultCategorySelection();
   appState.mode = "list";
   setMode("list");
 
@@ -1419,9 +1432,32 @@ function getCategoryFilters() {
   return ["전체", ...orderedNames];
 }
 
+function resolveDefaultSelectedCategory(levelGroup = getActiveLevelGroup()) {
+  return getDefaultCategoryNameForLevelGroup(levelGroup, {
+    categories: readCategories(),
+    problems,
+  });
+}
+
+function ensureDefaultCategorySelection() {
+  const defaultCategory = resolveDefaultSelectedCategory();
+  const availableFilters = getCategoryFilters();
+  const isAllSelected =
+    !appState.selectedCategory || appState.selectedCategory === "전체";
+  const isKnownCategory =
+    appState.selectedCategory &&
+    appState.selectedCategory !== "전체" &&
+    availableFilters.includes(appState.selectedCategory);
+
+  if (isAllSelected || !isKnownCategory) {
+    appState.selectedCategory = defaultCategory;
+  }
+}
+
 function selectLevelGroup(levelGroup) {
-  appState.selectedLevelGroup = normalizeLevelGroup(levelGroup);
-  appState.selectedCategory = "전체";
+  const normalizedLevelGroup = normalizeLevelGroup(levelGroup);
+  appState.selectedLevelGroup = normalizedLevelGroup;
+  appState.selectedCategory = resolveDefaultSelectedCategory(normalizedLevelGroup);
   syncCreatorCategoriesForLevelGroup();
   renderLevelGroupFilters();
   renderCategoryFilters();
@@ -1429,7 +1465,11 @@ function selectLevelGroup(levelGroup) {
 }
 
 function selectCategory(category) {
-  appState.selectedCategory = category || "전체";
+  if (category === "전체") {
+    appState.selectedCategory = "전체";
+  } else {
+    appState.selectedCategory = category || resolveDefaultSelectedCategory();
+  }
   renderCategoryFilters();
   renderProblemList();
 }

@@ -136,6 +136,35 @@ export function getOrderedCategoryNames(categories = readCategories(), { levelGr
   return scopedCategories.map((category) => category.name);
 }
 
+/** 커리큘럼 순서상 첫 카테고리 (기본 필터·초기 렌더 범위) */
+export function getDefaultCategoryNameForLevelGroup(
+  levelGroup = DEFAULT_LEVEL_GROUP,
+  { categories = readCategories(), problems = [] } = {},
+) {
+  const normalizedLevelGroup = normalizeLevelGroup(levelGroup);
+  const orderedNames = getOrderedCategoryNames(categories, { levelGroup: normalizedLevelGroup });
+
+  for (const name of orderedNames) {
+    if (!name || name === "전체") {
+      continue;
+    }
+
+    const hasProblems =
+      problems.length === 0 ||
+      problems.some(
+        (problem) =>
+          problem?.category === name &&
+          normalizeLevelGroup(problem.levelGroup) === normalizedLevelGroup,
+      );
+
+    if (hasProblems) {
+      return name;
+    }
+  }
+
+  return DEFAULT_CATEGORY_NAMES[0] ?? "활로";
+}
+
 export function filterCategoriesByLevelGroup(categories = readCategories(), levelGroup) {
   if (!levelGroup) {
     return sortCategoriesByOrder(categories);

@@ -1,7 +1,7 @@
 export const appState = {
   mode: "list",
   selectedLevelGroup: "입문",
-  selectedCategory: "전체",
+  selectedCategory: "활로",
   currentProblemIndex: 0,
   solvedAnswerKeys: new Set(),
   isSolved: false,

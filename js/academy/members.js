@@ -50,11 +50,13 @@ import { normalizeLevelGroup } from "../services/level-group-service.js";
 import { getCategoryProblemNumberForProblem } from "../services/category-problem-number.js";
 import { getTotalWrongCount } from "../services/review-service.js";
 import {
+  ensureStudentProgressHydratedForViewer,
   getAttempts,
   getLatestAttempt,
   getProgressStatus,
   getStudentProgressByUserId,
   getStudentProgressSummary,
+  hydrateStudentProgressCache,
   isReviewArchived,
   isReviewDeleted,
   isReviewResolved,
@@ -421,6 +423,22 @@ export function createAcademyMemberController({
     });
     const inactiveStudentMembers = allStudentMembers.filter((member) => !isActiveMember(member));
     const inactiveTeacherMembers = allTeacherMembers.filter((member) => !isActiveMember(member));
+
+    const studentUserIds = [
+      ...new Set(allStudentMembers.map((member) => member.userId).filter(Boolean)),
+    ];
+    if (studentUserIds.length > 0) {
+      await ensureStudentProgressHydratedForViewer(studentUserIds);
+      if (renderGeneration !== membersRenderGeneration) {
+        debugWarn(DEBUG_CHANNELS.sync, "renderAcademyMembers aborted after progress hydrate", {
+          source: DEBUG_SOURCES.supabase,
+          renderGeneration,
+          latestGeneration: membersRenderGeneration,
+        });
+        return;
+      }
+    }
+
     const selfTeacherMember =
       activeTeacherMembers.find(
         (member) => String(member.userId ?? "").trim() === String(currentUser?.id ?? "").trim(),
@@ -1945,11 +1963,13 @@ export function createAcademyMemberController({
     refreshStudentLearningDetailModal();
   }
 
-  function openStudentLearningDetailModal(studentId) {
+  async function openStudentLearningDetailModal(studentId) {
     const student = findRenderedStudent(studentId);
     if (!student) {
       return;
     }
+
+    await hydrateStudentProgressCache(studentId);
 
     activeLearningDetailState.studentId = studentId;
     activeLearningDetailState.sections = loadStudentLearningDetailSections(studentId);
@@ -2090,6 +2110,23 @@ export function createAcademyMemberController({
     return (progress.wrongCount ?? 0) > 0;
   }
 
+  function resolveLastWrongMoveFromProgress(progress) {
+    const attempts = getAttempts(progress);
+    for (let index = attempts.length - 1; index >= 0; index -= 1) {
+      const wrongMoves = attempts[index]?.wrongMoves;
+      if (Array.isArray(wrongMoves) && wrongMoves.length > 0) {
+        return wrongMoves[wrongMoves.length - 1];
+      }
+    }
+
+    const legacyMoves = progress?.wrongMoves;
+    if (Array.isArray(legacyMoves) && legacyMoves.length > 0) {
+      return legacyMoves[legacyMoves.length - 1];
+    }
+
+    return null;
+  }
+
   function buildProblemReviewSummary(progress) {
     const attempts = getAttempts(progress);
     const latestAttempt = getLatestAttempt(progress);
@@ -2098,6 +2135,7 @@ export function createAcademyMemberController({
     const categoryProblemNumber = problem
       ? getCategoryProblemNumberForProblem(problem, getProblems())
       : 0;
+    const snapshotStones = problem?.stones ? problem.stones.map((stone) => ({ ...stone })) : [];
 
     return {
       problemId: progress.problemId,
@@ -2108,10 +2146,10 @@ export function createAcademyMemberController({
       totalWrongCount,
       latestStatus: getProgressStatus(progress),
       latestWrongCount: latestAttempt?.wrongCount ?? progress.wrongCount ?? 0,
-      latestWrongMove: latestAttempt?.wrongMoves?.at(-1) ?? progress.wrongMoves?.at(-1) ?? null,
+      latestWrongMove: resolveLastWrongMoveFromProgress(progress),
       reviewResolved: isReviewResolved(progress),
       reviewArchived: isReviewArchived(progress),
-      snapshotStones: problem?.stones ? problem.stones.map((stone) => ({ ...stone })) : [],
+      snapshotStones,
       updatedAt: progress.updatedAt,
     };
   }
@@ -2274,13 +2312,27 @@ export function createAcademyMemberController({
 
     elements.studentReviewList.querySelectorAll("[data-review-board-key]").forEach((boardElement) => {
       const summary = reviewSummaries.find((item) => item.problemId === boardElement.dataset.reviewBoardKey);
-      if (!summary?.latestWrongMove) {
+      if (!summary) {
+        return;
+      }
+
+      const problem = getProblemById(summary.problemId);
+      const hasSnapshot =
+        (summary.snapshotStones?.length ?? 0) > 0 || (problem?.stones?.length ?? 0) > 0;
+      if (!hasSnapshot && !summary.latestWrongMove) {
         return;
       }
 
       renderWrongMoveBoard(boardElement, summary, summary.latestWrongMove);
     });
   }
+
+  const REVIEW_BOARD_MARK_TYPES = {
+    triangle: "TR",
+    circle: "CR",
+    square: "SQ",
+    cross: "MA",
+  };
 
   function renderWrongMoveBoard(element, summary, wrongMove) {
     element.innerHTML = "";
@@ -2296,16 +2348,28 @@ export function createAcademyMemberController({
       },
     });
 
-    const boardStones = summary.snapshotStones?.length ? summary.snapshotStones : [];
+    const problem = getProblemById(summary.problemId);
+    const boardStones =
+      summary.snapshotStones?.length > 0
+        ? summary.snapshotStones
+        : (problem?.stones ?? []).map((stone) => ({ ...stone }));
+
     boardStones.forEach((stone) => {
       reviewBoard.addObject({
         x: stone.x,
         y: stone.y,
         c: stone.color === "black" ? WGo.B : WGo.W,
       });
+      const markType = REVIEW_BOARD_MARK_TYPES[stone.mark];
+      if (markType) {
+        reviewBoard.addObject({ x: stone.x, y: stone.y, type: markType });
+      }
     });
-    reviewBoard.addObject({ x: wrongMove.x, y: wrongMove.y, c: WGo.B });
-    reviewBoard.addObject({ x: wrongMove.x, y: wrongMove.y, type: "CR" });
+
+    if (wrongMove) {
+      reviewBoard.addObject({ x: wrongMove.x, y: wrongMove.y, c: WGo.B });
+      reviewBoard.addObject({ x: wrongMove.x, y: wrongMove.y, type: "CR" });
+    }
   }
 
   function startReviewModalDrag(event) {

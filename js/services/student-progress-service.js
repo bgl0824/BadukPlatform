@@ -1,5 +1,6 @@
 import { DEBUG_CHANNELS, DEBUG_SOURCES, debugSync, debugWarn } from "../bootstrap/debug-logs.js";
 import { normalizeRole, ROLES } from "../permissions/permission-service.js";
+import { isSupabaseConfigured } from "./supabase-client.js";
 import {
   deleteStudentProgressForUserInSupabase,
   fetchStudentProgressFromSupabase,
@@ -13,6 +14,12 @@ const PROGRESS = DEBUG_CHANNELS.progress;
 const STUDENT_PROGRESS_STORAGE_KEY = "BADUK_STUDENT_PROGRESS";
 
 let remotePersistChain = Promise.resolve();
+const hydratedAtByUserId = new Map();
+const DEFAULT_OPERATOR_HYDRATE_TTL_MS = 30_000;
+
+function isRemoteProgressUserId(userId) {
+  return Boolean(userId) && !String(userId).startsWith("local-");
+}
 
 export const PROGRESS_STATUS = {
   notStarted: "NOT_STARTED",
@@ -118,6 +125,7 @@ export function updateStudentProgressRecord(studentUserId, problemId, updater) {
   ];
 
   saveStudentProgress(nextProgressList);
+  hydratedAtByUserId.delete(nextProgress.userId);
   queueRemotePersist(nextProgress);
   return nextProgress;
 }
@@ -279,6 +287,69 @@ export async function hydrateStudentProgressCache(userId) {
   };
 }
 
+/**
+ * 원장/선생 등 운영자 화면: 담당 학생 진도를 Supabase → localStorage 캐시에 반영.
+ * getStudentProgressByUserId / getStudentProgressSummary 가 동일 소스를 읽도록 함.
+ */
+export async function ensureStudentProgressHydratedForViewer(
+  userIds,
+  { force = false, ttlMs = DEFAULT_OPERATOR_HYDRATE_TTL_MS, concurrency = 5 } = {},
+) {
+  if (!isSupabaseConfigured()) {
+    return { ok: false, skipped: true, reason: "supabase-unconfigured" };
+  }
+
+  const uniqueIds = [...new Set((userIds ?? []).filter(isRemoteProgressUserId))];
+  if (uniqueIds.length === 0) {
+    return { ok: true, hydrated: 0, total: 0 };
+  }
+
+  const now = Date.now();
+  const pending = uniqueIds.filter((userId) => {
+    if (force) {
+      return true;
+    }
+    const lastHydrated = hydratedAtByUserId.get(userId);
+    return !lastHydrated || now - lastHydrated > ttlMs;
+  });
+
+  if (pending.length === 0) {
+    return { ok: true, hydrated: 0, total: uniqueIds.length, skipped: true };
+  }
+
+  let hydrated = 0;
+  for (let index = 0; index < pending.length; index += concurrency) {
+    const batch = pending.slice(index, index + concurrency);
+    const results = await Promise.all(batch.map((userId) => hydrateStudentProgressCache(userId)));
+    results.forEach((result, batchIndex) => {
+      const userId = batch[batchIndex];
+      if (result?.ok) {
+        hydrated += 1;
+        hydratedAtByUserId.set(userId, now);
+      }
+    });
+  }
+
+  debugSync(PROGRESS, "operator progress hydrate batch", {
+    source: DEBUG_SOURCES.supabase,
+    total: uniqueIds.length,
+    pending: pending.length,
+    hydrated,
+  });
+
+  return { ok: true, hydrated, total: uniqueIds.length };
+}
+
+export function invalidateStudentProgressHydrateCache(userIds = null) {
+  if (!userIds) {
+    hydratedAtByUserId.clear();
+    return;
+  }
+
+  const targets = Array.isArray(userIds) ? userIds : [userIds];
+  targets.forEach((userId) => hydratedAtByUserId.delete(userId));
+}
+
 export function getStudentProgressSummary(userId, totalProblemCount = 0) {
   const progressList = getStudentProgressByUserId(userId);
   const solvedProblemCount = progressList.filter((progress) => {
@@ -351,6 +422,7 @@ function upsertStudentProgress(user, problem, updateProgress) {
   ];
 
   saveStudentProgress(nextProgressList);
+  hydratedAtByUserId.delete(nextProgress.userId);
   queueRemotePersist(nextProgress);
   return nextProgress;
 }
@@ -511,6 +583,8 @@ export const studentProgressService = {
   readStudentProgress,
   saveStudentProgress,
   hydrateStudentProgressCache,
+  ensureStudentProgressHydratedForViewer,
+  invalidateStudentProgressHydrateCache,
   markProblemInProgress,
   recordWrongMove,
   markProblemSolved,
