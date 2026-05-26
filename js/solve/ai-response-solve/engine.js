@@ -13,6 +13,7 @@ import { isKatagoWhiteMove, resolveWhiteResponse } from "./resolve-white-respons
 
 /**
  * AI 응수형 전용 문제풀이 엔진 (일반 handleUserMove와 분리).
+ * 오답: 백 응수 자동 → boardFeedbackOverlay 오답 팝업 → 초기화 (한수 문제풀이와 동일).
  */
 export function createAiResponseSolveEngine({
   appState,
@@ -27,6 +28,7 @@ export function createAiResponseSolveEngine({
   recordWrongMove,
   completeProblem,
   resetCurrentProblemAfterWrong,
+  finishWrongReveal,
   cloneBoardStones,
   markProblemInProgress,
 }) {
@@ -78,7 +80,7 @@ export function createAiResponseSolveEngine({
       return;
     }
 
-    if (session.phase === "wrong_reveal") {
+    if (session.phase === "wrong_reveal" || appState.isAiThinking) {
       return;
     }
 
@@ -108,7 +110,6 @@ export function createAiResponseSolveEngine({
       console.log("[AI_RESPONSE] last black correct — complete");
       completeProblem(problem);
       clearSession();
-      setFeedback(AI_RESPONSE_SOLVE_MESSAGES.complete, "correct");
       return;
     }
 
@@ -127,9 +128,9 @@ export function createAiResponseSolveEngine({
     setStatus(AI_RESPONSE_SOLVE_MESSAGES.katagoThinking);
 
     const whiteOk = await playWhiteResponse(problem, session, lastBlackMove, "wrong");
-    appState.isAiThinking = false;
 
     if (!whiteOk) {
+      appState.isAiThinking = false;
       session.phase = "await_black";
       resetCurrentProblemAfterWrong(problem);
       clearSession();
@@ -137,9 +138,7 @@ export function createAiResponseSolveEngine({
     }
 
     syncBoardPreviewContext();
-    setStatus("오답입니다.");
-    setFeedback(AI_RESPONSE_SOLVE_MESSAGES.wrongAfterWhite, "wrong");
-    showWrongActions();
+    finishWrongReveal(problem);
   }
 
   function rebuildBoardFromPlayedMoves(problem, playedMoves) {
@@ -220,64 +219,18 @@ export function createAiResponseSolveEngine({
     return true;
   }
 
-  function showWrongActions() {
-    document.querySelector("#ai-response-solve-panel")?.classList.remove("is-hidden");
-  }
-
-  function hideWrongActions() {
-    document.querySelector("#ai-response-solve-panel")?.classList.add("is-hidden");
-  }
-
-  function retryAfterWrong() {
-    const problem = getCurrentProblem();
-    if (!problem) {
-      return;
-    }
-    hideWrongActions();
-    boardController.loadPosition(cloneBoardStones(appState.initialBoardStones ?? problem.stones));
-    appState.playedMoves = [];
-    appState.solvedAnswerKeys = new Set();
-    initSession(problem);
-    setFeedback("다시 도전해 보세요.");
-  }
-
-  function restartFromBeginning() {
-    const problem = getCurrentProblem();
-    if (!problem) {
-      return;
-    }
-    hideWrongActions();
-    boardController.loadPosition(cloneBoardStones(appState.initialBoardStones ?? problem.stones));
-    appState.playedMoves = [];
-    appState.solvedAnswerKeys = new Set();
-    initSession(problem);
-    setFeedback("처음부터 다시 풀어 보세요.");
-  }
-
-  function bindEvents() {
-    document.querySelector("#ai-response-solve-panel")?.addEventListener("click", (event) => {
-      const button = event.target.closest("[data-ai-response-solve-action]");
-      if (!button) {
-        return;
-      }
-      if (button.dataset.aiResponseSolveAction === "retry") {
-        retryAfterWrong();
-      }
-      if (button.dataset.aiResponseSolveAction === "restart") {
-        restartFromBeginning();
-      }
-    });
-  }
-
   return {
-    bindEvents,
     initSession,
     clearSession,
     handleStudentBlackMove,
     isActive: () => Boolean(getSession()),
     isBlockingInput: () => {
       const session = getSession();
-      return session?.phase === "katago_pending" || appState.isAiThinking;
+      return (
+        session?.phase === "katago_pending" ||
+        session?.phase === "wrong_reveal" ||
+        appState.isAiThinking
+      );
     },
   };
 }

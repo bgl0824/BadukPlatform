@@ -730,6 +730,7 @@ aiResponseSolve = createAiResponseSolveEngine({
   recordWrongMove,
   completeProblem,
   resetCurrentProblemAfterWrong: resetCurrentProblemAfterWrongMove,
+  finishWrongReveal: finishAiResponseWrongReveal,
   cloneBoardStones,
   markProblemInProgress: (problem) => {
     safeRecordStudentProgress(() => {
@@ -740,8 +741,6 @@ aiResponseSolve = createAiResponseSolveEngine({
     });
   },
 });
-aiResponseSolve.bindEvents();
-
 const categoryCompleteModal = createCategoryCompleteModalController({
   elements,
   onAction: handleCategoryCompleteAction,
@@ -2812,6 +2811,26 @@ function resetCurrentProblemAfterWrongMove(problem) {
   boardFeedbackOverlay.showWrongPreset(preset, {
     duration: 1000,
     onHidden: () => restoreProblemInitialStateAfterWrong(problem),
+  });
+}
+
+/** AI 응수형: 오답 흑수 + 백 응수 표시 후 일반 오답 팝업 → 초기화 */
+function finishAiResponseWrongReveal(problem) {
+  appState.isAiThinking = true;
+  syncBoardPreviewContext();
+  solveView.renderProblemSolveMode(problem);
+  setStatus("오답입니다.");
+  setFeedback("다시 도전해 보세요.");
+
+  clearWrongTimers();
+  boardFeedbackOverlay.showWrongPreset("wrong", {
+    duration: 1000,
+    onHidden: () => {
+      restoreProblemInitialStateAfterWrong(problem);
+      if (shouldUseAiResponseSolve(problem)) {
+        aiResponseSolve.initSession(problem);
+      }
+    },
   });
 }
 

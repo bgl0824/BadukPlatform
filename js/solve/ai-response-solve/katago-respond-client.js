@@ -21,7 +21,8 @@ function toMoveEntry(move) {
 }
 
 const KATAGO_SOURCE = "katago";
-const DEFAULT_KATAGO_MAX_VISITS = 50;
+const DEFAULT_KATAGO_MAX_VISITS = 12;
+const DEFAULT_KATAGO_MAX_TIME = 0.25;
 
 function getKatagoRespondMaxVisits() {
   const configured = Number(window.BadukConfig?.katagoRespondMaxVisits);
@@ -31,17 +32,27 @@ function getKatagoRespondMaxVisits() {
   return DEFAULT_KATAGO_MAX_VISITS;
 }
 
+function getKatagoRespondMaxTime() {
+  const configured = Number(window.BadukConfig?.katagoRespondMaxTime);
+  if (Number.isFinite(configured) && configured > 0) {
+    return configured;
+  }
+  return DEFAULT_KATAGO_MAX_TIME;
+}
+
 function logKatagoRespondTiming({
   requestStart,
   katagoElapsedMs,
   totalElapsedMs,
   maxVisits,
+  maxTime,
 }) {
   console.log("[KatagoRespond] timing", {
     requestStart: new Date(requestStart).toISOString(),
     katagoElapsedMs,
     totalElapsedMs,
     maxVisits,
+    maxTime,
   });
 }
 
@@ -181,6 +192,7 @@ export async function requestKatagoRespond({
     studentMoveResult,
     currentPly,
     maxVisits: getKatagoRespondMaxVisits(),
+    maxTime: getKatagoRespondMaxTime(),
   };
 
   const requestStart = Date.now();
@@ -202,6 +214,7 @@ export async function requestKatagoRespond({
         katagoElapsedMs,
         totalElapsedMs: katagoElapsedMs,
         maxVisits: payload.maxVisits,
+        maxTime: payload.maxTime,
       });
       const upstreamDetail =
         data?.upstreamBody ??
@@ -239,6 +252,7 @@ export async function requestKatagoRespond({
         katagoElapsedMs,
         totalElapsedMs: Date.now() - requestStart,
         maxVisits: payload.maxVisits,
+        maxTime: payload.maxTime,
       });
       return {
         ok: false,
@@ -278,6 +292,7 @@ export async function requestKatagoRespond({
         katagoElapsedMs,
         totalElapsedMs: Date.now() - requestStart,
         maxVisits: payload.maxVisits,
+        maxTime: payload.maxTime,
       });
       return {
         ok: false,
@@ -312,6 +327,7 @@ export async function requestKatagoRespond({
         katagoElapsedMs,
         totalElapsedMs: Date.now() - requestStart,
         maxVisits: payload.maxVisits,
+        maxTime: payload.maxTime,
       });
       return {
         ok: false,
@@ -332,6 +348,7 @@ export async function requestKatagoRespond({
       katagoElapsedMs,
       totalElapsedMs,
       maxVisits: payload.maxVisits,
+      maxTime: payload.maxTime,
     });
 
     return {
@@ -359,6 +376,7 @@ export async function requestKatagoRespond({
       katagoElapsedMs: Date.now() - requestStart,
       totalElapsedMs: Date.now() - requestStart,
       maxVisits: payload.maxVisits,
+      maxTime: payload.maxTime,
     });
     return {
       ok: false,

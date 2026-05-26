@@ -2,19 +2,33 @@
  * KataGo 응수 프록시 — Vercel serverless / backend/katago-api 공용
  */
 
-/** 교육용: 정책 보강으로 후보 확보, 탐색은 가볍게 (40~60 권장) */
-const DEFAULT_KATAGO_MAX_VISITS = 50;
+/** 교육용: 즉각 리듬 우선 — policy 후보 + 극소 탐색 */
+const DEFAULT_KATAGO_MAX_VISITS = 12;
+const DEFAULT_KATAGO_MAX_TIME = 0.25;
+const MIN_KATAGO_CANDIDATES = 30;
 
 function resolveMaxVisits(frontendPayload) {
   const fromPayload = Number(frontendPayload?.maxVisits);
   if (Number.isFinite(fromPayload) && fromPayload > 0) {
-    return fromPayload;
+    return Math.min(fromPayload, 64);
   }
   const fromEnv = Number(process.env.KATAGO_MAX_VISITS);
   if (Number.isFinite(fromEnv) && fromEnv > 0) {
-    return fromEnv;
+    return Math.min(fromEnv, 64);
   }
   return DEFAULT_KATAGO_MAX_VISITS;
+}
+
+function resolveMaxTime(frontendPayload) {
+  const fromPayload = Number(frontendPayload?.maxTime);
+  if (Number.isFinite(fromPayload) && fromPayload > 0) {
+    return Math.min(fromPayload, 5);
+  }
+  const fromEnv = Number(process.env.KATAGO_MAX_TIME);
+  if (Number.isFinite(fromEnv) && fromEnv > 0) {
+    return Math.min(fromEnv, 5);
+  }
+  return DEFAULT_KATAGO_MAX_TIME;
 }
 
 function formatGtpPoint(point) {
@@ -93,8 +107,6 @@ function extractBestMove(katagoResponse, boardSize) {
   return normalizeMove(candidate, boardSize);
 }
 
-const MIN_KATAGO_CANDIDATES = 30;
-
 function expandCandidatesFromPolicy(katagoResponse, boardSize, seenKeys, startOrder) {
   const policy =
     katagoResponse?.policy ?? katagoResponse?.analysis?.policy ?? null;
@@ -155,6 +167,7 @@ function expandCandidatesFromPolicy(katagoResponse, boardSize, seenKeys, startOr
 }
 
 /**
+ * Policy 우선(빠름) → moveInfos 병합. 교육용 선택기는 policy 후보만으로도 동작.
  * @returns {Array<{ move: string, x: number, y: number, visits: number|null, order: number, winrate: number|null }>}
  */
 function extractMoveCandidates(katagoResponse, boardSize) {
@@ -163,8 +176,18 @@ function extractMoveCandidates(katagoResponse, boardSize) {
     katagoResponse?.analysis?.moveInfos ??
     [];
 
-  const candidates = [];
   const seenKeys = new Set();
+  const byKey = new Map();
+
+  const policyExpansion = expandCandidatesFromPolicy(
+    katagoResponse,
+    boardSize,
+    seenKeys,
+    0,
+  );
+  for (const entry of policyExpansion.added) {
+    byKey.set(`${entry.x},${entry.y}`, entry);
+  }
 
   for (let index = 0; index < infos.length; index += 1) {
     const info = infos[index];
@@ -183,29 +206,30 @@ function extractMoveCandidates(katagoResponse, boardSize) {
       continue;
     }
 
-    seenKeys.add(`${point.x},${point.y}`);
-    candidates.push({
+    const key = `${point.x},${point.y}`;
+    const order = Number.isFinite(info.order) ? info.order : index;
+    const existing = byKey.get(key);
+    if (existing) {
+      existing.visits = Number.isFinite(info.visits) ? info.visits : existing.visits;
+      existing.winrate = Number.isFinite(info.winrate) ? info.winrate : existing.winrate;
+      existing.order = Math.min(existing.order, order);
+      existing.fromPolicy = false;
+      continue;
+    }
+
+    seenKeys.add(key);
+    byKey.set(key, {
       move,
       x: point.x,
       y: point.y,
       visits: Number.isFinite(info.visits) ? info.visits : null,
-      order: Number.isFinite(info.order) ? info.order : index,
+      order,
       winrate: Number.isFinite(info.winrate) ? info.winrate : null,
       fromPolicy: false,
     });
   }
 
-  const policyExpansion = expandCandidatesFromPolicy(
-    katagoResponse,
-    boardSize,
-    seenKeys,
-    candidates.length,
-  );
-  if (policyExpansion.added.length > 0) {
-    candidates.push(...policyExpansion.added);
-  }
-
-  candidates.sort((a, b) => a.order - b.order);
+  const candidates = [...byKey.values()].sort((a, b) => a.order - b.order);
 
   if (candidates.length === 0) {
     const fallback = extractBestMove(katagoResponse, boardSize);
@@ -300,6 +324,7 @@ function toKatagoPayload(frontendPayload) {
     playedMoves,
     lastMove: parseLastMove(frontendPayload, boardSize),
     maxVisits: resolveMaxVisits(frontendPayload),
+    maxTime: resolveMaxTime(frontendPayload),
     rules: frontendPayload.rules || "japanese",
     studentMoveResult: frontendPayload.studentMoveResult,
     currentPly: frontendPayload.currentPly,
@@ -373,17 +398,24 @@ function buildGobanAnalysisPayload(frontendPayload) {
     })
     .filter(Boolean);
 
+  const maxVisits = normalized.maxVisits;
+  const maxTime = normalized.maxTime ?? resolveMaxTime(frontendPayload);
+
   const payload = {
     moves,
     komi: Number(process.env.KATAGO_KOMI) || 6.5,
     rules: normalized.rules || "japanese",
     boardXSize: boardSize,
     boardYSize: boardSize,
-    maxVisits: normalized.maxVisits,
+    maxVisits,
     includeOwnership: false,
     includePolicy: true,
     rootPolicyTemperature:
-      Number(process.env.KATAGO_ROOT_POLICY_TEMPERATURE) || 1.15,
+      Number(process.env.KATAGO_ROOT_POLICY_TEMPERATURE) || 1.0,
+    overrideSettings: {
+      maxTime,
+      maxVisits,
+    },
   };
 
   if (initialStones.length > 0) {
@@ -421,10 +453,12 @@ async function requestKatagoAnalysis(frontendPayload) {
       : toKatagoPayload(frontendPayload);
 
   console.log("[katago-respond-core] POST", endpoint.toString());
-  console.log(
-    "[katago-respond-core] upstream payload",
-    JSON.stringify(katagoPayload, null, 2),
-  );
+  console.log("[katago-respond-core] upstream", {
+    maxVisits: katagoPayload.maxVisits,
+    maxTime: katagoPayload.overrideSettings?.maxTime,
+    includePolicy: katagoPayload.includePolicy,
+    moveCount: katagoPayload.moves?.length ?? 0,
+  });
 
   const katagoStarted = Date.now();
   const response = await fetch(endpoint.toString(), {
@@ -506,6 +540,7 @@ async function produceKatagoRespond(frontendPayload) {
     katagoElapsedMs,
     totalElapsedMs,
     maxVisits: resolveMaxVisits(frontendPayload),
+    maxTime: resolveMaxTime(frontendPayload),
   });
 
   return {
@@ -521,6 +556,7 @@ async function produceKatagoRespond(frontendPayload) {
 
 module.exports = {
   DEFAULT_KATAGO_MAX_VISITS,
+  DEFAULT_KATAGO_MAX_TIME,
   produceKatagoRespond,
   toKatagoPayload,
   buildGobanAnalysisPayload,
@@ -528,4 +564,5 @@ module.exports = {
   extractMoveCandidates,
   formatGtpPoint,
   resolveMaxVisits,
+  resolveMaxTime,
 };

@@ -35,7 +35,7 @@ KataGo 바이너리 (CPU/GPU)
 |------|-----------------|-------------------------------------|
 | 모델 | b28c512 | **b10c128** (기본) 또는 b6c96 |
 | nnCache | 2^20 | **2^12** |
-| maxVisits | 10 (cfg) | **25** (응수용) |
+| maxVisits / maxTime | cfg: **12** / **0.3s** | API 기본 **12** visits, **0.25s** (교육용) |
 | 목적 | 강한 분석 | **백 응수 1수** |
 
 **설정 파일만 마운트**해도 모델은 b28이라 RAM이 줄지 않습니다. **커스텀 이미지**가 필요합니다 → [`backend/katago-engine/README.md`](../backend/katago-engine/README.md), 루트 [`render.yaml`](../render.yaml).
