@@ -21,6 +21,7 @@ services:
         value: "2"
       - key: KATAGO_MOVE_TIMEOUT_SECS
         value: "45"
-      # 더 작은 모델: kata1-b6c96-s175395328-d26788732.bin.gz
-      - key: KATAGO_MODEL
-        value: kata1-b10c128-s1141046784-d204142634.bin.gz
+      # 네트워크 ID (확장자 없음). API → .txt.gz 다운로드
+      # 더 작은 모델: kata1-b6c96-s175395328-d26788732
+      - key: KATAGO_NETWORK_ID
+        value: kata1-b10c128-s1141046784-d204142634

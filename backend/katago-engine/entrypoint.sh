@@ -8,6 +8,11 @@ if [ -d /app/katago-lib ]; then
 fi
 export APPIMAGE_EXTRACT_AND_RUN=0
 
+if [ -f /app/.katago-model-filename ]; then
+  KATAGO_MODEL="$(cat /app/.katago-model-filename)"
+  export KATAGO_MODEL
+fi
+
 echo "[katago-engine] startup pwd=$(pwd)"
 ls -la /app/katago "/app/${KATAGO_MODEL:-}" /app/analysis_config.cfg 2>/dev/null || true
 

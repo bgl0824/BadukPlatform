@@ -30,7 +30,8 @@
 - 베이스: `ghcr.io/stubbi/katago-server:latest-minimal` 만
 - KataGo: GitHub `v1.16.4-eigenavx2-linux-x64.zip` (AppImage) → **`--appimage-extract`** 로 raw ELF → `/app/katago` (FUSE 불필요)
 - 런타임 libs: `/app/katago-lib` + `LD_LIBRARY_PATH`
-- 모델: `media.katagotraining.org` 에서 b10 wget
+- 모델: `katagotraining.org/api/networks/{id}/` → `model_file` URL (**.txt.gz**, `.bin.gz` 아님)
+- 빌드: `install-katago-model.sh` — URL echo → `wget --spider` → download
 - 빌드 검증: `/app/katago version` (step 2/5)
 - 빌드 로그: `=== [1/5]` … `=== [5/5]` 단계별 echo
 
@@ -44,12 +45,19 @@ docker run --rm -p 2718:2718 baduk-katago-engine
 curl http://127.0.0.1:2718/api/v1/health
 ```
 
-b6:
+b6 (더 작음, ~5MB):
 
 ```bash
-docker build --build-arg KATAGO_MODEL=kata1-b6c96-s175395328-d26788732.bin.gz \
+docker build --build-arg KATAGO_NETWORK_ID=kata1-b6c96-s175395328-d26788732 \
   -t baduk-katago-engine:b6 ./backend/katago-engine
 ```
+
+### 모델 URL 참고
+
+| 잘못된 경로 (실패) | 올바른 경로 |
+|-------------------|-------------|
+| `.../kata1-....bin.gz` (403) | API `model_file` → `.../kata1-....txt.gz` |
+| `media.../models/kata1/${KATAGO_MODEL}` 직접 조합 | `GET /api/networks/{network_id}/` JSON |
 
 ## Render Free
 
