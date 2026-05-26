@@ -79,8 +79,28 @@ export function isPointInAllowedRegion(point, region) {
 }
 
 /**
+ * @param {Array<{ x?: number, y?: number }>} candidates
+ */
+export function filterCandidatesInRegion(candidates, region, boardSize) {
+  if (!Array.isArray(candidates) || candidates.length === 0) {
+    return [];
+  }
+
+  return candidates.filter((candidate) => {
+    const point =
+      Number.isInteger(candidate.x) && Number.isInteger(candidate.y)
+        ? { x: candidate.x, y: candidate.y }
+        : null;
+    if (!point || !isPointInAllowedRegion(point, region)) {
+      return false;
+    }
+    return point.x >= 0 && point.y >= 0 && point.x < boardSize && point.y < boardSize;
+  });
+}
+
+/**
  * KataGo 후보 중 문제 영역 안의 첫 수 (order/visits 순 유지)
- * @param {Array<{ move?: string, x?: number, y?: number, visits?: number, order?: number }>} candidates
+ * @deprecated 교육용 선택은 selectEducationalWhiteMove 사용
  */
 export function selectCandidateInRegion(candidates, region, boardSize) {
   if (!Array.isArray(candidates) || candidates.length === 0) {

@@ -1,10 +1,11 @@
 import { formatCoordLabel } from "./black-sequence.js";
 import { parseGtpCoordinate } from "../ai-response-ux/coordinates.js";
 import { AI_RESPONSE_SOLVE_MESSAGES } from "./constants.js";
+import { selectEducationalWhiteMove } from "./educational-move-selector.js";
 import {
   computeAllowedRegion,
   DEFAULT_REGION_MARGIN,
-  selectCandidateInRegion,
+  filterCandidatesInRegion,
 } from "./problem-region.js";
 
 function toMoveEntry(move) {
@@ -96,6 +97,7 @@ function normalizeApiCandidates(data, boardSize) {
  *   playedMoves?: object[],
  *   initialStones?: object[],
  *   lastMove: object,
+ *   stoneColors: { black: string, white: string },
  *   studentMoveResult: "correct" | "wrong",
  *   currentPly: number,
  * }} params
@@ -107,6 +109,7 @@ export async function requestKatagoRespond({
   playedMoves = [],
   initialStones = [],
   lastMove,
+  stoneColors,
   studentMoveResult,
   currentPly,
 }) {
@@ -154,7 +157,7 @@ export async function requestKatagoRespond({
     nextPlayer: "W",
     studentMoveResult,
     currentPly,
-    allowedRegion,
+    maxVisits: Number(window.BadukConfig?.katagoRespondMaxVisits) || 100,
   };
 
   try {
@@ -206,19 +209,23 @@ export async function requestKatagoRespond({
     }
 
     const rawCandidates = normalizeApiCandidates(data, boardSize);
-
-    console.log("[KatagoRespond] raw KataGo candidates", rawCandidates);
-    console.log("[KatagoRespond] allowedRegion", allowedRegion);
-
-    const selected = selectCandidateInRegion(
+    const totalCandidates =
+      data?.totalCandidates ?? rawCandidates.length;
+    const regionCandidates = filterCandidatesInRegion(
       rawCandidates,
       allowedRegion,
       boardSize,
     );
+    const regionCandidateCount =
+      data?.regionCandidates ?? regionCandidates.length;
 
-    console.log("[KatagoRespond] selectedMove", selected ?? null);
+    console.log("[KatagoRespond] raw KataGo candidates", rawCandidates);
+    console.log("[KatagoRespond] totalCandidates", totalCandidates);
+    console.log("[KatagoRespond] allowedRegion", allowedRegion);
+    console.log("[KatagoRespond] regionCandidates", regionCandidates);
+    console.log("[KatagoRespond] regionCandidateCount", regionCandidateCount);
 
-    if (!selected?.point) {
+    if (regionCandidates.length === 0) {
       console.warn(
         "[KatagoRespond] no candidate inside problem region",
         { rawCandidates, allowedRegion },
@@ -230,6 +237,37 @@ export async function requestKatagoRespond({
         message: AI_RESPONSE_SOLVE_MESSAGES.noMoveInProblemRegion,
         allowedRegion,
         rawCandidates,
+        totalCandidates,
+        regionCandidateCount: 0,
+      };
+    }
+
+    const education = selectEducationalWhiteMove({
+      regionCandidates,
+      stones,
+      boardSize,
+      stoneColors,
+      lastBlackMove: lastMove,
+      problem,
+    });
+
+    console.log("[KatagoRespond] scoredCandidates", education.scoredCandidates);
+    console.log("[KatagoRespond] selectedMove", education.selected ?? null);
+    console.log("[KatagoRespond] selectedReason", education.selectedReason);
+    console.log("[KatagoRespond] aiResponseStyle", education.style);
+
+    const selected = education.selected;
+    if (!selected?.point) {
+      return {
+        ok: false,
+        needsServer: true,
+        outOfRegion: true,
+        message: AI_RESPONSE_SOLVE_MESSAGES.noMoveInProblemRegion,
+        allowedRegion,
+        rawCandidates,
+        regionCandidates,
+        totalCandidates,
+        regionCandidateCount,
       };
     }
 
@@ -240,7 +278,13 @@ export async function requestKatagoRespond({
       move: selected.move,
       allowedRegion,
       rawCandidates,
+      totalCandidates,
+      regionCandidates,
+      regionCandidateCount,
+      scoredCandidates: education.scoredCandidates,
       selectedCandidate: selected,
+      selectedReason: education.selectedReason,
+      aiResponseStyle: education.style,
     };
   } catch (error) {
     console.error("[KatagoRespond] request failed", error);

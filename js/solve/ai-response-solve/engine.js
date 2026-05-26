@@ -174,6 +174,7 @@ export function createAiResponseSolveEngine({
       playedMoves: session.playedMoves,
       initialStones: appState.initialBoardStones ?? problem.stones ?? [],
       lastBlackMove,
+      stoneColors,
       studentMoveResult,
       currentPly: session.currentPly,
     });
@@ -183,6 +184,7 @@ export function createAiResponseSolveEngine({
       ok: result.ok,
       source: result.source,
       point: result.point,
+      selectedReason: result.selectedReason,
       currentPly: session.currentPly,
       needsServer: result.needsServer,
     });

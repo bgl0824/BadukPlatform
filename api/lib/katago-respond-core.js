@@ -78,6 +78,67 @@ function extractBestMove(katagoResponse, boardSize) {
   return normalizeMove(candidate, boardSize);
 }
 
+const MIN_KATAGO_CANDIDATES = 30;
+
+function expandCandidatesFromPolicy(katagoResponse, boardSize, seenKeys, startOrder) {
+  const policy =
+    katagoResponse?.policy ?? katagoResponse?.analysis?.policy ?? null;
+  if (!Array.isArray(policy) || policy.length < boardSize * boardSize) {
+    return { added: [], nextOrder: startOrder };
+  }
+
+  const passIndex = boardSize * boardSize;
+  const ranked = [];
+
+  for (let idx = 0; idx < passIndex && idx < policy.length; idx += 1) {
+    const prob = policy[idx];
+    if (!Number.isFinite(prob) || prob < 0) {
+      continue;
+    }
+    const x = idx % boardSize;
+    const y = Math.floor(idx / boardSize);
+    const key = `${x},${y}`;
+    if (seenKeys.has(key)) {
+      continue;
+    }
+    const point = { x, y };
+    const move = formatGtpPoint(point);
+    if (!move) {
+      continue;
+    }
+    ranked.push({ move, x, y, prob });
+  }
+
+  ranked.sort((a, b) => b.prob - a.prob);
+
+  const added = [];
+  let order = startOrder;
+
+  for (const entry of ranked) {
+    if (seenKeys.size >= MIN_KATAGO_CANDIDATES) {
+      break;
+    }
+    const key = `${entry.x},${entry.y}`;
+    if (seenKeys.has(key)) {
+      continue;
+    }
+    seenKeys.add(key);
+    added.push({
+      move: entry.move,
+      x: entry.x,
+      y: entry.y,
+      visits: null,
+      order,
+      winrate: null,
+      fromPolicy: true,
+      policyPrior: entry.prob,
+    });
+    order += 1;
+  }
+
+  return { added, nextOrder: order };
+}
+
 /**
  * @returns {Array<{ move: string, x: number, y: number, visits: number|null, order: number, winrate: number|null }>}
  */
@@ -88,6 +149,7 @@ function extractMoveCandidates(katagoResponse, boardSize) {
     [];
 
   const candidates = [];
+  const seenKeys = new Set();
 
   for (let index = 0; index < infos.length; index += 1) {
     const info = infos[index];
@@ -106,6 +168,7 @@ function extractMoveCandidates(katagoResponse, boardSize) {
       continue;
     }
 
+    seenKeys.add(`${point.x},${point.y}`);
     candidates.push({
       move,
       x: point.x,
@@ -113,7 +176,18 @@ function extractMoveCandidates(katagoResponse, boardSize) {
       visits: Number.isFinite(info.visits) ? info.visits : null,
       order: Number.isFinite(info.order) ? info.order : index,
       winrate: Number.isFinite(info.winrate) ? info.winrate : null,
+      fromPolicy: false,
     });
+  }
+
+  const policyExpansion = expandCandidatesFromPolicy(
+    katagoResponse,
+    boardSize,
+    seenKeys,
+    candidates.length,
+  );
+  if (policyExpansion.added.length > 0) {
+    candidates.push(...policyExpansion.added);
   }
 
   candidates.sort((a, b) => a.order - b.order);
@@ -210,7 +284,10 @@ function toKatagoPayload(frontendPayload) {
     stones,
     playedMoves,
     lastMove: parseLastMove(frontendPayload, boardSize),
-    maxVisits: frontendPayload.maxVisits || 16,
+    maxVisits:
+      frontendPayload.maxVisits ||
+      Number(process.env.KATAGO_MAX_VISITS) ||
+      100,
     rules: frontendPayload.rules || "japanese",
     studentMoveResult: frontendPayload.studentMoveResult,
     currentPly: frontendPayload.currentPly,
@@ -290,9 +367,14 @@ function buildGobanAnalysisPayload(frontendPayload) {
     rules: normalized.rules || "japanese",
     boardXSize: boardSize,
     boardYSize: boardSize,
-    maxVisits: normalized.maxVisits || 16,
+    maxVisits:
+      normalized.maxVisits ||
+      Number(process.env.KATAGO_MAX_VISITS) ||
+      100,
     includeOwnership: false,
-    includePolicy: false,
+    includePolicy: true,
+    rootPolicyTemperature:
+      Number(process.env.KATAGO_ROOT_POLICY_TEMPERATURE) || 1.15,
   };
 
   if (initialStones.length > 0) {
@@ -386,10 +468,27 @@ async function produceKatagoRespond(frontendPayload) {
 
   const top = candidates[0];
 
+  const moveInfosCount = (
+    katagoResponse?.moveInfos ??
+    katagoResponse?.analysis?.moveInfos ??
+    []
+  ).length;
+  const policyExpandedCount = candidates.filter((c) => c.fromPolicy).length;
+
+  console.log(
+    "[katago-respond-core] totalCandidates",
+    candidates.length,
+    "moveInfos",
+    moveInfosCount,
+    "policyExpanded",
+    policyExpandedCount,
+  );
+
   return {
     move: top.move,
     source: "katago",
     candidates,
+    totalCandidates: candidates.length,
   };
 }
 

@@ -22,7 +22,11 @@ module.exports = async function handler(request, response) {
     const result = await produceKatagoRespond(body ?? {});
     if (result?.candidates?.length) {
       console.log(
-        "[api/katago/respond] candidates",
+        "[api/katago/respond] totalCandidates",
+        result.totalCandidates ?? result.candidates.length,
+      );
+      console.log(
+        "[api/katago/respond] candidates (move, visits, order)",
         result.candidates.map((c) => ({
           move: c.move,
           visits: c.visits,

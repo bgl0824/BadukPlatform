@@ -17,6 +17,7 @@ export async function resolveWhiteResponse({
   playedMoves,
   initialStones,
   lastBlackMove,
+  stoneColors,
   studentMoveResult,
   currentPly,
 }) {
@@ -37,6 +38,7 @@ export async function resolveWhiteResponse({
     playedMoves,
     initialStones,
     lastMove: lastBlackMove,
+    stoneColors,
     studentMoveResult,
     currentPly,
   });
