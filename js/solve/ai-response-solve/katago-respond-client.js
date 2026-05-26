@@ -1,5 +1,11 @@
 import { formatCoordLabel } from "./black-sequence.js";
 import { parseGtpCoordinate } from "../ai-response-ux/coordinates.js";
+import { AI_RESPONSE_SOLVE_MESSAGES } from "./constants.js";
+import {
+  computeAllowedRegion,
+  DEFAULT_REGION_MARGIN,
+  selectCandidateInRegion,
+} from "./problem-region.js";
 
 function toMoveEntry(move) {
   if (!move) {
@@ -27,6 +33,59 @@ export function isKatagoRespondApiEnabled() {
     return false;
   }
   return window.localStorage?.getItem("BADUK_KATAGO_RESPOND_API_ENABLED") === "1";
+}
+
+function getRegionMargin() {
+  const configured = Number(window.BadukConfig?.katagoRespondRegionMargin);
+  if (Number.isFinite(configured) && configured >= 0) {
+    return configured;
+  }
+  return DEFAULT_REGION_MARGIN;
+}
+
+function normalizeApiCandidates(data, boardSize) {
+  const fromApi = Array.isArray(data?.candidates) ? data.candidates : [];
+  const normalized = fromApi
+    .map((entry, index) => {
+      const point =
+        Number.isInteger(entry?.x) && Number.isInteger(entry?.y)
+          ? { x: entry.x, y: entry.y }
+          : parseKatagoMove(entry?.move, boardSize);
+
+      if (!point) {
+        return null;
+      }
+
+      return {
+        move: entry.move ?? formatCoordLabel(point),
+        x: point.x,
+        y: point.y,
+        visits: entry.visits ?? null,
+        order: entry.order ?? index,
+        winrate: entry.winrate ?? null,
+      };
+    })
+    .filter(Boolean);
+
+  if (normalized.length > 0) {
+    return normalized.sort((a, b) => a.order - b.order);
+  }
+
+  const single = parseKatagoMove(data?.move, boardSize);
+  if (!single) {
+    return [];
+  }
+
+  return [
+    {
+      move: data.move ?? formatCoordLabel(single),
+      x: single.x,
+      y: single.y,
+      visits: null,
+      order: 0,
+      winrate: null,
+    },
+  ];
 }
 
 /**
@@ -60,6 +119,14 @@ export async function requestKatagoRespond({
     window.BadukConfig?.katagoApiUrl ||
     "/api/katago/respond";
 
+  const allowedRegion = computeAllowedRegion({
+    boardSize,
+    stones,
+    initialStones,
+    lastMove,
+    margin: getRegionMargin(),
+  });
+
   const chronologicalMoves = playedMoves
     .map((move) => toMoveEntry(move))
     .filter(Boolean);
@@ -87,6 +154,7 @@ export async function requestKatagoRespond({
     nextPlayer: "W",
     studentMoveResult,
     currentPly,
+    allowedRegion,
   };
 
   try {
@@ -117,16 +185,43 @@ export async function requestKatagoRespond({
       };
     }
 
-    const point = parseKatagoMove(data?.move, boardSize);
-    if (!point) {
+    const rawCandidates = normalizeApiCandidates(data, boardSize);
+
+    console.log("[KatagoRespond] raw KataGo candidates", rawCandidates);
+    console.log("[KatagoRespond] allowedRegion", allowedRegion);
+
+    const selected = selectCandidateInRegion(
+      rawCandidates,
+      allowedRegion,
+      boardSize,
+    );
+
+    console.log("[KatagoRespond] selectedMove", selected ?? null);
+
+    if (!selected?.point) {
+      console.warn(
+        "[KatagoRespond] no candidate inside problem region",
+        { rawCandidates, allowedRegion },
+      );
       return {
         ok: false,
         needsServer: true,
-        message: "AI 응수 서버 연결 필요 (좌표 오류)",
+        outOfRegion: true,
+        message: AI_RESPONSE_SOLVE_MESSAGES.noMoveInProblemRegion,
+        allowedRegion,
+        rawCandidates,
       };
     }
 
-    return { ok: true, point, source: KATAGO_SOURCE };
+    return {
+      ok: true,
+      point: selected.point,
+      source: KATAGO_SOURCE,
+      move: selected.move,
+      allowedRegion,
+      rawCandidates,
+      selectedCandidate: selected,
+    };
   } catch (error) {
     console.error("[KatagoRespond] request failed", error);
     return {

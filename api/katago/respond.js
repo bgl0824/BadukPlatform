@@ -20,6 +20,16 @@ module.exports = async function handler(request, response) {
   try {
     const body = typeof request.body === "string" ? JSON.parse(request.body) : request.body;
     const result = await produceKatagoRespond(body ?? {});
+    if (result?.candidates?.length) {
+      console.log(
+        "[api/katago/respond] candidates",
+        result.candidates.map((c) => ({
+          move: c.move,
+          visits: c.visits,
+          order: c.order,
+        })),
+      );
+    }
     response.status(200).json(result);
   } catch (error) {
     console.error("[api/katago/respond]", error);

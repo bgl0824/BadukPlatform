@@ -78,6 +78,66 @@ function extractBestMove(katagoResponse, boardSize) {
   return normalizeMove(candidate, boardSize);
 }
 
+/**
+ * @returns {Array<{ move: string, x: number, y: number, visits: number|null, order: number, winrate: number|null }>}
+ */
+function extractMoveCandidates(katagoResponse, boardSize) {
+  const infos =
+    katagoResponse?.moveInfos ??
+    katagoResponse?.analysis?.moveInfos ??
+    [];
+
+  const candidates = [];
+
+  for (let index = 0; index < infos.length; index += 1) {
+    const info = infos[index];
+    const raw = info?.moveCoord ?? info?.move;
+    if (!raw || String(raw).trim().toLowerCase() === "pass") {
+      continue;
+    }
+
+    const point = normalizeMove(raw, boardSize);
+    if (!point) {
+      continue;
+    }
+
+    const move = formatGtpPoint(point);
+    if (!move) {
+      continue;
+    }
+
+    candidates.push({
+      move,
+      x: point.x,
+      y: point.y,
+      visits: Number.isFinite(info.visits) ? info.visits : null,
+      order: Number.isFinite(info.order) ? info.order : index,
+      winrate: Number.isFinite(info.winrate) ? info.winrate : null,
+    });
+  }
+
+  candidates.sort((a, b) => a.order - b.order);
+
+  if (candidates.length === 0) {
+    const fallback = extractBestMove(katagoResponse, boardSize);
+    if (fallback) {
+      const move = formatGtpPoint(fallback);
+      if (move) {
+        candidates.push({
+          move,
+          x: fallback.x,
+          y: fallback.y,
+          visits: null,
+          order: 0,
+          winrate: null,
+        });
+      }
+    }
+  }
+
+  return candidates;
+}
+
 function parseLastMove(payload, boardSize) {
   const last = payload?.lastMove;
   if (!last) {
@@ -169,6 +229,38 @@ function resolveKatagoApiStyle(analyzePath) {
   return "legacy";
 }
 
+function buildAllowMovesFromRegion(frontendPayload, boardSize) {
+  const region = frontendPayload?.allowedRegion;
+  if (!region || !Number.isInteger(region.minX)) {
+    return null;
+  }
+
+  const occupied = new Set();
+  for (const stone of [
+    ...(frontendPayload.initialStones ?? []),
+    ...(frontendPayload.stones ?? []),
+  ]) {
+    if (Number.isInteger(stone?.x) && Number.isInteger(stone?.y)) {
+      occupied.add(`${stone.x},${stone.y}`);
+    }
+  }
+
+  const allowMoves = [];
+  for (let x = region.minX; x <= region.maxX; x += 1) {
+    for (let y = region.minY; y <= region.maxY; y += 1) {
+      if (occupied.has(`${x},${y}`)) {
+        continue;
+      }
+      const label = formatGtpPoint({ x, y });
+      if (label) {
+        allowMoves.push(label);
+      }
+    }
+  }
+
+  return allowMoves.length > 0 ? allowMoves : null;
+}
+
 function buildGobanAnalysisPayload(frontendPayload) {
   const normalized = toKatagoPayload(frontendPayload);
   const boardSize = normalized.boardSize;
@@ -205,6 +297,11 @@ function buildGobanAnalysisPayload(frontendPayload) {
 
   if (initialStones.length > 0) {
     payload.initialStones = initialStones;
+  }
+
+  const allowMoves = buildAllowMovesFromRegion(frontendPayload, boardSize);
+  if (allowMoves) {
+    payload.allowMoves = allowMoves;
   }
 
   return payload;
@@ -250,22 +347,21 @@ async function requestKatagoAnalysis(frontendPayload) {
 async function produceKatagoRespond(frontendPayload) {
   const boardSize = Number(frontendPayload?.boardSize) || 19;
   const katagoResponse = await requestKatagoAnalysis(frontendPayload);
-  const point = extractBestMove(katagoResponse, boardSize);
+  const candidates = extractMoveCandidates(katagoResponse, boardSize);
 
-  if (!point) {
+  if (candidates.length === 0) {
     const error = new Error("KataGo response did not contain a usable move.");
     error.code = "KATAGO_NO_MOVE";
     throw error;
   }
 
-  const move = formatGtpPoint(point);
-  if (!move) {
-    const error = new Error("Failed to format KataGo move.");
-    error.code = "KATAGO_INVALID_MOVE";
-    throw error;
-  }
+  const top = candidates[0];
 
-  return { move, source: "katago" };
+  return {
+    move: top.move,
+    source: "katago",
+    candidates,
+  };
 }
 
 module.exports = {
@@ -273,5 +369,6 @@ module.exports = {
   toKatagoPayload,
   buildGobanAnalysisPayload,
   extractBestMove,
+  extractMoveCandidates,
   formatGtpPoint,
 };
