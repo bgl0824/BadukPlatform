@@ -3,6 +3,11 @@ set -eux
 
 cd /app
 
+if [ -d /app/katago-lib ]; then
+  export LD_LIBRARY_PATH="/app/katago-lib:${LD_LIBRARY_PATH:-}"
+fi
+export APPIMAGE_EXTRACT_AND_RUN=0
+
 echo "[katago-engine] startup pwd=$(pwd)"
 ls -la /app/katago "/app/${KATAGO_MODEL:-}" /app/analysis_config.cfg 2>/dev/null || true
 

@@ -1,9 +1,7 @@
 # BadukPlatform — lightweight KataGo engine for Render Free (512MB)
 #
-# 이전 버전은 ghcr.io/stubbi/katago-server:latest (b28 donor, ~271MB) 를 pull 해
-# Render Free 빌드에서 OOM/실패가 잦았습니다.
-#
-# 이 Dockerfile: latest-minimal 만 사용 + GitHub에서 KataGo CPU 바이너리 + b10 모델 wget
+# GitHub release zip 은 AppImage 형식 → FUSE 없이 --appimage-extract 후 raw ELF 사용
+# 베이스: ghcr.io/stubbi/katago-server:latest-minimal (katago-server Rust API)
 #
 # Build:
 #   docker build -t baduk-katago-engine ./backend/katago-engine
@@ -15,35 +13,36 @@ ARG KATAGO_RELEASE_ASSET=katago-v1.16.4-eigenavx2-linux-x64.zip
 ARG KATAGO_MODEL=kata1-b10c128-s1141046784-d204142634.bin.gz
 
 ENV KATAGO_MODEL=${KATAGO_MODEL}
+ENV LD_LIBRARY_PATH=/app/katago-lib
 ENV RUST_LOG=info
 ENV MALLOC_ARENA_MAX=2
 ENV KATAGO_MOVE_TIMEOUT_SECS=45
+# AppImage 런타임 마운트 비활성 (extracted ELF만 사용)
+ENV APPIMAGE_EXTRACT_AND_RUN=0
 
 COPY analysis_config.cfg /app/analysis_config.cfg
 COPY entrypoint.sh /app/entrypoint.sh
+COPY install-katago-binary.sh /tmp/install-katago-binary.sh
 
 SHELL ["/bin/bash", "-euxo", "pipefail", "-c"]
 
-RUN echo "=== [1/5] apt: wget unzip libzip libgomp ===" \
+RUN echo "=== [1/5] apt: wget unzip file libzip libgomp ===" \
  && apt-get update \
- && apt-get install -y --no-install-recommends wget ca-certificates unzip libgomp1 \
+ && apt-get install -y --no-install-recommends \
+    wget ca-certificates unzip file libgomp1 \
  && (apt-get install -y --no-install-recommends libzip5 \
      || apt-get install -y --no-install-recommends libzip4) \
  && rm -rf /var/lib/apt/lists/*
 
-RUN echo "=== [2/5] KataGo binary: ${KATAGO_RELEASE_ASSET} ===" \
+RUN echo "=== [2/5] KataGo: download + AppImage extract → /app/katago ===" \
  && wget --progress=dot:giga -O /tmp/katago.zip \
     "https://github.com/lightvector/KataGo/releases/download/${KATAGO_VERSION}/${KATAGO_RELEASE_ASSET}" \
  && test -s /tmp/katago.zip \
- && unzip -l /tmp/katago.zip | head -15 \
- && unzip -q /tmp/katago.zip -d /tmp/kg \
- && KATAGO_BIN="$(find /tmp/kg -type f -name katago | head -1)" \
- && echo "katago binary: ${KATAGO_BIN}" \
- && test -n "${KATAGO_BIN}" \
- && cp "${KATAGO_BIN}" /app/katago \
- && chmod +x /app/katago \
- && /app/katago version \
- && rm -rf /tmp/katago.zip /tmp/kg
+ && chmod +x /tmp/install-katago-binary.sh \
+ && /tmp/install-katago-binary.sh /tmp/katago.zip /app/katago /app/katago-lib \
+ && rm -f /tmp/katago.zip /tmp/install-katago-binary.sh \
+ && echo "=== [2/5] verify: /app/katago version ===" \
+ && /app/katago version
 
 RUN echo "=== [3/5] neural net: ${KATAGO_MODEL} ===" \
  && wget --progress=dot:giga -O "/app/${KATAGO_MODEL}" \
@@ -66,7 +65,7 @@ RUN echo "=== [4/5] config.toml ===" \
 RUN echo "=== [5/5] entrypoint + logs dir ===" \
  && chmod +x /app/entrypoint.sh \
  && mkdir -p /app/analysis_logs \
- && ls -la /app/katago /app/entrypoint.sh "/app/${KATAGO_MODEL}" /app/analysis_config.cfg
+ && ls -la /app/katago /app/katago-lib /app/entrypoint.sh "/app/${KATAGO_MODEL}" /app/analysis_config.cfg
 
 EXPOSE 2718
 

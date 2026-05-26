@@ -28,11 +28,13 @@
 
 - **donor `latest` 이미지 사용 안 함** (b28 271MB pull → 빌드 OOM/실패)
 - 베이스: `ghcr.io/stubbi/katago-server:latest-minimal` 만
-- KataGo: GitHub `v1.16.4-eigenavx2-linux-x64.zip` wget
+- KataGo: GitHub `v1.16.4-eigenavx2-linux-x64.zip` (AppImage) → **`--appimage-extract`** 로 raw ELF → `/app/katago` (FUSE 불필요)
+- 런타임 libs: `/app/katago-lib` + `LD_LIBRARY_PATH`
 - 모델: `media.katagotraining.org` 에서 b10 wget
+- 빌드 검증: `/app/katago version` (step 2/5)
 - 빌드 로그: `=== [1/5]` … `=== [5/5]` 단계별 echo
 
-Render 빌드 실패 시 로그에서 **마지막으로 찍힌 STEP 번호**를 확인하세요.
+Render에서 `Cannot mount AppImage` / `fusermount` 오류가 나면 AppImage를 직접 실행한 것입니다. 최신 Dockerfile은 extract 후 ELF만 사용합니다.
 
 ## 로컬 빌드
 
