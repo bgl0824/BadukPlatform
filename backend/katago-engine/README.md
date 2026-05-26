@@ -24,6 +24,16 @@
 
 `latest`에 env만 넣어서 b28→b10 **런타임 교체는 불가**. 커스텀 Dockerfile(이 폴더) 또는 `docker build --build-arg KATAGO_MODEL=...` 필요.
 
+## Dockerfile (Render Free)
+
+- **donor `latest` 이미지 사용 안 함** (b28 271MB pull → 빌드 OOM/실패)
+- 베이스: `ghcr.io/stubbi/katago-server:latest-minimal` 만
+- KataGo: GitHub `v1.16.4-eigenavx2-linux-x64.zip` wget
+- 모델: `media.katagotraining.org` 에서 b10 wget
+- 빌드 로그: `=== [1/5]` … `=== [5/5]` 단계별 echo
+
+Render 빌드 실패 시 로그에서 **마지막으로 찍힌 STEP 번호**를 확인하세요.
+
 ## 로컬 빌드
 
 ```bash

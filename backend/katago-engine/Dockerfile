@@ -1,49 +1,76 @@
 # BadukPlatform — lightweight KataGo engine for Render Free (512MB)
 #
-# ghcr.io/stubbi/katago-server:latest 는 b28 + nnCache 2^20 → 512MB 초과
-# 이 이미지: b10(또는 b6) + 경량 analysis_config.cfg
+# 이전 버전은 ghcr.io/stubbi/katago-server:latest (b28 donor, ~271MB) 를 pull 해
+# Render Free 빌드에서 OOM/실패가 잦았습니다.
 #
-# Build (Render / local):
+# 이 Dockerfile: latest-minimal 만 사용 + GitHub에서 KataGo CPU 바이너리 + b10 모델 wget
+#
+# Build:
 #   docker build -t baduk-katago-engine ./backend/katago-engine
-#
-# Smaller model (optional build-arg):
-#   docker build --build-arg KATAGO_MODEL=kata1-b6c96-s175395328-d26788732.bin.gz .
 
-# katago-server 바이너리만 (Rust, ~수 MB)
-FROM ghcr.io/stubbi/katago-server:latest-minimal AS server
+FROM ghcr.io/stubbi/katago-server:latest-minimal
 
-# KataGo CPU 바이너리만 복사 (b28 가중치 파일은 복사하지 않음)
-FROM ghcr.io/stubbi/katago-server:latest AS katago-donor
-
-FROM server
-
-COPY --from=katago-donor /app/katago /app/katago
-COPY analysis_config.cfg /app/analysis_config.cfg
-COPY entrypoint.sh /app/entrypoint.sh
-
-# b10: ~11MB gzip, 응수용으로 충분. b6는 더 작고 약함.
+ARG KATAGO_VERSION=v1.16.4
+ARG KATAGO_RELEASE_ASSET=katago-v1.16.4-eigenavx2-linux-x64.zip
 ARG KATAGO_MODEL=kata1-b10c128-s1141046784-d204142634.bin.gz
+
 ENV KATAGO_MODEL=${KATAGO_MODEL}
-
-RUN set -ex \
-  && chmod +x /app/katago /app/entrypoint.sh \
-  && wget -q -O "/app/${KATAGO_MODEL}" \
-    "https://media.katagotraining.org/uploaded/networks/models/kata1/${KATAGO_MODEL}" \
-  && test -s "/app/${KATAGO_MODEL}" \
-  && if [ -f /app/config.toml ]; then \
-    sed -i 's|^katago_path = .*|katago_path = "./katago"|' /app/config.toml; \
-    sed -i "s|^model_path = .*|model_path = \"./${KATAGO_MODEL}\"|" /app/config.toml; \
-    sed -i 's|^config_path = .*|config_path = "./analysis_config.cfg"|' /app/config.toml; \
-  fi \
-  && mkdir -p /app/analysis_logs && chown 1000:1000 /app/analysis_logs
-
 ENV RUST_LOG=info
 ENV MALLOC_ARENA_MAX=2
 ENV KATAGO_MOVE_TIMEOUT_SECS=45
 
+COPY analysis_config.cfg /app/analysis_config.cfg
+COPY entrypoint.sh /app/entrypoint.sh
+
+SHELL ["/bin/bash", "-euxo", "pipefail", "-c"]
+
+RUN echo "=== [1/5] apt: wget unzip libzip libgomp ===" \
+ && apt-get update \
+ && apt-get install -y --no-install-recommends wget ca-certificates unzip libgomp1 \
+ && (apt-get install -y --no-install-recommends libzip5 \
+     || apt-get install -y --no-install-recommends libzip4) \
+ && rm -rf /var/lib/apt/lists/*
+
+RUN echo "=== [2/5] KataGo binary: ${KATAGO_RELEASE_ASSET} ===" \
+ && wget --progress=dot:giga -O /tmp/katago.zip \
+    "https://github.com/lightvector/KataGo/releases/download/${KATAGO_VERSION}/${KATAGO_RELEASE_ASSET}" \
+ && test -s /tmp/katago.zip \
+ && unzip -l /tmp/katago.zip | head -15 \
+ && unzip -q /tmp/katago.zip -d /tmp/kg \
+ && KATAGO_BIN="$(find /tmp/kg -type f -name katago | head -1)" \
+ && echo "katago binary: ${KATAGO_BIN}" \
+ && test -n "${KATAGO_BIN}" \
+ && cp "${KATAGO_BIN}" /app/katago \
+ && chmod +x /app/katago \
+ && /app/katago version \
+ && rm -rf /tmp/katago.zip /tmp/kg
+
+RUN echo "=== [3/5] neural net: ${KATAGO_MODEL} ===" \
+ && wget --progress=dot:giga -O "/app/${KATAGO_MODEL}" \
+    "https://media.katagotraining.org/uploaded/networks/models/kata1/${KATAGO_MODEL}" \
+ && test -s "/app/${KATAGO_MODEL}" \
+ && ls -lh "/app/${KATAGO_MODEL}"
+
+RUN echo "=== [4/5] config.toml ===" \
+ && if [ ! -f /app/config.toml ]; then \
+      test -f /app/config.toml.example \
+      && cp /app/config.toml.example /app/config.toml \
+      || (echo "ERROR: missing config.toml and config.toml.example" && exit 1); \
+    fi \
+ && sed -i 's|^katago_path = .*|katago_path = "./katago"|' /app/config.toml \
+ && sed -i "s|^model_path = .*|model_path = \"./${KATAGO_MODEL}\"|" /app/config.toml \
+ && sed -i 's|^config_path = .*|config_path = "./analysis_config.cfg"|' /app/config.toml \
+ && echo "--- config.toml ---" \
+ && cat /app/config.toml
+
+RUN echo "=== [5/5] entrypoint + logs dir ===" \
+ && chmod +x /app/entrypoint.sh \
+ && mkdir -p /app/analysis_logs \
+ && ls -la /app/katago /app/entrypoint.sh "/app/${KATAGO_MODEL}" /app/analysis_config.cfg
+
 EXPOSE 2718
 
-HEALTHCHECK --interval=30s --timeout=10s --start-period=90s --retries=5 \
+HEALTHCHECK --interval=30s --timeout=10s --start-period=120s --retries=5 \
   CMD wget --no-verbose --tries=1 --spider http://localhost:2718/api/v1/health || exit 1
 
 ENTRYPOINT ["/app/entrypoint.sh"]

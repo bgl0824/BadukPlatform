@@ -1,7 +1,10 @@
 #!/bin/sh
-set -e
+set -eux
 
 cd /app
+
+echo "[katago-engine] startup pwd=$(pwd)"
+ls -la /app/katago "/app/${KATAGO_MODEL:-}" /app/analysis_config.cfg 2>/dev/null || true
 
 # config.toml 경로 정리 (minimal 베이스 이미지 호환)
 if [ -f config.toml ]; then
