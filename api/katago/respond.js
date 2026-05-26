@@ -20,6 +20,13 @@ module.exports = async function handler(request, response) {
   try {
     const body = typeof request.body === "string" ? JSON.parse(request.body) : request.body;
     const result = await produceKatagoRespond(body ?? {});
+    if (result?.katagoElapsedMs != null) {
+      console.log("[api/katago/respond] timing", {
+        requestStart: result.requestStart,
+        katagoElapsedMs: result.katagoElapsedMs,
+        totalElapsedMs: result.totalElapsedMs,
+      });
+    }
     if (result?.candidates?.length) {
       console.log(
         "[api/katago/respond] totalCandidates",

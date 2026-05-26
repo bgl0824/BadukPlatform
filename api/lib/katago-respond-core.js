@@ -2,6 +2,21 @@
  * KataGo 응수 프록시 — Vercel serverless / backend/katago-api 공용
  */
 
+/** 교육용: 정책 보강으로 후보 확보, 탐색은 가볍게 (40~60 권장) */
+const DEFAULT_KATAGO_MAX_VISITS = 50;
+
+function resolveMaxVisits(frontendPayload) {
+  const fromPayload = Number(frontendPayload?.maxVisits);
+  if (Number.isFinite(fromPayload) && fromPayload > 0) {
+    return fromPayload;
+  }
+  const fromEnv = Number(process.env.KATAGO_MAX_VISITS);
+  if (Number.isFinite(fromEnv) && fromEnv > 0) {
+    return fromEnv;
+  }
+  return DEFAULT_KATAGO_MAX_VISITS;
+}
+
 function formatGtpPoint(point) {
   if (!point || !Number.isInteger(point.x) || !Number.isInteger(point.y)) {
     return null;
@@ -284,10 +299,7 @@ function toKatagoPayload(frontendPayload) {
     stones,
     playedMoves,
     lastMove: parseLastMove(frontendPayload, boardSize),
-    maxVisits:
-      frontendPayload.maxVisits ||
-      Number(process.env.KATAGO_MAX_VISITS) ||
-      100,
+    maxVisits: resolveMaxVisits(frontendPayload),
     rules: frontendPayload.rules || "japanese",
     studentMoveResult: frontendPayload.studentMoveResult,
     currentPly: frontendPayload.currentPly,
@@ -367,10 +379,7 @@ function buildGobanAnalysisPayload(frontendPayload) {
     rules: normalized.rules || "japanese",
     boardXSize: boardSize,
     boardYSize: boardSize,
-    maxVisits:
-      normalized.maxVisits ||
-      Number(process.env.KATAGO_MAX_VISITS) ||
-      100,
+    maxVisits: normalized.maxVisits,
     includeOwnership: false,
     includePolicy: true,
     rootPolicyTemperature:
@@ -417,11 +426,13 @@ async function requestKatagoAnalysis(frontendPayload) {
     JSON.stringify(katagoPayload, null, 2),
   );
 
+  const katagoStarted = Date.now();
   const response = await fetch(endpoint.toString(), {
     method: "POST",
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify(katagoPayload),
   });
+  const katagoElapsedMs = Date.now() - katagoStarted;
 
   if (!response.ok) {
     const upstreamText = await response.text();
@@ -445,10 +456,12 @@ async function requestKatagoAnalysis(frontendPayload) {
     error.upstreamStatus = response.status;
     error.upstreamBody = upstreamText;
     error.upstreamJson = upstreamJson;
+    error.katagoElapsedMs = katagoElapsedMs;
     throw error;
   }
 
-  return response.json();
+  const body = await response.json();
+  return { body, katagoElapsedMs };
 }
 
 /**
@@ -456,8 +469,11 @@ async function requestKatagoAnalysis(frontendPayload) {
  * @returns {Promise<{ move: string, source: "katago" }>}
  */
 async function produceKatagoRespond(frontendPayload) {
+  const requestStart = Date.now();
   const boardSize = Number(frontendPayload?.boardSize) || 19;
-  const katagoResponse = await requestKatagoAnalysis(frontendPayload);
+  const { body: katagoResponse, katagoElapsedMs } = await requestKatagoAnalysis(
+    frontendPayload,
+  );
   const candidates = extractMoveCandidates(katagoResponse, boardSize);
 
   if (candidates.length === 0) {
@@ -475,6 +491,8 @@ async function produceKatagoRespond(frontendPayload) {
   ).length;
   const policyExpandedCount = candidates.filter((c) => c.fromPolicy).length;
 
+  const totalElapsedMs = Date.now() - requestStart;
+
   console.log(
     "[katago-respond-core] totalCandidates",
     candidates.length,
@@ -483,20 +501,31 @@ async function produceKatagoRespond(frontendPayload) {
     "policyExpanded",
     policyExpandedCount,
   );
+  console.log("[katago-respond-core] timing", {
+    requestStart: new Date(requestStart).toISOString(),
+    katagoElapsedMs,
+    totalElapsedMs,
+    maxVisits: resolveMaxVisits(frontendPayload),
+  });
 
   return {
     move: top.move,
     source: "katago",
     candidates,
     totalCandidates: candidates.length,
+    requestStart: new Date(requestStart).toISOString(),
+    katagoElapsedMs,
+    totalElapsedMs,
   };
 }
 
 module.exports = {
+  DEFAULT_KATAGO_MAX_VISITS,
   produceKatagoRespond,
   toKatagoPayload,
   buildGobanAnalysisPayload,
   extractBestMove,
   extractMoveCandidates,
   formatGtpPoint,
+  resolveMaxVisits,
 };

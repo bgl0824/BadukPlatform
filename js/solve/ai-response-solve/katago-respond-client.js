@@ -21,6 +21,29 @@ function toMoveEntry(move) {
 }
 
 const KATAGO_SOURCE = "katago";
+const DEFAULT_KATAGO_MAX_VISITS = 50;
+
+function getKatagoRespondMaxVisits() {
+  const configured = Number(window.BadukConfig?.katagoRespondMaxVisits);
+  if (Number.isFinite(configured) && configured > 0) {
+    return configured;
+  }
+  return DEFAULT_KATAGO_MAX_VISITS;
+}
+
+function logKatagoRespondTiming({
+  requestStart,
+  katagoElapsedMs,
+  totalElapsedMs,
+  maxVisits,
+}) {
+  console.log("[KatagoRespond] timing", {
+    requestStart: new Date(requestStart).toISOString(),
+    katagoElapsedMs,
+    totalElapsedMs,
+    maxVisits,
+  });
+}
 
 /**
  * @returns {boolean}
@@ -157,8 +180,11 @@ export async function requestKatagoRespond({
     nextPlayer: "W",
     studentMoveResult,
     currentPly,
-    maxVisits: Number(window.BadukConfig?.katagoRespondMaxVisits) || 100,
+    maxVisits: getKatagoRespondMaxVisits(),
   };
+
+  const requestStart = Date.now();
+  console.log("[KatagoRespond] requestStart", new Date(requestStart).toISOString());
 
   try {
     const response = await fetch(url, {
@@ -168,8 +194,15 @@ export async function requestKatagoRespond({
     });
 
     const data = await response.json().catch(() => ({}));
+    const katagoElapsedMs = Date.now() - requestStart;
 
     if (!response.ok) {
+      logKatagoRespondTiming({
+        requestStart,
+        katagoElapsedMs,
+        totalElapsedMs: katagoElapsedMs,
+        maxVisits: payload.maxVisits,
+      });
       const upstreamDetail =
         data?.upstreamBody ??
         (data?.upstreamJson ? JSON.stringify(data.upstreamJson) : null) ??
@@ -201,11 +234,21 @@ export async function requestKatagoRespond({
 
     if (data?.source !== KATAGO_SOURCE) {
       console.error("[KatagoRespond] invalid source", data?.source);
+      logKatagoRespondTiming({
+        requestStart,
+        katagoElapsedMs,
+        totalElapsedMs: Date.now() - requestStart,
+        maxVisits: payload.maxVisits,
+      });
       return {
         ok: false,
         needsServer: true,
         message: "AI 응수 서버 연결 필요 (잘못된 응답)",
       };
+    }
+
+    if (Number.isFinite(data?.katagoElapsedMs)) {
+      console.log("[KatagoRespond] server katagoElapsedMs", data.katagoElapsedMs);
     }
 
     const rawCandidates = normalizeApiCandidates(data, boardSize);
@@ -230,6 +273,12 @@ export async function requestKatagoRespond({
         "[KatagoRespond] no candidate inside problem region",
         { rawCandidates, allowedRegion },
       );
+      logKatagoRespondTiming({
+        requestStart,
+        katagoElapsedMs,
+        totalElapsedMs: Date.now() - requestStart,
+        maxVisits: payload.maxVisits,
+      });
       return {
         ok: false,
         needsServer: true,
@@ -258,6 +307,12 @@ export async function requestKatagoRespond({
 
     const selected = education.selected;
     if (!selected?.point) {
+      logKatagoRespondTiming({
+        requestStart,
+        katagoElapsedMs,
+        totalElapsedMs: Date.now() - requestStart,
+        maxVisits: payload.maxVisits,
+      });
       return {
         ok: false,
         needsServer: true,
@@ -270,6 +325,14 @@ export async function requestKatagoRespond({
         regionCandidateCount,
       };
     }
+
+    const totalElapsedMs = Date.now() - requestStart;
+    logKatagoRespondTiming({
+      requestStart,
+      katagoElapsedMs,
+      totalElapsedMs,
+      maxVisits: payload.maxVisits,
+    });
 
     return {
       ok: true,
@@ -285,9 +348,18 @@ export async function requestKatagoRespond({
       selectedCandidate: selected,
       selectedReason: education.selectedReason,
       aiResponseStyle: education.style,
+      requestStart: new Date(requestStart).toISOString(),
+      katagoElapsedMs,
+      totalElapsedMs,
     };
   } catch (error) {
     console.error("[KatagoRespond] request failed", error);
+    logKatagoRespondTiming({
+      requestStart,
+      katagoElapsedMs: Date.now() - requestStart,
+      totalElapsedMs: Date.now() - requestStart,
+      maxVisits: payload.maxVisits,
+    });
     return {
       ok: false,
       needsServer: true,
