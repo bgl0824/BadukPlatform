@@ -167,13 +167,33 @@ export async function requestKatagoRespond({
     const data = await response.json().catch(() => ({}));
 
     if (!response.ok) {
-      const message =
+      const upstreamDetail =
+        data?.upstreamBody ??
+        (data?.upstreamJson ? JSON.stringify(data.upstreamJson) : null) ??
         data?.error ??
-        (response.status === 503
-          ? "AI 응수 서버 연결 필요 (KataGo 미설정)"
-          : `KataGo respond HTTP ${response.status}`);
+        null;
+
       console.error("[KatagoRespond] HTTP error", response.status, data);
-      return { ok: false, needsServer: true, message };
+      if (upstreamDetail) {
+        console.error("[KatagoRespond] upstream body", upstreamDetail);
+      }
+
+      let message;
+      if (response.status === 503) {
+        message = "AI 응수 서버 연결 필요 (KataGo 미설정)";
+      } else if (upstreamDetail) {
+        message = `KataGo 오류 (HTTP ${data?.upstreamStatus ?? response.status}): ${upstreamDetail}`;
+      } else {
+        message = `KataGo respond HTTP ${response.status}`;
+      }
+
+      return {
+        ok: false,
+        needsServer: true,
+        message,
+        upstreamStatus: data?.upstreamStatus ?? response.status,
+        upstreamBody: upstreamDetail,
+      };
     }
 
     if (data?.source !== KATAGO_SOURCE) {

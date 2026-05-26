@@ -299,9 +299,13 @@ function buildGobanAnalysisPayload(frontendPayload) {
     payload.initialStones = initialStones;
   }
 
-  const allowMoves = buildAllowMovesFromRegion(frontendPayload, boardSize);
-  if (allowMoves) {
-    payload.allowMoves = allowMoves;
+  // allowMoves: goban katago-server 422 이슈 — 영역 제한은 프론트 candidates 필터로 처리
+  // (KATAGO_USE_ALLOW_MOVES=true 일 때만 재활성화)
+  if (process.env.KATAGO_USE_ALLOW_MOVES === "true") {
+    const allowMoves = buildAllowMovesFromRegion(frontendPayload, boardSize);
+    if (allowMoves) {
+      payload.allowMoves = allowMoves;
+    }
   }
 
   return payload;
@@ -325,6 +329,12 @@ async function requestKatagoAnalysis(frontendPayload) {
       ? buildGobanAnalysisPayload(frontendPayload)
       : toKatagoPayload(frontendPayload);
 
+  console.log("[katago-respond-core] POST", endpoint.toString());
+  console.log(
+    "[katago-respond-core] upstream payload",
+    JSON.stringify(katagoPayload, null, 2),
+  );
+
   const response = await fetch(endpoint.toString(), {
     method: "POST",
     headers: { "Content-Type": "application/json" },
@@ -332,8 +342,27 @@ async function requestKatagoAnalysis(frontendPayload) {
   });
 
   if (!response.ok) {
-    const error = new Error(`KataGo server failed with HTTP ${response.status}`);
+    const upstreamText = await response.text();
+    let upstreamJson = null;
+    try {
+      upstreamJson = upstreamText ? JSON.parse(upstreamText) : null;
+    } catch {
+      upstreamJson = null;
+    }
+
+    console.error(
+      "[katago-respond-core] upstream HTTP",
+      response.status,
+      upstreamText,
+    );
+
+    const error = new Error(
+      `KataGo server failed with HTTP ${response.status}: ${upstreamText}`,
+    );
     error.code = "KATAGO_UPSTREAM_ERROR";
+    error.upstreamStatus = response.status;
+    error.upstreamBody = upstreamText;
+    error.upstreamJson = upstreamJson;
     throw error;
   }
 

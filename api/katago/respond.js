@@ -32,11 +32,18 @@ module.exports = async function handler(request, response) {
     }
     response.status(200).json(result);
   } catch (error) {
-    console.error("[api/katago/respond]", error);
+    console.error(
+      "[api/katago/respond]",
+      error.message,
+      error.upstreamBody ?? "",
+    );
     const status = error.code === "KATAGO_NOT_CONFIGURED" ? 503 : 502;
     response.status(status).json({
       error: error.message ?? "KataGo respond failed",
       code: error.code ?? "KATAGO_ERROR",
+      upstreamStatus: error.upstreamStatus ?? null,
+      upstreamBody: error.upstreamBody ?? null,
+      upstreamJson: error.upstreamJson ?? null,
       source: "error",
     });
   }
