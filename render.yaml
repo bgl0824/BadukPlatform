@@ -1,0 +1,26 @@
+# Render Blueprint (선택) — KataGo 엔진만 Free 512MB용
+# Dashboard에서 연결하거나 render.yaml 로 배포
+#
+# Vercel 쪽 env:
+#   KATAGO_SERVER_URL=https://<이 서비스>.onrender.com
+#   KATAGO_ANALYZE_PATH=/api/v1/analysis
+#   KATAGO_API_STYLE=goban
+
+services:
+  - type: web
+    name: baduk-katago-engine
+    runtime: docker
+    dockerfilePath: ./backend/katago-engine/Dockerfile
+    dockerContext: ./backend/katago-engine
+    plan: free
+    healthCheckPath: /api/v1/health
+    envVars:
+      - key: RUST_LOG
+        value: info
+      - key: MALLOC_ARENA_MAX
+        value: "2"
+      - key: KATAGO_MOVE_TIMEOUT_SECS
+        value: "45"
+      # 더 작은 모델: kata1-b6c96-s175395328-d26788732.bin.gz
+      - key: KATAGO_MODEL
+        value: kata1-b10c128-s1141046784-d204142634.bin.gz
