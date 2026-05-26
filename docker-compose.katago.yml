@@ -1,0 +1,32 @@
+# 로컬 KataGo 응수 스택 (CPU)
+# 사용: docker compose -f docker-compose.katago.yml up -d
+#
+# 1) KataGo 엔진: http://127.0.0.1:2718  (POST /api/v1/analysis)
+# 2) BadukPlatform 어댑터: http://127.0.0.1:8080/api/katago/respond
+
+services:
+  katago-engine:
+    build:
+      context: ./backend/katago-engine
+      dockerfile: Dockerfile
+    ports:
+      - "2718:2718"
+    # b10 + nnCache 2^12 — stubbi:latest(b28)는 512MB에서 OOM
+    # 첫 기동 1~2분 — scripts/dev-katago-stack.ps1 이 health 폴링
+
+  katago-api:
+    image: node:20-alpine
+    working_dir: /app
+    volumes:
+      - .:/app:ro
+    command: node backend/katago-api/server.js
+    ports:
+      - "8080:8080"
+    environment:
+      PORT: "8080"
+      ALLOWED_ORIGIN: "*"
+      KATAGO_SERVER_URL: http://katago-engine:2718
+      KATAGO_ANALYZE_PATH: /api/v1/analysis
+      KATAGO_API_STYLE: goban
+    depends_on:
+      - katago-engine

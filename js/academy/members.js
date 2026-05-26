@@ -26,6 +26,7 @@ import {
   canManageMemberLifecycle,
   canResetMemberPassword,
   canViewAllAcademyStudents,
+  getStudentCardActionPermissions,
   isPlatformAdmin,
   normalizeRole,
   ROLES,
@@ -538,11 +539,14 @@ export function createAcademyMemberController({
           : "담당 배정·진도 요약 중심의 운영 카드입니다. 학습 분석은 학습관리 메뉴를 이용해 주세요.";
       }
 
+      const studentCardActions = getStudentCardActionPermissions(currentUser);
+
       renderTeacherFilterBar(activeTeacherMembers, activeStudentMembers, canViewAllStudents && isStudentsView);
 
       renderMemberList(elements.academyStudentList, [...filteredActiveStudents, ...filteredInactiveStudents], {
         teacherMembers: activeTeacherMembers,
-        canAssignTeacher: canAssignStudentTeacher(currentUser) && isStudentsView,
+        canAssignTeacher: studentCardActions.canAssignTeacher && isStudentsView,
+        studentCardActions,
         canResetPassword: false,
         canManageLifecycle: false,
         cardMode: isLearningStudentsView ? "learning" : "operations",
@@ -763,6 +767,8 @@ export function createAcademyMemberController({
     const canResetPassword = options.canResetPassword ?? false;
     const canManageLifecycle = options.canManageLifecycle ?? false;
     const cardMode = options.cardMode ?? "learning";
+    const studentCardActions =
+      options.studentCardActions ?? getStudentCardActionPermissions(getCurrentUser());
 
     if (members.length === 0) {
       element.innerHTML = `<p class="academy-member-empty">${emptyMessage}</p>`;
@@ -778,6 +784,7 @@ export function createAcademyMemberController({
             canResetPassword,
             canManageLifecycle,
             cardMode,
+            studentCardActions,
           });
         }
 
@@ -917,23 +924,39 @@ export function createAcademyMemberController({
 
   function renderStudentCard(
     member,
-    { teacherMembers, canAssignTeacher, canResetPassword, canManageLifecycle, cardMode = "learning" },
+    {
+      teacherMembers,
+      canAssignTeacher,
+      canResetPassword,
+      canManageLifecycle,
+      cardMode = "learning",
+      studentCardActions,
+    },
   ) {
     return renderStudentSummaryCard(member, {
       teacherMembers,
       canAssignTeacher,
       cardMode,
+      studentCardActions,
     });
   }
 
-  /** operations = 운영 summary, learning = 학습 분석 + 액션 */
-  function renderStudentSummaryCard(member, { teacherMembers, canAssignTeacher, cardMode = "operations" }) {
+  /** operations = 운영 summary, learning = 학습 분석 레이아웃 */
+  function renderStudentSummaryCard(
+    member,
+    { teacherMembers, canAssignTeacher, cardMode = "operations", studentCardActions },
+  ) {
+    const actions =
+      studentCardActions ?? getStudentCardActionPermissions(getCurrentUser());
     const progress = getStudentProgress(member);
     const assignedTeacherName = getTeacherDisplayName(member.assignedTeacherId, teacherMembers);
     const isInactive = !isActiveMember(member);
     const statusLabel = isInactive ? "비활성" : "활성";
     const isLearningCard = cardMode === "learning";
     const cardVariant = isLearningCard ? "learning" : "operations";
+    const canShowDetails = isLearningCard && actions.canViewDetails;
+    const canShowWrongNotes = isLearningCard && actions.canViewWrongNotes;
+    const showLearningActions = canShowDetails || canShowWrongNotes;
 
     return `
       <article class="academy-member-card academy-student-card academy-student-card--summary academy-student-card--${cardVariant}${isInactive ? " is-inactive-member" : ""}" data-student-id="${escapeHtml(member.userId)}">
@@ -944,11 +967,18 @@ export function createAcademyMemberController({
           </div>
           <span class="member-status-badge">${statusLabel}</span>
         </div>
-        ${canAssignTeacher && !isInactive ? renderAssignTeacherSelect(member, teacherMembers) : ""}
+        ${canAssignTeacher && cardMode === "operations" && !isInactive ? renderAssignTeacherSelect(member, teacherMembers) : ""}
         <dl class="student-progress-summary student-progress-summary--summary">
           ${renderStudentSummaryMetrics(progress, { includeLevel: isLearningCard })}
         </dl>
-        ${isLearningCard ? renderStudentLearningActionButtons(member) : ""}
+        ${
+          showLearningActions
+            ? renderStudentLearningActionButtons(member, {
+                canViewDetails: canShowDetails,
+                canViewWrongNotes: canShowWrongNotes,
+              })
+            : ""
+        }
       </article>
     `;
   }
@@ -979,13 +1009,22 @@ export function createAcademyMemberController({
     return rows.join("");
   }
 
-  function renderStudentLearningActionButtons(member) {
+  function renderStudentLearningActionButtons(
+    member,
+    { canViewDetails = false, canViewWrongNotes = false } = {},
+  ) {
     if (!isActiveMember(member)) {
       return "";
     }
 
-    return `
-      <div class="student-card-actions student-card-actions--split">
+    if (!canViewDetails && !canViewWrongNotes) {
+      return "";
+    }
+
+    const buttons = [];
+
+    if (canViewDetails) {
+      buttons.push(`
         <button
           class="secondary-button student-learning-detail-button"
           type="button"
@@ -993,6 +1032,11 @@ export function createAcademyMemberController({
         >
           상세
         </button>
+      `);
+    }
+
+    if (canViewWrongNotes) {
+      buttons.push(`
         <button
           class="secondary-button student-review-button"
           type="button"
@@ -1000,6 +1044,12 @@ export function createAcademyMemberController({
         >
           오답노트
         </button>
+      `);
+    }
+
+    return `
+      <div class="student-card-actions student-card-actions--split">
+        ${buttons.join("")}
       </div>
     `;
   }

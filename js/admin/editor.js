@@ -1,9 +1,23 @@
 import { isBoardProblem, isOxProblem, PROBLEM_TYPE } from "../game/problem-type.js";
+import { PROBLEM_MODE } from "../game/problem-mode.js";
+import { ANSWER_MOVE_COUNTS } from "../solve/ai-response-solve/constants.js";
+import { getExpectedBlackAnswerCount } from "../solve/ai-response-solve/constants.js";
+import {
+  formatCoordLabel,
+  normalizeBlackAnswerSequence,
+  resolveBlackAnswerConfig,
+  syncLegacyCorrectMove,
+  toBlackAnswerSequencePayload,
+} from "../solve/ai-response-solve/black-sequence.js";
 import { LEVEL_GROUPS, normalizeLevelGroup } from "../services/level-group-service.js";
 import {
   assignDisplayOrderForNewProblem,
   sortProblemsGlobally,
 } from "../services/problem-order-service.js";
+import {
+  getGradeLevelSelectOptions,
+  normalizeGradeLevelCode,
+} from "../services/grade-level-service.js";
 
 export function createAdminEditorController({
   elements,
@@ -68,6 +82,18 @@ export function createAdminEditorController({
             <option value="ox" ${problemType === PROBLEM_TYPE.ox ? "selected" : ""}>ox</option>
           </select>
         </label>
+        <label>
+          급수/단수 (선택)
+          <select id="admin-grade-level">${renderGradeLevelOptions(draft.gradeLevel)}</select>
+        </label>
+        <label>
+          문제 모드
+          <select id="admin-problem-mode">${renderProblemModeOptions(draft.problemMode)}</select>
+        </label>
+        <label id="admin-answer-move-count-wrap">
+          정답 수 (AI 응수형)
+          <select id="admin-answer-move-count">${renderAnswerMoveCountOptions(draft.answerMoveCount)}</select>
+        </label>
       </div>
       <div class="admin-board-tools">
         <p class="panel-label">바둑판 배치</p>
@@ -81,12 +107,24 @@ export function createAdminEditorController({
             활로 정답 수순:
             <strong id="admin-sequence-label">${formatCorrectSequence(draft)}</strong>
           </p>
+          <div class="admin-ai-response-meta${isAiResponseDraft(draft) ? "" : " is-hidden"}">
+            <p class="panel-label">AI 흑 정답 수순 (${formatBlackAnswerSequenceSummary(draft)})</p>
+            <ul id="admin-black-sequence-list" class="admin-black-sequence-list"></ul>
+            <button
+              type="button"
+              class="secondary-button admin-black-sequence-clear"
+              data-admin-action="clear-black-sequence"
+            >
+              흑 정답 전체 초기화
+            </button>
+          </div>
         </div>
         <div class="tool-grid">
           <button class="admin-board-tool is-active" data-admin-tool="black" type="button">흑돌</button>
           <button class="admin-board-tool" data-admin-tool="white" type="button">백돌</button>
           <button class="admin-board-tool admin-board-tool--board-only${isOx ? " is-hidden" : ""}" data-admin-tool="answer" type="button">정답 수정</button>
           <button class="admin-board-tool admin-board-tool--board-only${isOx ? " is-hidden" : ""}" data-admin-tool="sequence" type="button">활로 정답 추가</button>
+          <button class="admin-board-tool admin-board-tool--ai-response${isAiResponseDraft(draft) ? "" : " is-hidden"}" data-admin-tool="black-answer" type="button">흑 정답 추가</button>
           <button class="admin-board-tool admin-board-tool--board-only${isOx ? " is-hidden" : ""}" data-admin-tool="clear-sequence" type="button">수순 초기화</button>
         </div>
         <div class="mark-grid">
@@ -122,7 +160,7 @@ export function createAdminEditorController({
           </button>
         </div>
       </section>
-      <p class="admin-board-help${isOx ? " is-hidden" : ""}">활로 문제는 활로 정답 추가로 여러 흑 수순을 순서대로 찍을 수 있습니다. 일반 문제는 정답 수정만 사용하면 됩니다.</p>
+      <p class="admin-board-help${isOx ? " is-hidden" : ""}">활로: 활로 정답 추가. AI 응수형: 흑 정답 추가(백은 KataGo). 일반: 정답 수정.</p>
       <p id="admin-editor-status" class="admin-editor-status" aria-live="polite">문제 정보를 입력한 뒤 저장을 눌러 주세요.</p>
       <div class="admin-editor-actions">
         <button id="admin-cancel" class="secondary-button" type="button">취소</button>
@@ -141,6 +179,27 @@ export function createAdminEditorController({
       updateAdminTypeUi();
       renderAdminBoard();
     });
+    elements.adminEditor.querySelector("#admin-problem-mode")?.addEventListener("change", () => {
+      adminState.draft.problemMode =
+        elements.adminEditor.querySelector("#admin-problem-mode")?.value || PROBLEM_MODE.normal;
+      updateAdminTypeUi();
+      updateAdminAnswerLabel();
+    });
+    elements.adminEditor.querySelector("#admin-answer-move-count")?.addEventListener("change", () => {
+      adminState.draft.answerMoveCount = Number(
+        elements.adminEditor.querySelector("#admin-answer-move-count")?.value ?? 1,
+      );
+      trimBlackSequenceToAnswerCount(adminState.draft);
+      updateAdminAnswerLabel();
+      renderAdminBoard();
+    });
+    elements.adminEditor.querySelector("[data-admin-action='clear-black-sequence']")?.addEventListener(
+      "click",
+      clearAdminBlackAnswerSequence,
+    );
+    elements.adminEditor
+      .querySelector("#admin-black-sequence-list")
+      ?.addEventListener("click", handleBlackSequenceListClick);
     elements.adminEditor.querySelectorAll("[data-admin-ox-answer]").forEach((button) => {
       button.addEventListener("click", () => {
         adminState.draft.oxAnswer = button.dataset.adminOxAnswer === "true";
@@ -181,12 +240,149 @@ export function createAdminEditorController({
     }
 
     const isOx = isOxProblem(adminState.draft);
+    const isAiResponse = isAiResponseDraft(adminState.draft);
     elements.adminEditor.querySelector(".admin-board-answer-meta")?.classList.toggle("is-hidden", isOx);
     elements.adminEditor
       .querySelectorAll(".admin-board-tool--board-only")
-      .forEach((button) => button.classList.toggle("is-hidden", isOx));
+      .forEach((button) => button.classList.toggle("is-hidden", isOx || isAiResponse));
+    elements.adminEditor
+      .querySelectorAll(".admin-board-tool--ai-response")
+      .forEach((button) => button.classList.toggle("is-hidden", isOx || !isAiResponse));
     elements.adminEditor.querySelector("#admin-ox-answer-panel")?.classList.toggle("is-hidden", !isOx);
     elements.adminEditor.querySelector(".admin-board-help")?.classList.toggle("is-hidden", isOx);
+    elements.adminEditor
+      .querySelector("#admin-answer-move-count-wrap")
+      ?.classList.toggle("is-hidden", !isAiResponse);
+    elements.adminEditor
+      .querySelector(".admin-ai-response-meta")
+      ?.classList.toggle("is-hidden", !isAiResponse);
+    if (isAiResponse) {
+      renderAdminBlackSequenceList();
+    }
+  }
+
+  function isAiResponseDraft(draft) {
+    return String(draft?.problemMode ?? "") === PROBLEM_MODE.aiResponse;
+  }
+
+  function renderProblemModeOptions(selectedMode) {
+    const modes = [
+      { value: PROBLEM_MODE.normal, label: "일반 1수" },
+      { value: PROBLEM_MODE.aiResponse, label: "AI 응수형" },
+    ];
+    const current = selectedMode || PROBLEM_MODE.normal;
+    return modes
+      .map(
+        (entry) =>
+          `<option value="${entry.value}"${entry.value === current ? " selected" : ""}>${entry.label}</option>`,
+      )
+      .join("");
+  }
+
+  function renderAnswerMoveCountOptions(selected) {
+    const current = Number(selected) || 1;
+    return ANSWER_MOVE_COUNTS.map(
+      (count) =>
+        `<option value="${count}"${count === current ? " selected" : ""}>${count}수</option>`,
+    ).join("");
+  }
+
+  function formatBlackAnswerSequenceSummary(draft) {
+    const { blackAnswers, answerMoveCount } = resolveBlackAnswerConfig(draft, BOARD_SIZE);
+    const expected = getExpectedBlackAnswerCount(answerMoveCount);
+    return `${blackAnswers.length} / ${expected}수 (${answerMoveCount}수 문제)`;
+  }
+
+  function getAdminBlackAnswers(draft = adminState.draft) {
+    return normalizeBlackAnswerSequence(draft?.blackAnswerSequence, BOARD_SIZE);
+  }
+
+  function setAdminBlackAnswers(blackAnswers) {
+    adminState.draft.blackAnswerSequence = toBlackAnswerSequencePayload(blackAnswers);
+    syncLegacyCorrectMove(adminState.draft);
+    trimBlackSequenceToAnswerCount(adminState.draft);
+  }
+
+  function trimBlackSequenceToAnswerCount(draft) {
+    const { answerMoveCount } = resolveBlackAnswerConfig(draft, BOARD_SIZE);
+    const maxBlack = getExpectedBlackAnswerCount(answerMoveCount);
+    const current = getAdminBlackAnswers(draft);
+    if (current.length > maxBlack) {
+      draft.blackAnswerSequence = toBlackAnswerSequencePayload(current.slice(0, maxBlack));
+      syncLegacyCorrectMove(draft);
+    }
+  }
+
+  function renderAdminBlackSequenceList() {
+    const list = elements.adminEditor.querySelector("#admin-black-sequence-list");
+    if (!list || !adminState.draft) {
+      return;
+    }
+
+    const { blackAnswers, answerMoveCount } = resolveBlackAnswerConfig(adminState.draft, BOARD_SIZE);
+    const expected = getExpectedBlackAnswerCount(answerMoveCount);
+
+    if (blackAnswers.length === 0) {
+      list.innerHTML = `<li class="admin-black-sequence-empty">흑 정답이 없습니다. 「흑 정답 추가」로 ${expected}개를 지정하세요.</li>`;
+      return;
+    }
+
+    list.innerHTML = blackAnswers
+      .map((entry, index) => {
+        const label = entry.label ?? formatCoordLabel(entry);
+        const ply = index * 2 + 1;
+        return `
+          <li class="admin-black-sequence-item">
+            <span>${ply}수(흑) <strong>${label}</strong></span>
+            <button
+              type="button"
+              class="secondary-button admin-black-sequence-delete"
+              data-admin-black-delete="${index}"
+            >
+              삭제
+            </button>
+          </li>`;
+      })
+      .join("");
+
+    if (blackAnswers.length !== expected) {
+      list.insertAdjacentHTML(
+        "beforeend",
+        `<li class="admin-black-sequence-warn">⚠ ${answerMoveCount}수 문제는 흑 정답 ${expected}개가 필요합니다.</li>`,
+      );
+    }
+  }
+
+  function handleBlackSequenceListClick(event) {
+    const button = event.target.closest("[data-admin-black-delete]");
+    if (!button || !adminState.draft) {
+      return;
+    }
+
+    const index = Number(button.dataset.adminBlackDelete);
+    if (!Number.isInteger(index)) {
+      return;
+    }
+
+    const next = getAdminBlackAnswers().filter((_, itemIndex) => itemIndex !== index);
+    setAdminBlackAnswers(next);
+    renderAdminBlackSequenceList();
+    renderAdminBoard();
+    updateAdminAnswerLabel();
+    setFeedback(`흑 정답 ${index + 1}번째 수를 삭제했습니다.`, "correct");
+  }
+
+  function clearAdminBlackAnswerSequence() {
+    if (!adminState.draft || !isAiResponseDraft(adminState.draft)) {
+      return;
+    }
+
+    setAdminBlackAnswers([]);
+    adminState.draft.correctMove = null;
+    renderAdminBlackSequenceList();
+    renderAdminBoard();
+    updateAdminAnswerLabel();
+    setFeedback("AI 흑 정답 수순을 모두 초기화했습니다.", "correct");
   }
 
   function renderLevelGroupOptions(selectedLevelGroup) {
@@ -201,6 +397,16 @@ export function createAdminEditorController({
     return categories.map((category) => {
       return `<option value="${category}" ${category === selectedCategory ? "selected" : ""}>${category}</option>`;
     }).join("");
+  }
+
+  function renderGradeLevelOptions(selectedGradeLevel) {
+    const normalized = normalizeGradeLevelCode(selectedGradeLevel) ?? "";
+    return getGradeLevelSelectOptions({ includeUnassigned: true })
+      .map((option) => {
+        const isSelected = option.value === normalized;
+        return `<option value="${option.value}" ${isSelected ? "selected" : ""}>${option.label}</option>`;
+      })
+      .join("");
   }
 
   function formatCorrectSequence(problem) {
@@ -223,9 +429,13 @@ export function createAdminEditorController({
     adminState.activeMark = button.dataset.adminMark || adminState.activeMark;
 
     if (adminState.activeTool === "clear-sequence") {
-      adminState.draft.correctSequence = [];
-      renderAdminBoard();
-      setFeedback("활로 정답 수순을 초기화했습니다.");
+      if (isAiResponseDraft(adminState.draft)) {
+        clearAdminBlackAnswerSequence();
+      } else {
+        adminState.draft.correctSequence = [];
+        renderAdminBoard();
+        setFeedback("활로 정답 수순을 초기화했습니다.");
+      }
       return;
     }
 
@@ -284,6 +494,13 @@ export function createAdminEditorController({
       });
     }
 
+    if (isBoardProblem(adminState.draft) && isAiResponseDraft(adminState.draft)) {
+      const { blackAnswers } = resolveBlackAnswerConfig(adminState.draft, BOARD_SIZE);
+      blackAnswers.forEach((move) => {
+        adminBoard.addObject({ x: move.x, y: move.y, type: "CR" });
+      });
+    }
+
     adminBoard.addEventListener("click", (x, y) => {
       handleAdminBoardClick(x, y, { button: "primary" });
     });
@@ -304,6 +521,7 @@ export function createAdminEditorController({
     if (sequenceLabel) {
       sequenceLabel.textContent = formatCorrectSequence(adminState.draft);
     }
+    renderAdminBlackSequenceList();
   }
 
   function handleAdminBoardClick(x, y, { button = "primary" } = {}) {
@@ -349,8 +567,46 @@ export function createAdminEditorController({
       return;
     }
 
+    if (adminState.activeTool === "black-answer") {
+      if (button === "secondary") {
+        return;
+      }
+      addAdminBlackAnswerMove(point);
+      return;
+    }
+
     const color = button === "secondary" ? STONE.white : STONE.black;
     updateAdminStone(point, color);
+  }
+
+  function addAdminBlackAnswerMove(point) {
+    if (!isAiResponseDraft(adminState.draft)) {
+      setFeedback("AI 응수형 문제에서만 흑 정답을 추가할 수 있습니다.", "wrong");
+      return;
+    }
+
+    if (adminState.draft.stones.some((stone) => isSamePoint(stone, point))) {
+      setFeedback("흑 정답은 빈 곳에만 지정해 주세요.", "wrong");
+      return;
+    }
+
+    const { answerMoveCount } = resolveBlackAnswerConfig(adminState.draft, BOARD_SIZE);
+    const maxBlack = getExpectedBlackAnswerCount(answerMoveCount);
+    const current = normalizeBlackAnswerSequence(
+      adminState.draft.blackAnswerSequence,
+      BOARD_SIZE,
+    );
+
+    if (current.length >= maxBlack) {
+      setFeedback(`이 ${answerMoveCount}수 문제는 흑 정답 ${maxBlack}개까지만 필요합니다.`, "wrong");
+      return;
+    }
+
+    const next = [...current, { x: point.x, y: point.y, label: formatCoordLabel(point) }];
+    setAdminBlackAnswers(next);
+    renderAdminBoard();
+    updateAdminAnswerLabel();
+    setFeedback(`흑 정답 ${next.length}/${maxBlack}을 추가했습니다.`, "correct");
   }
 
   function addAdminSequenceMove(point) {
@@ -525,6 +781,13 @@ export function createAdminEditorController({
         ? PROBLEM_TYPE.ox
         : PROBLEM_TYPE.board;
 
+    const gradeLevel = normalizeGradeLevelCode(editor.querySelector("#admin-grade-level")?.value);
+    if (gradeLevel) {
+      adminState.draft.gradeLevel = gradeLevel;
+    } else {
+      delete adminState.draft.gradeLevel;
+    }
+
     if (isOxProblem(adminState.draft)) {
       adminState.draft.oxAnswer = Boolean(adminState.draft.oxAnswer);
       adminState.draft.correctMove = null;
@@ -533,6 +796,28 @@ export function createAdminEditorController({
     }
 
     delete adminState.draft.oxAnswer;
+
+    adminState.draft.problemMode =
+      editor.querySelector("#admin-problem-mode")?.value || PROBLEM_MODE.normal;
+    const answerMoveCount = Number(editor.querySelector("#admin-answer-move-count")?.value ?? 1);
+    if ([1, 3, 5, 7].includes(answerMoveCount)) {
+      adminState.draft.answerMoveCount = answerMoveCount;
+    }
+
+    if (isAiResponseDraft(adminState.draft)) {
+      delete adminState.draft.correctSequence;
+      const blackAnswers = normalizeBlackAnswerSequence(
+        adminState.draft.blackAnswerSequence,
+        BOARD_SIZE,
+      );
+      adminState.draft.blackAnswerSequence = toBlackAnswerSequencePayload(blackAnswers);
+      syncLegacyCorrectMove(adminState.draft);
+      return;
+    }
+
+    delete adminState.draft.blackAnswerSequence;
+    delete adminState.draft.answerMoveCount;
+
     if (adminState.draft.category !== "활로") {
       delete adminState.draft.correctSequence;
     } else if (!Array.isArray(adminState.draft.correctSequence)) {
@@ -555,6 +840,20 @@ export function createAdminEditorController({
     if (isOxProblem(problem)) {
       if (typeof problem.oxAnswer !== "boolean") {
         return "O/X 정답을 선택해 주세요.";
+      }
+      return "";
+    }
+
+    if (isAiResponseDraft(problem)) {
+      const { blackAnswers, answerMoveCount } = resolveBlackAnswerConfig(problem, BOARD_SIZE);
+      const expected = getExpectedBlackAnswerCount(answerMoveCount);
+      if (blackAnswers.length !== expected) {
+        return `AI 응수형 ${answerMoveCount}수 문제는 흑 정답 ${expected}개가 필요합니다.`;
+      }
+      for (const answer of blackAnswers) {
+        if (occupied.has(`${answer.x}:${answer.y}`)) {
+          return "흑 정답은 기존 돌과 겹칠 수 없습니다.";
+        }
       }
       return "";
     }

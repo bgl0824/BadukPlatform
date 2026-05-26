@@ -41,6 +41,41 @@ export function canManageCategories(user) {
   return canManageCurriculum(user);
 }
 
+/** 급수/단수 배정·수정 — platform admin 전용 */
+export function canManageGradeLevels(user) {
+  return canManageCurriculum(user);
+}
+
+/** 기출/시험 세트 CRUD — platform admin 전용 */
+export function canManageExamSets(user) {
+  return canManageCurriculum(user);
+}
+
+/** 게시된 시험 세트 열람·응시 (학습 흐름과 별도) */
+export function canViewPublishedExamSets(user) {
+  return Boolean(user?.id);
+}
+
+export function filterExamSetsForViewer(sets, user) {
+  const academyId = String(user?.academyId ?? "").trim();
+
+  return sets.filter((set) => {
+    if (set.status !== "published") {
+      return false;
+    }
+
+    if (set.visibility === "public") {
+      return true;
+    }
+
+    if (set.visibility === "academy" && academyId && set.academyId === academyId) {
+      return true;
+    }
+
+    return false;
+  });
+}
+
 /** 문제은행 관리자 모드 토글 */
 export function canEnterAdminMode(user) {
   return canManageCurriculum(user);
@@ -115,6 +150,26 @@ export function canManageAttendance(user) {
 
 export function canViewReviews(user) {
   return [ROLES.academyOwner, ROLES.teacher].includes(normalizeRole(user?.role));
+}
+
+/** 학생 카드 UI — owner ⊇ teacher 학습 분석 권한 */
+export function getStudentCardActionPermissions(user) {
+  const role = normalizeRole(user?.role);
+  const canViewLearningInsights = [ROLES.academyOwner, ROLES.teacher].includes(role);
+
+  return {
+    canViewDetails: canViewLearningInsights,
+    canViewWrongNotes: canViewLearningInsights,
+    canAssignTeacher: role === ROLES.academyOwner,
+  };
+}
+
+export function canViewStudentLearningDetails(user) {
+  return getStudentCardActionPermissions(user).canViewDetails;
+}
+
+export function canViewStudentWrongNotes(user) {
+  return getStudentCardActionPermissions(user).canViewWrongNotes;
 }
 
 export function canViewPayments(user) {

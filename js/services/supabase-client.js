@@ -1,11 +1,23 @@
 let supabaseClient = null;
 
+/** problems.js(IIFE)와 auth 모듈이 동일 인스턴스·세션을 쓰도록 공유 */
+function publishSharedSupabaseClient(client) {
+  if (typeof window !== "undefined" && client) {
+    window.__BADUK_SHARED_SUPABASE_CLIENT__ = client;
+  }
+}
+
 export function isSupabaseConfigured() {
   const config = window.BadukConfig ?? {};
   return Boolean(config.supabaseUrl && config.supabaseKey && window.supabase?.createClient);
 }
 
 export function getSupabaseClient() {
+  if (typeof window !== "undefined" && window.__BADUK_SHARED_SUPABASE_CLIENT__) {
+    supabaseClient = window.__BADUK_SHARED_SUPABASE_CLIENT__;
+    return supabaseClient;
+  }
+
   if (supabaseClient) {
     return supabaseClient;
   }
@@ -26,6 +38,7 @@ export function getSupabaseClient() {
       detectSessionInUrl: true,
     },
   });
+  publishSharedSupabaseClient(supabaseClient);
 
   return supabaseClient;
 }

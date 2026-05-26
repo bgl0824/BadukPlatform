@@ -117,6 +117,7 @@ const ProblemStore = {
   migrateLegacyProblems,
   loadProblems,
   saveProblem,
+  bulkSetGradeLevels,
   reorderProblemsInCategory,
   deleteProblem,
   subscribe,
@@ -282,6 +283,98 @@ async function saveProblem(problem) {
   return savedProblem;
 }
 
+async function bulkSetGradeLevels(problemIds, gradeLevel) {
+  const safeIds = [...new Set(problemIds.filter(Boolean))];
+  console.log("[ProblemStore] bulkSetGradeLevels start", {
+    problemIds: safeIds,
+    gradeLevel,
+  });
+
+  if (safeIds.length === 0) {
+    console.warn("[ProblemStore] bulkSetGradeLevels skipped — empty problemIds");
+    return { updatedCount: 0 };
+  }
+
+  const client = getSupabaseClient();
+  const { data: sessionData, error: sessionError } = await client.auth.getSession();
+  if (sessionError) {
+    console.error("[ProblemStore] bulkSetGradeLevels session error", sessionError);
+    throw sessionError;
+  }
+
+  if (!sessionData?.session?.user) {
+    throw new Error(
+      "Supabase 로그인 세션이 없습니다. 급수 저장은 Supabase Auth(admin) 로그인 후 가능합니다.",
+    );
+  }
+
+  const normalizedGrade =
+    gradeLevel === null || gradeLevel === undefined || gradeLevel === ""
+      ? null
+      : String(gradeLevel).trim().toLowerCase();
+
+  const { data, error } = await client
+    .from(SUPABASE_PROBLEMS_TABLE)
+    .update({ grade_level: normalizedGrade })
+    .in("id", safeIds)
+    .select("id");
+
+  if (error) {
+    console.error("[ProblemStore] bulkSetGradeLevels update error", error);
+    throw error;
+  }
+
+  let updatedCount = Array.isArray(data) ? data.length : 0;
+  console.log("[ProblemStore] bulkSetGradeLevels direct update", {
+    updatedCount,
+    requested: safeIds.length,
+    gradeLevel: normalizedGrade,
+  });
+
+  if (updatedCount < safeIds.length) {
+    const rpcCount = await bulkSetGradeLevelsWithRpc(client, safeIds, normalizedGrade);
+    if (rpcCount > updatedCount) {
+      updatedCount = rpcCount;
+      console.log("[ProblemStore] bulkSetGradeLevels RPC applied", { updatedCount });
+    }
+  }
+
+  if (updatedCount === 0) {
+    throw new Error(
+      "bulk grade update returned no rows — check Supabase session, RLS (problems_update_by_managers), and grade_level column",
+    );
+  }
+
+  console.log("[ProblemStore] bulkSetGradeLevels success", { updatedCount });
+  return { updatedCount };
+}
+
+async function bulkSetGradeLevelsWithRpc(client, problemIds, gradeLevel) {
+  const { data, error } = await client.rpc("bulk_set_problems_grade_levels", {
+    problem_ids: problemIds,
+    new_grade_level: gradeLevel,
+  });
+
+  if (error) {
+    if (
+      error.message?.includes("function") ||
+      error.message?.includes("bulk_set_problems_grade_levels") ||
+      error.code === "PGRST202"
+    ) {
+      console.warn(
+        "[ProblemStore] bulk_set_problems_grade_levels RPC not available — run scripts/supabase-problems-grade-level.sql",
+      );
+      return 0;
+    }
+
+    console.error("[ProblemStore] bulkSetGradeLevels RPC error", error);
+    throw error;
+  }
+
+  const count = Number(data);
+  return Number.isFinite(count) && count >= 0 ? count : 0;
+}
+
 async function reorderProblemsInCategory({ category, levelGroup, orderedProblemIds }) {
   const normalizedCategory = String(category ?? "").trim();
   const normalizedLevelGroup = normalizeProblemLevelGroup(levelGroup);
@@ -382,6 +475,11 @@ function isConfigured() {
 }
 
 function getSupabaseClient() {
+  if (typeof window !== "undefined" && window.__BADUK_SHARED_SUPABASE_CLIENT__) {
+    supabaseClient = window.__BADUK_SHARED_SUPABASE_CLIENT__;
+    return supabaseClient;
+  }
+
   if (supabaseClient) {
     return supabaseClient;
   }
@@ -395,7 +493,18 @@ function getSupabaseClient() {
     throw new Error("Supabase URL 또는 KEY가 설정되지 않았습니다.");
   }
 
-  supabaseClient = window.supabase.createClient(config.supabaseUrl, config.supabaseKey);
+  supabaseClient = window.supabase.createClient(config.supabaseUrl, config.supabaseKey, {
+    auth: {
+      persistSession: true,
+      autoRefreshToken: true,
+      detectSessionInUrl: true,
+    },
+  });
+
+  if (typeof window !== "undefined") {
+    window.__BADUK_SHARED_SUPABASE_CLIENT__ = supabaseClient;
+  }
+
   return supabaseClient;
 }
 
@@ -541,7 +650,7 @@ function toSupabaseRow(problem) {
     );
   }
 
-  return {
+  const row = {
     id: problem.id,
     title: problem.title,
     description: problem.description,
@@ -554,7 +663,36 @@ function toSupabaseRow(problem) {
     correct_move: problem.correctMove ?? null,
     correct_sequence: problem.correctSequence ?? null,
     display_order: Math.floor(displayOrder),
+    grade_level: normalizeGradeLevelForStorage(problem.gradeLevel),
   };
+
+  if (problem.problemMode) {
+    row.problem_mode = problem.problemMode;
+  }
+
+  if (Array.isArray(problem.aiResponseCandidates) && problem.aiResponseCandidates.length > 0) {
+    row.ai_response_candidates = problem.aiResponseCandidates;
+  }
+
+  const answerMoveCount = Number(problem.answerMoveCount);
+  if ([1, 3, 5, 7].includes(answerMoveCount)) {
+    row.answer_move_count = answerMoveCount;
+  }
+
+  if (Array.isArray(problem.blackAnswerSequence) && problem.blackAnswerSequence.length > 0) {
+    row.black_answer_sequence = problem.blackAnswerSequence;
+  }
+
+  return row;
+}
+
+function normalizeGradeLevelForStorage(value) {
+  const raw = String(value ?? "").trim().toLowerCase();
+  if (!raw || raw === "unassigned" || raw === "null") {
+    return null;
+  }
+
+  return raw;
 }
 
 function fromSupabaseRow(row) {
@@ -587,6 +725,32 @@ function fromSupabaseRow(row) {
     problem.createdAt = row.created_at;
   }
 
+  const gradeLevel = normalizeGradeLevelForStorage(row.grade_level);
+  if (gradeLevel) {
+    problem.gradeLevel = gradeLevel;
+  }
+
+  if (row.problem_mode) {
+    problem.problemMode = String(row.problem_mode).trim();
+  }
+
+  if (Array.isArray(row.ai_response_candidates)) {
+    problem.aiResponseCandidates = row.ai_response_candidates;
+  }
+
+  if (Array.isArray(row.candidate_responses)) {
+    problem.candidateResponses = row.candidate_responses;
+  }
+
+  const answerMoveCount = Number(row.answer_move_count);
+  if ([1, 3, 5, 7].includes(answerMoveCount)) {
+    problem.answerMoveCount = answerMoveCount;
+  }
+
+  if (Array.isArray(row.black_answer_sequence)) {
+    problem.blackAnswerSequence = row.black_answer_sequence;
+  }
+
   return problem;
 }
 
@@ -602,10 +766,26 @@ function cloneProblem(problem) {
     stones: Array.isArray(problem.stones)
       ? problem.stones.map((stone) => ({ ...stone }))
       : [],
+    problemMode: problem.problemMode,
+    aiResponseCandidates: Array.isArray(problem.aiResponseCandidates)
+      ? problem.aiResponseCandidates.map((entry) => ({ ...entry }))
+      : undefined,
+    candidateResponses: Array.isArray(problem.candidateResponses)
+      ? problem.candidateResponses.map((entry) => ({ ...entry }))
+      : undefined,
+    answerMoveCount: problem.answerMoveCount,
+    blackAnswerSequence: Array.isArray(problem.blackAnswerSequence)
+      ? [...problem.blackAnswerSequence]
+      : undefined,
   };
 
   if (clonedProblem.type === "ox") {
     clonedProblem.oxAnswer = Boolean(problem.oxAnswer);
+  }
+
+  const gradeLevel = normalizeGradeLevelForStorage(problem.gradeLevel);
+  if (gradeLevel) {
+    clonedProblem.gradeLevel = gradeLevel;
   }
 
   return clonedProblem;

@@ -23,6 +23,8 @@ const requiredFiles = [
   "js/permissions/permission-service.js",
   "js/main.js",
   "backend/katago-api/server.js",
+  "api/katago/respond.js",
+  "api/lib/katago-respond-core.js",
 ];
 
 const scriptFiles = [
@@ -35,6 +37,8 @@ const scriptFiles = [
   "js/services/supabase-client.js",
   "js/auth.js",
   "js/main.js",
+  "api/katago/respond.js",
+  "api/lib/katago-respond-core.js",
 ];
 
 const authMarkers = [

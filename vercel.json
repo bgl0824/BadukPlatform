@@ -4,6 +4,11 @@
   "outputDirectory": ".",
   "cleanUrls": true,
   "trailingSlash": false,
+  "functions": {
+    "api/katago/respond.js": {
+      "maxDuration": 30
+    }
+  },
   "rewrites": [
     {
       "source": "/favicon.ico",

@@ -7,6 +7,9 @@
     "build": "node scripts/generate-runtime-config.js && node scripts/check-build.js",
     "check": "node scripts/check-build.js",
     "start": "node scripts/serve-static.js",
+    "katago:up": "docker compose -f docker-compose.katago.yml up -d",
+    "katago:down": "docker compose -f docker-compose.katago.yml down",
+    "katago:test": "node scripts/test-katago-respond.mjs",
     "create-admin": "node scripts/create-admin-user.mjs",
     "create-admin:dry-run": "node scripts/create-admin-user.mjs --dry-run"
   },

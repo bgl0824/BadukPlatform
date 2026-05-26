@@ -90,7 +90,8 @@ create table if not exists public.problems (
   correct_sequence jsonb,
   created_at timestamptz not null default now(),
   updated_at timestamptz not null default now(),
-  display_order integer not null default 0
+  display_order integer not null default 0,
+  grade_level text
 );
 
 create or replace function public.set_problem_updated_at()
@@ -115,6 +116,50 @@ alter table public.problems enable row level security;
 문제 테이블 RLS(읽기 공개 / 쓰기는 admin·academy_owner·teacher만)는 `**scripts/supabase-problems-rls.sql**` 을 SQL Editor에서 실행하세요. `user_metadata.role`(또는 `userType`)이 JWT에 포함되어야 합니다.
 
 기존 DB에 문제 표시 순서(`display_order`)를 추가·백필하려면 `**scripts/supabase-problems-display-order.sql**` 을 SQL Editor에서 실행하세요. 카테고리·단계별 공용 순서이며, 관리자 모드의 **순서 편집**에서 변경하면 모든 역할에 실시간 반영됩니다.
+
+급수/단수(`grade_level`, 예: `30k`, `1d`)는 학습 흐름과 별도입니다. `**scripts/supabase-problems-grade-level.sql**` 실행 후, 관리자 모드 **급수 배정** 탭에서 카테고리별 범위·다중 선택으로 일괄 지정할 수 있습니다. `null` = 급수 미지정. 급수 일괄 저장은 **Supabase Auth로 로그인한 admin** 계정이 필요하며, 동일 SQL에 `bulk_set_problems_grade_levels` RPC가 포함됩니다.
+
+### 기출 / 시험 세트 (`exam_sets`)
+
+문제(`problems`)와 **배포 단위**(`exam_sets`)는 분리됩니다. 학습 흐름(`display_order`)은 그대로이고, 시험 세트는 `exam_set_questions` 로 `problem_id`만 연결합니다.
+
+1. `**scripts/supabase-exam-sets.sql**` 실행
+2. 관리자 모드 → **기출/시험 세트** 탭에서 세트 생성·문제 추가·순서·게시
+3. 학생/학원 사용자는 문제은행 상단 **기출 / 시험** 카드에서 `30급 기출문제` 등 세트 단위로 시작
+
+| 테이블 | 역할 |
+|--------|------|
+| `exam_sets` | 제목, `grade_level`, 유형(`past_exam`/`promotion_test`/`mock_test`), 공개범위, 상태 |
+| `exam_set_questions` | `exam_set_id` + `problem_id` + `order_index` |
+
+향후 확장(응시 기록·점수·기간·랜덤 출제)을 위해 세트와 문제 자산은 DB·서비스 레이어에서 분리해 두었습니다.
+
+### AI 응수형 문제풀이 (`problem_mode = ai_response`)
+
+학생은 **흑만**, 백은 **KataGo API** (`POST /api/katago/respond`). admin은 `answer_move_count`(1/3/5/7)와 `black_answer_sequence` 설정.
+
+- 설계 문서: [`docs/ai-response-solve-design.md`](docs/ai-response-solve-design.md)
+- SQL: `scripts/supabase-problems-ai-response-solve.sql`
+- 플래그: `katagoRespondApiEnabled` (기본 false, **true일 때만** 실 API 호출), `aiResponseSolveEnabled` (기본 true)
+- mock 백 응수 **기본 차단** — `source: "katago"` 응답만 자동 착수
+- Vercel: `api/katago/respond.js` + env `KATAGO_SERVER_URL`, `KATAGO_RESPOND_API_ENABLED=true`
+- **KataGo 서버 구축**: [`docs/katago-respond-deploy.md`](docs/katago-respond-deploy.md) (로컬 Docker · Render · `npm run katago:up`)
+- **Render Free 512MB**: [`backend/katago-engine`](backend/katago-engine) — b10/b6 + 경량 cfg (`stubbi:latest` b28은 OOM)
+- 일반 문제·활로·progress·review·시험 세트는 **기존 엔진 유지**
+
+### AI 응수 UX 프로토타입 (`problem_mode = ai_response_test`) — 스팟 UI, 기본 OFF
+
+오답 직후 블루/그린 스팟으로 백 응수를 체험하는 **UI 프로토타입**입니다. KataGo·`js/ai-response.js`와 무관합니다.
+
+- **기본 OFF**: `BadukConfig.aiResponseUxEnabled = false` (또는 localStorage `BADUK_AI_RESPONSE_UX_ENABLED=1` 로만 켜기)
+- **자동 mock 좌표 없음**: `ai_response_candidates` / `candidateResponses` 가 없으면 스팟을 만들지 않고 일반 오답 처리
+- **KataGo 대비**: `js/solve/ai-response-ux/candidates.js` 의 `resolveCandidateResponses()` 에 API 결과를 넘기면 됨
+
+켜는 방법:
+
+1. `aiResponseUxEnabled: true` (또는 localStorage)
+2. 문제에 `problem_mode = 'ai_response_test'` + 유효한 `ai_response_candidates` JSON
+3. 흑 오답 → (후보 있을 때만) 백 응수 스팟 UX
 
 실시간 반영을 쓰려면 Supabase Dashboard의 `Database` → `Replication`에서 `problems` 테이블의 Realtime을 켜 주세요.
 

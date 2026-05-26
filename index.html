@@ -69,6 +69,53 @@
           <div class="status-card">
             <p class="panel-label">진행 상태</p>
             <p id="move-status" class="move-status">흑 차례입니다.</p>
+            <div
+              id="ai-response-solve-panel"
+              class="ai-response-solve-panel is-hidden"
+              aria-live="polite"
+            >
+              <p class="ai-response-solve-hint">오답입니다. 백 응수를 확인했습니다.</p>
+              <div class="ai-response-solve-actions">
+                <button
+                  type="button"
+                  class="secondary-button"
+                  data-ai-response-solve-action="retry"
+                >
+                  다시 풀기
+                </button>
+                <button
+                  type="button"
+                  class="secondary-button"
+                  data-ai-response-solve-action="restart"
+                >
+                  처음부터 재시작
+                </button>
+              </div>
+            </div>
+            <div
+              id="ai-response-ux-panel"
+              class="ai-response-ux-panel is-hidden"
+              aria-live="polite"
+            >
+              <p class="ai-response-ux-hint">백의 응수를 선택해보세요. (응수 후보가 설정된 경우에만)</p>
+              <p id="ai-response-ux-message" class="ai-response-ux-message"></p>
+              <div class="ai-response-ux-actions">
+                <button
+                  type="button"
+                  class="secondary-button is-hidden"
+                  data-ai-response-action="retry"
+                >
+                  다시 풀기
+                </button>
+                <button
+                  type="button"
+                  class="secondary-button is-hidden"
+                  data-ai-response-action="restart"
+                >
+                  처음부터 재시작
+                </button>
+              </div>
+            </div>
             <div id="ox-solve-panel" class="ox-solve-panel is-hidden" aria-label="O/X 판정">
               <p class="panel-label">판정</p>
               <div class="ox-solve-actions">
@@ -252,6 +299,19 @@
           <div class="category-filter-stack">
             <div id="level-group-filters" class="level-group-filters" aria-label="단계 필터"></div>
             <div id="category-filters" class="category-filters" aria-label="카테고리 필터"></div>
+            <div id="admin-problem-list-controls" class="admin-problem-list-controls is-hidden" aria-label="문제 목록 정렬">
+              <label>
+                정렬
+                <select id="problem-list-sort">
+                  <option value="learning">학습순 (카테고리 흐름 → 번호)</option>
+                  <option value="grade">급수별 + 학습순 (카테고리 → 급수 → 번호)</option>
+                </select>
+              </label>
+              <label>
+                급수 필터
+                <select id="problem-grade-filter"></select>
+              </label>
+            </div>
           </div>
           <div id="admin-workspace" class="admin-workspace is-hidden" aria-label="관리자 작업 영역">
             <nav id="admin-panel-tabs" class="admin-panel-tabs" aria-label="관리자 메뉴">
@@ -260,6 +320,12 @@
               </button>
               <button id="admin-curriculum-tab" class="admin-panel-tab" type="button" data-admin-panel="curriculum">
                 커리큘럼 관리
+              </button>
+              <button id="admin-grades-tab" class="admin-panel-tab" type="button" data-admin-panel="grades">
+                급수 배정
+              </button>
+              <button id="admin-exam-sets-tab" class="admin-panel-tab" type="button" data-admin-panel="exam-sets">
+                기출/시험 세트
               </button>
             </nav>
             <div id="admin-problems-panel" class="admin-panel">
@@ -281,6 +347,65 @@
                 </div>
               </div>
               <section id="admin-editor" class="admin-editor is-hidden" aria-label="문제 편집"></section>
+            </div>
+            <div id="admin-grades-panel" class="admin-panel is-hidden" aria-label="급수 단수 배정">
+              <div class="admin-grades-toolbar">
+                <div>
+                  <h3>급수/단수 배정</h3>
+                  <p id="admin-grade-category-label" class="admin-grade-category-label">카테고리를 선택해 주세요</p>
+                  <p id="admin-grade-summary" class="admin-grade-summary">
+                    문제는 display_order(학습 번호) 순으로 표시됩니다. 급수 변경은 학습 순서에 영향을 주지 않습니다.
+                  </p>
+                </div>
+                <div class="admin-grades-toolbar-actions">
+                  <label class="admin-grade-filter-toggle">
+                    <input id="admin-grade-unassigned-only" type="checkbox" />
+                    급수 미지정만 보기
+                  </label>
+                </div>
+              </div>
+              <div class="admin-grades-controls">
+                <div class="admin-grades-range">
+                  <label>
+                    시작 번호
+                    <input id="admin-grade-range-from" type="number" min="1" step="1" value="1" />
+                  </label>
+                  <span class="admin-grades-range-separator">~</span>
+                  <label>
+                    끝 번호
+                    <input id="admin-grade-range-to" type="number" min="1" step="1" value="10" />
+                  </label>
+                  <button id="admin-grade-select-range" class="secondary-button" type="button">범위 선택</button>
+                </div>
+                <div class="admin-grades-apply">
+                  <label>
+                    적용 급수
+                    <select id="admin-grade-target-select"></select>
+                  </label>
+                  <button id="admin-grade-apply" class="primary-button" type="button">선택에 적용</button>
+                  <button id="admin-grade-clear" class="secondary-button" type="button">급수 해제</button>
+                </div>
+                <div class="admin-grades-selection-actions">
+                  <button id="admin-grade-select-all" class="ghost-button" type="button">전체 선택</button>
+                  <button id="admin-grade-clear-selection" class="ghost-button" type="button">선택 해제</button>
+                </div>
+              </div>
+              <div id="admin-grade-list" class="admin-grade-list" aria-live="polite"></div>
+            </div>
+            <div id="admin-exam-sets-panel" class="admin-panel is-hidden" aria-label="기출 시험 세트 관리">
+              <div class="admin-exam-sets-toolbar">
+                <div>
+                  <h3>기출 / 시험 세트</h3>
+                  <p>문제(problem)와 별도로 묶음 단위를 만들고 배포합니다. 학습 흐름(display_order)과 독립입니다.</p>
+                </div>
+                <button type="button" class="primary-button" data-exam-set-action="create">새 시험 세트</button>
+              </div>
+              <div class="admin-exam-sets-layout">
+                <aside class="admin-exam-sets-sidebar" aria-label="세트 목록">
+                  <div id="admin-exam-set-list" class="admin-exam-set-list"></div>
+                </aside>
+                <div id="admin-exam-set-editor" class="admin-exam-set-editor" aria-label="세트 편집"></div>
+              </div>
             </div>
             <div id="admin-curriculum-panel" class="admin-panel is-hidden">
               <div class="admin-curriculum-toolbar">
@@ -402,6 +527,13 @@
           </div>
           </details>
         </section>
+          <section id="exam-set-catalog" class="exam-set-catalog" aria-label="기출 및 시험">
+            <div class="exam-set-catalog-header">
+              <h3>기출 / 시험</h3>
+              <p id="exam-set-catalog-summary" class="exam-set-catalog-summary">게시된 시험 세트를 선택해 풀이를 시작하세요.</p>
+            </div>
+            <div id="exam-set-catalog-list" class="exam-set-catalog-list" aria-live="polite"></div>
+          </section>
           <div id="problem-cards" class="problem-cards" aria-live="polite"></div>
         </div>
       </section>

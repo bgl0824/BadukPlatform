@@ -2,19 +2,28 @@
 
 This is a small Node.js adapter API for connecting BadukPlatform to a deployed KataGo server.
 
-The frontend calls:
+The frontend calls (AI 응수형):
+
+```txt
+POST /api/katago/respond
+```
+
+Legacy:
 
 ```txt
 POST /counter-move
 ```
 
-This adapter forwards the board state to the configured KataGo server and returns a normalized response:
+`/api/katago/respond` returns:
 
 ```json
 {
-  "move": { "x": 4, "y": 9 }
+  "move": "E4",
+  "source": "katago"
 }
 ```
+
+`/counter-move` returns `{ "move": { "x": 4, "y": 9 } }` (legacy shape).
 
 ## Environment
 
@@ -23,11 +32,12 @@ Copy `.env.example` values into your Render/AWS environment settings.
 ```txt
 PORT=8080
 ALLOWED_ORIGIN=https://badukplatform.vercel.app
-KATAGO_SERVER_URL=https://your-katago-server.example.com
-KATAGO_ANALYZE_PATH=/api/v1/analyze
+KATAGO_SERVER_URL=https://your-katago-engine.onrender.com
+KATAGO_ANALYZE_PATH=/api/v1/analysis
+KATAGO_API_STYLE=goban
 ```
 
-`KATAGO_ANALYZE_PATH` may need to be changed depending on the exact katago-server project you deploy.
+권장 엔진: `ghcr.io/stubbi/katago-server:latest` — 전체 가이드는 [`docs/katago-respond-deploy.md`](../../docs/katago-respond-deploy.md).
 
 ## Local Run
 

@@ -60,6 +60,14 @@ export function createAdminController({
 
   getProblemSortHintMessage,
 
+  renderGradeAssignmentPanel,
+
+  resetGradeAssignmentSelection,
+
+  renderExamSetManager,
+
+  loadExamSets,
+
 }) {
 
   function bindAdminEvents() {
@@ -98,7 +106,7 @@ export function createAdminController({
 
   function setAdminListPanel(panel) {
 
-    if (!["problems", "curriculum"].includes(panel)) {
+    if (!["problems", "curriculum", "grades", "exam-sets"].includes(panel)) {
 
       return;
 
@@ -108,9 +116,15 @@ export function createAdminController({
 
     adminState.listPanel = panel;
 
-    if (panel === "curriculum") {
+    if (panel === "curriculum" || panel === "grades" || panel === "exam-sets") {
 
       getEditorActions().closeAdminEditor();
+
+    }
+
+    if (panel === "grades" || panel === "exam-sets") {
+
+      adminState.problemSortMode = false;
 
     }
 
@@ -119,6 +133,24 @@ export function createAdminController({
     adminView.updateAdminVisibility();
 
     if (panel === "problems") {
+
+      renderProblemList();
+
+    }
+
+    if (panel === "grades") {
+
+      renderGradeAssignmentPanel?.();
+
+      renderProblemList();
+
+    }
+
+    if (panel === "exam-sets") {
+
+      void loadExamSets?.();
+
+      renderExamSetManager?.();
 
       renderProblemList();
 

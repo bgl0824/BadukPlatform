@@ -22,9 +22,20 @@ const server = http.createServer(async (request, response) => {
     return;
   }
 
-  if (request.method === "POST" && request.url === "/counter-move") {
+  if (
+    request.method === "POST" &&
+    (request.url === "/counter-move" || request.url === "/api/katago/respond")
+  ) {
     try {
       const frontendPayload = await readJsonBody(request);
+
+      if (request.url === "/api/katago/respond") {
+        const { produceKatagoRespond } = require("../../api/lib/katago-respond-core");
+        const result = await produceKatagoRespond(frontendPayload);
+        sendJson(response, 200, result);
+        return;
+      }
+
       const katagoResponse = await requestKatagoAnalysis(frontendPayload);
       const move = extractBestMove(katagoResponse);
 
@@ -41,8 +52,11 @@ const server = http.createServer(async (request, response) => {
         raw: katagoResponse,
       });
     } catch (error) {
-      sendJson(response, 500, {
+      const status = error.code === "KATAGO_NOT_CONFIGURED" ? 503 : 500;
+      sendJson(response, status, {
         error: error.message,
+        code: error.code,
+        source: "error",
       });
     }
     return;

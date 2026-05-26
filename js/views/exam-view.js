@@ -1,13 +1,22 @@
 export function createExamView({ elements }) {
-  function renderExamPlaceholder() {
-    elements.meta.textContent = "Exam";
-    elements.title.textContent = "시험 관리";
-    elements.description.textContent = "시험지 생성과 응시 결과 관리를 위한 화면입니다.";
-    elements.description.classList.remove("is-hidden");
-    elements.learningObjective.textContent = "시험 기능을 준비 중입니다.";
+  function renderExamSessionBanner(examSession) {
+    if (!elements.listSummary || !examSession) {
+      return;
+    }
+
+    elements.listSummary.textContent = `시험 세트: ${examSession.title} (${examSession.currentIndex + 1}/${examSession.problemIds.length})`;
+  }
+
+  function clearExamSessionBanner() {
+    if (!elements.listSummary) {
+      return;
+    }
+
+    elements.listSummary.textContent = "전체 문제를 확인하고 원하는 문제를 선택하세요.";
   }
 
   return {
-    renderExamPlaceholder,
+    renderExamSessionBanner,
+    clearExamSessionBanner,
   };
 }

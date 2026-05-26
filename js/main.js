@@ -14,7 +14,16 @@ import { problemElements } from "./dom/problem-elements.js";
 import { removeCapturedStonesAfterMove as calculateStonesAfterCapture } from "./game/capture.js";
 import { evaluatePlacement, PLACEMENT_STATUS } from "./game/placement-validation.js";
 import { isSamePoint } from "./game/rules.js";
+import {
+  isAiResponseProblem,
+  logAiResponseSolveContext,
+  shouldUseAiResponseSolve,
+  shouldUseAiResponseUx,
+} from "./game/problem-mode.js";
+import { createAiResponseSolveEngine } from "./solve/ai-response-solve/engine.js";
+import { AI_RESPONSE_UX_MESSAGES } from "./solve/ai-response-ux/config.js";
 import { isOxProblem } from "./game/problem-type.js";
+import { createAiResponseUxController } from "./solve/ai-response-ux/controller.js";
 import { advanceCorrectSequence, getProblemCorrectSequence } from "./game/sequence.js";
 import { isCorrectMove, isCorrectOxAnswer, isCorrectUserMove } from "./game/validation.js";
 import {
@@ -45,8 +54,18 @@ import {
 } from "./services/category-service.js";
 import { formatCategoryProblemLabel } from "./services/category-problem-number.js";
 import { createProblemReorderController } from "./admin/problem-reorder-manager.js";
+import { createGradeAssignmentManager } from "./admin/grade-assignment-manager.js";
+import { createExamSetManager } from "./admin/exam-set-manager.js";
+import { createExamCatalogController } from "./controllers/exam-catalog-controller.js";
+import { examSetService } from "./services/exam-set-service.js";
 import {
-  assignDisplayOrderForNewProblem,
+  getGradeLevelFilterOptions,
+  getGradeLevelSelectOptions,
+  matchesGradeLevelFilter,
+  formatGradeLevelLabel,
+} from "./services/grade-level-service.js";
+import {
+  PROBLEM_LIST_SORT,
   sortFilteredProblemEntries,
   sortProblemsGlobally,
 } from "./services/problem-order-service.js";
@@ -149,7 +168,14 @@ const boardController = new BoardController(elements.board, {
   },
 });
 
+let aiResponseUx;
+let aiResponseSolve;
+
 function getBoardPreviewColor() {
+  if (appState.mode === "solve" && aiResponseUx?.isPickingWhiteResponse?.()) {
+    return aiResponseUx.getPreviewColor();
+  }
+
   if (appState.mode === "create" && isCreatorStonePlacementTool()) {
     return STONE.black;
   }
@@ -164,6 +190,17 @@ function isCreatorStonePlacementTool() {
 function evaluateBoardPreviewPoint(point, stones = boardController.getStones()) {
   if (appState.mode === "create") {
     return evaluateCreatorPreviewPoint(point, stones);
+  }
+
+  if (appState.mode === "solve" && aiResponseUx?.isPickingWhiteResponse?.()) {
+    const preview = aiResponseUx.evaluatePreviewPoint(point, stones);
+    if (preview.status === "legal") {
+      return { status: PLACEMENT_STATUS.legal };
+    }
+    if (preview.status === "occupied") {
+      return { status: PLACEMENT_STATUS.occupied };
+    }
+    return { status: PLACEMENT_STATUS.illegal };
   }
 
   if (appState.mode === "solve") {
@@ -210,11 +247,19 @@ function evaluateCreatorPreviewPoint(point, stones) {
 function syncBoardPreviewContext() {
   const problem = appState.mode === "solve" ? getCurrentProblem() : null;
   const isOxSolve = appState.mode === "solve" && isOxProblem(problem);
+  const aiResponsePicking = appState.mode === "solve" && aiResponseUx?.isPickingWhiteResponse?.();
   const enabled =
     !isOxSolve &&
     (appState.mode === "solve" || appState.mode === "create") &&
     !appState.isSolved &&
-    !appState.isAiThinking;
+    !appState.isAiThinking &&
+    (!aiResponseUx?.isActive?.() || aiResponsePicking);
+
+  elements.boardCard?.classList.toggle("is-ai-response-mode", Boolean(aiResponseUx?.isActive?.()));
+  elements.aiResponseUxPanel?.classList.toggle(
+    "is-picking",
+    Boolean(aiResponseUx?.isPickingWhiteResponse?.()),
+  );
 
   boardController.setPreviewContext({
     enabled,
@@ -368,10 +413,74 @@ const problemReorder = createProblemReorderController({
   getActiveLevelGroup,
   getFilteredProblems: () => getFilteredProblems(),
   getCurrentUser,
-  requireAdminMode: () => requireAdminMode(),
+  requireAdminMode: () => requireAdminModeForGrades(),
   setFeedback,
   renderProblemList: () => renderProblemList(),
   escapeHtml,
+});
+
+function requireAdminModeForGrades() {
+  if (adminState.isEnabled && isCurrentUserAdmin()) {
+    return true;
+  }
+
+  setFeedback("관리자로 로그인한 경우에만 관리자 기능을 사용할 수 있습니다.", "wrong");
+  return false;
+}
+
+const {
+  bindGradeAssignmentEvents,
+  renderGradeAssignmentPanel,
+  resetSelectionOnCategoryChange: resetGradeAssignmentSelection,
+  isGradeAssignmentMode,
+  isProblemSelectedForGrade,
+  matchesGradeAssignmentListFilter,
+  updateGradeSummaryText,
+} = createGradeAssignmentManager({
+  elements,
+  adminState,
+  appState,
+  problems,
+  problemService,
+  ProblemStore,
+  getActiveLevelGroup,
+  getCurrentUser,
+  isCurrentUserAdmin,
+  requireAdminMode: requireAdminModeForGrades,
+  setFeedback,
+  escapeHtml,
+  getFilteredProblems: () => getFilteredProblems(),
+  renderProblemList: () => renderProblemList(),
+  reloadProblemsFromStore: async () => {
+    const loadedProblems = await ProblemStore.loadProblems({ seedDefaults: false });
+    replaceProblemList(loadedProblems);
+  },
+  getProblemStoreErrorMessage,
+});
+
+const {
+  bindExamSetEvents,
+  bindExamSetCardEvents,
+  renderExamSetManager,
+  loadExamSets,
+  isExamSetPickerMode,
+  isProblemSelectedForExamSetAdd,
+  isProblemInExamSet,
+  getExamSetPickerFilteredProblems,
+} = createExamSetManager({
+  elements,
+  adminState,
+  appState,
+  problems,
+  getCurrentUser,
+  requireAdminMode: requireAdminModeForGrades,
+  setFeedback,
+  escapeHtml,
+  getOrderedCategoryNames: () => getOrderedCategoryNames(readCategories()),
+  renderProblemList: () => renderProblemList(),
+  onExamSetSaved: async () => {
+    await examCatalog.refreshExamCatalog();
+  },
 });
 
 const {
@@ -400,6 +509,8 @@ const adminView = createAdminView({
   appState,
   isCurrentUserAdmin,
   renderCategoryManager,
+  renderGradeAssignmentPanel,
+  renderExamSetManager,
 });
 
 const {
@@ -435,6 +546,10 @@ const {
   getActiveLevelGroup,
   getEditorActions: () => adminEditorActions,
   getProblemSortHintMessage: () => problemReorder.getSortModeHintMessage(),
+  renderGradeAssignmentPanel,
+  resetGradeAssignmentSelection,
+  renderExamSetManager,
+  loadExamSets,
 });
 
 const {
@@ -551,7 +666,16 @@ const {
 });
 
 const examView = createExamView({ elements });
-void examView;
+
+const examCatalog = createExamCatalogController({
+  elements,
+  appState,
+  getCurrentUser,
+  escapeHtml,
+  onStartExamSet: (examSet) => {
+    void startExamSetSession(examSet);
+  },
+});
 
 const studyView = createStudyView({
   elements,
@@ -577,6 +701,46 @@ solveView = createSolveView({
   updatePrintUiVisibility,
   renderProblemLibraryScreen: () => renderProblemLibraryScreen(),
 });
+
+aiResponseUx = createAiResponseUxController({
+  appState,
+  boardController,
+  boardSize: BOARD_SIZE,
+  stoneColors: STONE,
+  elements,
+  getCurrentProblem,
+  setStatus,
+  setFeedback,
+  syncBoardPreviewContext,
+  removeCapturedStonesAfterMove,
+  cloneBoardStones,
+});
+aiResponseUx.bindEvents();
+
+aiResponseSolve = createAiResponseSolveEngine({
+  appState,
+  boardController,
+  boardSize: BOARD_SIZE,
+  stoneColors: STONE,
+  getCurrentProblem,
+  setStatus,
+  setFeedback,
+  syncBoardPreviewContext,
+  removeCapturedStonesAfterMove,
+  recordWrongMove,
+  completeProblem,
+  resetCurrentProblemAfterWrong: resetCurrentProblemAfterWrongMove,
+  cloneBoardStones,
+  markProblemInProgress: (problem) => {
+    safeRecordStudentProgress(() => {
+      studentProgressService.markProblemInProgress({
+        user: getCurrentUser(),
+        problem,
+      });
+    });
+  },
+});
+aiResponseSolve.bindEvents();
 
 const categoryCompleteModal = createCategoryCompleteModalController({
   elements,
@@ -644,6 +808,12 @@ function runApplicationBootstrap() {
     boot.run("bindOxSolveEvents", () => bindOxSolveEvents());
     boot.run("bindAdminEvents", () => bindAdminEvents());
     boot.run("bindProblemReorderEvents", () => problemReorder.bindProblemReorderEvents());
+    boot.run("bindGradeAssignmentEvents", () => bindGradeAssignmentEvents());
+    boot.run("bindExamSetEvents", () => bindExamSetEvents());
+    boot.run("bindExamSetCardEvents", () => bindExamSetCardEvents());
+    boot.run("bindExamCatalogEvents", () => examCatalog.bindExamCatalogEvents());
+    boot.run("bindAdminProblemListControls", () => bindAdminProblemListControls());
+    boot.run("populateAdminGradeSelects", () => populateAdminGradeSelects());
     boot.run("bindCategoryManagerEvents", () => bindCategoryManagerEvents());
     boot.runOptional("initPrintBuilder", () => {
       printBuilder.bind();
@@ -849,6 +1019,10 @@ function syncProblemLibraryChrome() {
   elements.problemCards?.classList.remove("is-hidden");
   updatePrintUiVisibility();
   updateAdminVisibility();
+  updateAdminProblemListControlsVisibility();
+  if (adminState.listPanel === "grades") {
+    renderGradeAssignmentPanel();
+  }
 }
 
 function renderProblemLibraryScreen() {
@@ -867,6 +1041,7 @@ function renderProblemLibraryScreen() {
 
     syncProblemLibraryChrome();
     renderCategoryFilters();
+    void examCatalog.refreshExamCatalog();
     renderProblemList();
   } catch (error) {
     console.error("[problem-library] renderProblemLibraryScreen failed", error);
@@ -1111,6 +1286,53 @@ function getNextReviewProblemInSession() {
   return session.queue[nextIndex];
 }
 
+function loadProblemById(problemId, { examSessionIndex } = {}) {
+  const index = problems.findIndex((entry) => entry.id === problemId);
+  if (index === -1) {
+    setFeedback("문제를 찾을 수 없습니다.", "wrong");
+    return;
+  }
+
+  if (appState.examSession && Number.isFinite(examSessionIndex)) {
+    appState.examSession.currentIndex = examSessionIndex;
+    examView.renderExamSessionBanner(appState.examSession);
+  }
+
+  loadProblem(index);
+}
+
+async function startExamSetSession(examSet) {
+  try {
+    const detail = await examSetService.getExamSetDetail({
+      user: getCurrentUser(),
+      examSetId: examSet.id,
+    });
+    const problemIds = (detail.questions ?? []).map((entry) => entry.problemId);
+
+    if (problemIds.length === 0) {
+      setFeedback("이 시험 세트에 포함된 문제가 없습니다.", "wrong");
+      return;
+    }
+
+    appState.examSession = {
+      examSetId: examSet.id,
+      title: examSet.title,
+      problemIds,
+      currentIndex: 0,
+    };
+
+    loadProblemById(problemIds[0], { examSessionIndex: 0 });
+  } catch (error) {
+    console.error("[ExamSession] start failed", error);
+    setFeedback("시험 세트를 시작하지 못했습니다.", "wrong");
+  }
+}
+
+function clearExamSession() {
+  appState.examSession = null;
+  examView.clearExamSessionBanner();
+}
+
 function loadProblem(index) {
   const problem = problems[index];
 
@@ -1120,11 +1342,15 @@ function loadProblem(index) {
   }
 
   hideCategoryCompleteModal();
-  clearReviewSession();
+  if (!appState.examSession) {
+    clearReviewSession();
+  }
   clearPendingAiMove();
   clearAutoNext();
   clearWrongTimers();
   hideBoardFeedback();
+  aiResponseUx?.exit?.({ silent: true });
+  aiResponseSolve?.clearSession?.();
   setMode("solve");
   appState.currentProblemIndex = index;
   appState.solvedAnswerKeys = new Set();
@@ -1133,6 +1359,14 @@ function loadProblem(index) {
   appState.playedMoves = [];
   const boardStones = captureInitialBoardState(problem);
   solveView.renderProblem(problem, index, { boardStones });
+  if (shouldUseAiResponseSolve(problem)) {
+    logAiResponseSolveContext(problem, "loadProblem — init ai response session");
+    aiResponseSolve.initSession(problem);
+    setFeedback(getProblemStartFeedback(problem));
+  } else if (isAiResponseProblem(problem)) {
+    logAiResponseSolveContext(problem, "loadProblem — ai_response but solve engine OFF");
+  }
+
   syncBoardPreviewContext();
 }
 
@@ -1168,6 +1402,36 @@ function handleBoardClick(point, { button = "primary" } = {}) {
     return;
   }
 
+  if (aiResponseSolve?.isBlockingInput?.()) {
+    setFeedback("백 응수를 불러오는 중입니다.", "wrong");
+    return;
+  }
+
+  if (shouldUseAiResponseSolve(problem)) {
+    console.log("[AI_RESPONSE] using ai response solve engine", {
+      problemMode: problem.problemMode ?? problem.problem_mode,
+      aiResponseSolveEnabled: window.BadukConfig?.aiResponseSolveEnabled,
+      katagoRespondApiEnabled: window.BadukConfig?.katagoRespondApiEnabled,
+    });
+    void aiResponseSolve.handleStudentBlackMove(point);
+    return;
+  }
+
+  if (isAiResponseProblem(problem)) {
+    console.log("[AI_RESPONSE] fallback to handleUserMove", {
+      problemMode: problem.problemMode ?? problem.problem_mode,
+      aiResponseSolveEnabled: window.BadukConfig?.aiResponseSolveEnabled,
+    });
+  }
+
+  if (aiResponseUx?.isActive?.()) {
+    aiResponseUx.handleBoardClick(point);
+    return;
+  }
+
+  console.log("[AI_RESPONSE] using standard handleUserMove", {
+    problemMode: problem?.problemMode ?? problem?.problem_mode,
+  });
   handleUserMove(point);
 }
 
@@ -1254,6 +1518,17 @@ function handleUserMove(point) {
   }
 
   recordWrongMove(problem, userMove);
+
+  if (shouldUseAiResponseUx(problem)) {
+    const enterResult = aiResponseUx.enterAfterWrongMove(problem, userMove);
+    if (enterResult === "entered") {
+      return;
+    }
+    if (enterResult === "no_candidates") {
+      setFeedback(AI_RESPONSE_UX_MESSAGES.noCandidates, "wrong");
+    }
+  }
+
   resetCurrentProblemAfterWrongMove(problem);
 }
 
@@ -1266,6 +1541,13 @@ function showNextProblem() {
     const session = appState.reviewSession;
     const nextIndex = (session.currentIndex + 1) % session.queue.length;
     loadReviewProblem(nextIndex);
+    return;
+  }
+
+  if (appState.examSession) {
+    const session = appState.examSession;
+    const nextIndex = (session.currentIndex + 1) % session.problemIds.length;
+    loadProblemById(session.problemIds[nextIndex], { examSessionIndex: nextIndex });
     return;
   }
 
@@ -1322,6 +1604,7 @@ function showListMode() {
   logScreen("showListMode");
   hideCategoryCompleteModal();
   clearReviewSession();
+  clearExamSession();
   clearPendingAiMove();
   appState.isAiThinking = false;
   appState.isSolved = false;
@@ -1483,9 +1766,11 @@ function selectLevelGroup(levelGroup) {
   const normalizedLevelGroup = normalizeLevelGroup(levelGroup);
   appState.selectedLevelGroup = normalizedLevelGroup;
   appState.selectedCategory = resolveDefaultSelectedCategory(normalizedLevelGroup);
+  resetGradeAssignmentSelection?.();
   syncCreatorCategoriesForLevelGroup();
   renderLevelGroupFilters();
   renderCategoryFilters();
+  renderGradeAssignmentPanel?.();
   renderProblemList();
 }
 
@@ -1495,7 +1780,9 @@ function selectCategory(category) {
   } else {
     appState.selectedCategory = category || resolveDefaultSelectedCategory();
   }
+  resetGradeAssignmentSelection?.();
   renderCategoryFilters();
+  renderGradeAssignmentPanel?.();
   renderProblemList();
 }
 
@@ -1528,8 +1815,19 @@ function renderProblemList() {
     return;
   }
 
+  const gradeMode = isGradeAssignmentMode?.() ?? false;
+  const examSetMode = isExamSetPickerMode?.() ?? false;
+  const hideExamCatalog =
+    gradeMode || (adminState.isEnabled && adminState.listPanel === "exam-sets");
+  elements.examSetCatalog?.classList.toggle("is-hidden", hideExamCatalog);
+
   updatePrintUiVisibility();
+  updateAdminProblemListControlsVisibility();
   updateProblemSortModeUi?.();
+  elements.problemListScreen?.classList.toggle("is-grade-assignment-mode", gradeMode);
+  elements.problemListScreen?.classList.toggle("is-exam-set-picker-mode", examSetMode);
+  elements.problemCards.classList.toggle("is-grade-assignment-mode", gradeMode);
+  elements.problemCards.classList.toggle("is-exam-set-picker-mode", examSetMode);
   elements.problemCards.classList.toggle(
     "is-problem-sort-mode",
     adminState.isEnabled && adminState.problemSortMode && isCurrentUserAdmin(),
@@ -1541,14 +1839,29 @@ function renderProblemList() {
     adminState.problemSortMode &&
     isCurrentUserAdmin() &&
     problemReorder.canReorderInCurrentView();
-  const studentProgressByProblemId = getCurrentStudentProgressByProblemId();
-  const canPrint = canUsePrintFeatures();
+  const studentProgressByProblemId =
+    gradeMode || examSetMode ? null : getCurrentStudentProgressByProblemId();
+  const canPrint = canUsePrintFeatures() && !gradeMode && !examSetMode;
   elements.problemCards.innerHTML = "";
   const categoryLabel =
     appState.selectedCategory && appState.selectedCategory !== "전체"
       ? `${getActiveLevelGroup()} · ${appState.selectedCategory}`
       : `${getActiveLevelGroup()} 전체`;
-  elements.listSummary.textContent = `${categoryLabel}에서 ${filteredProblems.length}개 문제를 표시합니다.`;
+  const gradeSelectionCount = adminState.gradeAssignment?.selectedProblemIds?.size ?? 0;
+  const examSetAddSelectionCount = adminState.examSetManager?.draft?.selectedToAddIds?.size ?? 0;
+  const examSetQuestionCount =
+    adminState.examSetManager?.draft?.orderedProblemIds?.length ?? 0;
+
+  if (gradeMode) {
+    elements.listSummary.textContent =
+      !appState.selectedCategory || appState.selectedCategory === "전체"
+        ? "급수 배정: 상단에서 카테고리를 선택하세요."
+        : `${categoryLabel} · 급수 배정 선택 ${gradeSelectionCount}개 / 표시 ${filteredProblems.length}개`;
+  } else if (examSetMode) {
+    elements.listSummary.textContent = `시험 세트 구성 · 추가 선택 ${examSetAddSelectionCount}개 · 세트 ${examSetQuestionCount}문제 · 표시 ${filteredProblems.length}개 (상단 필터 연동)`;
+  } else {
+    elements.listSummary.textContent = `${categoryLabel}에서 ${filteredProblems.length}개 문제를 표시합니다.`;
+  }
 
   if (canPrint) {
     updatePrintSelectionControls();
@@ -1557,8 +1870,13 @@ function renderProblemList() {
   if (filteredProblems.length === 0) {
     const emptyMessage = document.createElement("p");
     emptyMessage.className = "empty-list-message";
-    emptyMessage.textContent = "이 카테고리에는 아직 문제가 없습니다.";
+    emptyMessage.textContent = gradeMode
+      ? !appState.selectedCategory || appState.selectedCategory === "전체"
+        ? "급수 배정을 위해 카테고리를 하나 선택해 주세요."
+        : "조건에 맞는 문제가 없습니다."
+      : "이 카테고리에는 아직 문제가 없습니다.";
     elements.problemCards.append(emptyMessage);
+    updateGradeSummaryText?.();
     return;
   }
 
@@ -1582,10 +1900,28 @@ function renderProblemList() {
         : escapeHtml(formatCategoryProblemLabel(problem, problems));
       const categoryLabel = escapeHtml(problem.category ?? "");
       const levelLabel = escapeHtml(problem.level ?? "");
-      const hasStatusRow = Boolean(levelLabel || progressView.badge);
+      const gradeBadge = gradeMode
+        ? `<span class="problem-card-grade">${escapeHtml(formatGradeLevelLabel(problem.gradeLevel))}</span>`
+        : adminState.isEnabled && isCurrentUserAdmin() && adminState.listPanel === "problems"
+          ? `<span class="problem-card-grade">${escapeHtml(formatGradeLevelLabel(problem.gradeLevel))}</span>`
+          : "";
+      const isGradeSelected = gradeMode && isProblemSelectedForGrade?.(problem.id);
+      const alreadyInExamSet = examSetMode && isProblemInExamSet?.(problem.id);
+      const isExamSetSelected =
+        examSetMode && isProblemSelectedForExamSetAdd?.(problem.id);
+      const hasStatusRow = Boolean(levelLabel || gradeBadge || progressView.badge);
+
+      if (gradeMode) {
+        card.classList.toggle("is-grade-assign-selected", isGradeSelected);
+      }
+
+      if (examSetMode) {
+        card.classList.toggle("is-exam-set-selected", isExamSetSelected);
+        card.classList.toggle("is-exam-set-included", alreadyInExamSet);
+      }
 
       card.innerHTML = `
-        <button class="problem-card-main" type="button"${isProblemSortMode ? " disabled" : ""}>
+        <button class="problem-card-main" type="button"${isProblemSortMode || gradeMode || examSetMode ? " disabled" : ""}>
           <div class="problem-card-header">
             <div class="problem-card-meta-row">
               <div class="problem-card-meta-primary">
@@ -1593,13 +1929,36 @@ function renderProblemList() {
                 <span class="problem-category-badge">${categoryLabel}</span>
               </div>
               ${
-                canPrint
+                gradeMode
                   ? `
+              <label class="problem-grade-assign-select">
+                <input
+                  type="checkbox"
+                  data-grade-assign-select="${escapeHtml(problem.id)}"
+                  ${isGradeSelected ? "checked" : ""}
+                />
+                <span>급수 선택</span>
+              </label>`
+                  : examSetMode
+                    ? alreadyInExamSet
+                      ? `
+              <span class="problem-exam-set-included-badge">이미 추가됨</span>`
+                      : `
+              <label class="problem-exam-set-select">
+                <input
+                  type="checkbox"
+                  data-exam-set-select="${escapeHtml(problem.id)}"
+                  ${isExamSetSelected ? "checked" : ""}
+                />
+                <span>세트 선택</span>
+              </label>`
+                    : canPrint
+                      ? `
               <label class="problem-print-select">
                 <input type="checkbox" data-print-select />
                 <span>인쇄 선택</span>
               </label>`
-                  : ""
+                      : ""
               }
             </div>
             <div class="problem-card-title-row">
@@ -1610,6 +1969,7 @@ function renderProblemList() {
               hasStatusRow
                 ? `
             <div class="problem-card-status">
+              ${gradeBadge}
               ${levelLabel ? `<span class="problem-card-level">${levelLabel}</span>` : ""}
               ${progressView.badge}
             </div>`
@@ -1634,7 +1994,21 @@ function renderProblemList() {
         printSelectLabel?.addEventListener("click", (event) => event.stopPropagation());
       }
 
-      if (!isProblemSortMode) {
+      if (gradeMode) {
+        const gradeSelect = card.querySelector("[data-grade-assign-select]");
+        const gradeSelectLabel = card.querySelector(".problem-grade-assign-select");
+        gradeSelect?.addEventListener("click", (event) => event.stopPropagation());
+        gradeSelectLabel?.addEventListener("click", (event) => event.stopPropagation());
+      }
+
+      if (examSetMode && !alreadyInExamSet) {
+        const examSelect = card.querySelector("[data-exam-set-select]");
+        const examSelectLabel = card.querySelector(".problem-exam-set-select");
+        examSelect?.addEventListener("click", (event) => event.stopPropagation());
+        examSelectLabel?.addEventListener("click", (event) => event.stopPropagation());
+      }
+
+      if (!isProblemSortMode && !gradeMode && !examSetMode) {
         card.querySelector(".problem-card-main")?.addEventListener("click", () =>
           selectProblemById(problem.id),
         );
@@ -1649,7 +2023,13 @@ function renderProblemList() {
             problemId: problem.id,
           }),
         );
-      } else if (adminState.isEnabled && isCurrentUserAdmin() && !isProblemSortMode) {
+      } else if (
+        adminState.isEnabled &&
+        isCurrentUserAdmin() &&
+        !isProblemSortMode &&
+        !gradeMode &&
+        !examSetMode
+      ) {
         const actions = document.createElement("div");
         actions.className = "admin-card-actions";
         actions.innerHTML = `
@@ -1674,6 +2054,10 @@ function renderProblemList() {
 
   if (canPrint) {
     updatePrintSelectionControls();
+  }
+
+  if (gradeMode) {
+    updateGradeSummaryText?.();
   }
 }
 
@@ -1876,6 +2260,16 @@ function getWgoMarkType(mark) {
 
 function getFilteredProblems() {
   const levelGroup = getActiveLevelGroup();
+  const gradeMode = isGradeAssignmentMode?.() ?? false;
+  const examSetMode = isExamSetPickerMode?.() ?? false;
+
+  if (examSetMode) {
+    const sortMode =
+      appState.problemListSort === PROBLEM_LIST_SORT.grade
+        ? PROBLEM_LIST_SORT.grade
+        : PROBLEM_LIST_SORT.learning;
+    return sortFilteredProblemEntries(getExamSetPickerFilteredProblems(), { sortMode });
+  }
 
   const filtered = problems
     .map((problem, index) => ({ problem, index }))
@@ -1884,14 +2278,97 @@ function getFilteredProblems() {
         return false;
       }
 
-      if (!appState.selectedCategory || appState.selectedCategory === "전체") {
-        return true;
+      if (gradeMode) {
+        if (!appState.selectedCategory || appState.selectedCategory === "전체") {
+          return false;
+        }
+
+        if (problem.category !== appState.selectedCategory) {
+          return false;
+        }
+
+        if (!matchesGradeAssignmentListFilter?.(problem)) {
+          return false;
+        }
+
+        return matchesGradeLevelFilter(problem, appState.problemGradeFilter);
       }
 
-      return problem.category === appState.selectedCategory;
+      if (!appState.selectedCategory || appState.selectedCategory === "전체") {
+        return matchesGradeLevelFilter(problem, appState.problemGradeFilter);
+      }
+
+      return (
+        problem.category === appState.selectedCategory &&
+        matchesGradeLevelFilter(problem, appState.problemGradeFilter)
+      );
     });
 
-  return sortFilteredProblemEntries(filtered);
+  const sortMode =
+    appState.problemListSort === PROBLEM_LIST_SORT.grade
+      ? PROBLEM_LIST_SORT.grade
+      : PROBLEM_LIST_SORT.learning;
+
+  return sortFilteredProblemEntries(filtered, { sortMode });
+}
+
+let adminProblemListControlsBound = false;
+
+function populateAdminGradeSelects() {
+  if (elements.adminGradeTargetSelect) {
+    elements.adminGradeTargetSelect.innerHTML = getGradeLevelSelectOptions({ includeUnassigned: false })
+      .map(
+        (option) =>
+          `<option value="${escapeHtml(option.value)}">${escapeHtml(option.label)}</option>`,
+      )
+      .join("");
+  }
+
+  if (elements.problemGradeFilter) {
+    elements.problemGradeFilter.innerHTML = getGradeLevelFilterOptions()
+      .map(
+        (option) =>
+          `<option value="${escapeHtml(option.value)}">${escapeHtml(option.label)}</option>`,
+      )
+      .join("");
+    elements.problemGradeFilter.value = appState.problemGradeFilter;
+  }
+
+  if (elements.problemListSort) {
+    elements.problemListSort.value = appState.problemListSort;
+  }
+}
+
+function bindAdminProblemListControls() {
+  if (adminProblemListControlsBound) {
+    return;
+  }
+
+  adminProblemListControlsBound = true;
+
+  elements.problemListSort?.addEventListener("change", () => {
+    appState.problemListSort = elements.problemListSort.value;
+    renderProblemList();
+    if (isGradeAssignmentMode?.()) {
+      updateGradeSummaryText?.();
+    }
+  });
+
+  elements.problemGradeFilter?.addEventListener("change", () => {
+    appState.problemGradeFilter = elements.problemGradeFilter.value;
+    renderProblemList();
+    if (isGradeAssignmentMode?.()) {
+      updateGradeSummaryText?.();
+    }
+  });
+}
+
+function updateAdminProblemListControlsVisibility() {
+  const visible =
+    adminState.isEnabled &&
+    isCurrentUserAdmin() &&
+    (adminState.listPanel === "problems" || adminState.listPanel === "grades");
+  elements.adminProblemListControls?.classList.toggle("is-hidden", !visible);
 }
 
 function getCategoryCount(category) {
@@ -1967,8 +2444,10 @@ function canUsePrintFeatures() {
 
 function updatePrintUiVisibility() {
   const canPrint = canUsePrintFeatures();
+  const gradeMode = isGradeAssignmentMode?.() ?? false;
+  const examSetMode = isExamSetPickerMode?.() ?? false;
 
-  elements.printPanel?.classList.toggle("is-hidden", !canPrint);
+  elements.printPanel?.classList.toggle("is-hidden", !canPrint || gradeMode || examSetMode);
   elements.problemListScreen?.classList.toggle("has-print-features", canPrint);
 
   if (!canPrint) {
@@ -1996,6 +2475,7 @@ function handleRealtimeProblemUpdate(nextProblems) {
   renderCategoryManager();
   renderCategoryFilters();
   renderCreatorCategoryOptions();
+  renderGradeAssignmentPanel?.();
   renderProblemList();
 
   if (problems.length === 0) {
@@ -2029,6 +2509,29 @@ function getProblemStoreErrorMessage(error, actionLabel) {
 
   if (message.includes("display_order")) {
     return "Supabase problems 테이블에 display_order 컬럼이 필요합니다. scripts/supabase-problems-display-order.sql 을 실행해 주세요.";
+  }
+
+  if (message.includes("grade_level")) {
+    return "Supabase problems 테이블에 grade_level 컬럼이 필요합니다. scripts/supabase-problems-grade-level.sql 을 실행해 주세요.";
+  }
+
+  if (message.includes("exam_sets") || message.includes("exam_set_questions")) {
+    return "Supabase exam_sets 테이블이 필요합니다. scripts/supabase-exam-sets.sql 을 실행해 주세요.";
+  }
+
+  if (
+    message.includes("bulk grade update returned no rows") ||
+    message.includes("returned no rows")
+  ) {
+    return `Supabase ${actionLabel}이(가) 반영되지 않았습니다. admin 계정으로 Supabase 로그인했는지, scripts/supabase-problems-rls.sql 과 supabase-problems-grade-level.sql 을 실행했는지 확인해 주세요.`;
+  }
+
+  if (message.includes("permission denied: manage grade levels")) {
+    return "플랫폼 admin 계정만 급수를 배정할 수 있습니다.";
+  }
+
+  if (message.includes("Supabase Auth 로그인") || message.includes("로그인 세션")) {
+    return `${message} (문제 저장·급수 배정은 Supabase Auth 계정이 필요합니다.)`;
   }
 
   if (message.includes("column")) {
@@ -2230,6 +2733,31 @@ function completeProblem(problem) {
     return;
   }
 
+  if (appState.examSession) {
+    const session = appState.examSession;
+    const nextIndex = session.currentIndex + 1;
+    const hasNext = nextIndex < session.problemIds.length;
+    boardFeedbackOverlay.showCorrectPreset(hasNext ? "correctNext" : "correctLast", {
+      duration: 1000,
+    });
+
+    if (hasNext) {
+      appState.autoNextTimeout = window.setTimeout(() => {
+        hideBoardFeedback();
+        loadProblemById(session.problemIds[nextIndex], { examSessionIndex: nextIndex });
+      }, 1000);
+    } else {
+      appState.autoNextTimeout = window.setTimeout(() => {
+        hideBoardFeedback();
+        const title = session.title;
+        clearExamSession();
+        showListMode();
+        setFeedback(`"${title}" 세트를 완료했습니다.`, "correct");
+      }, 1000);
+    }
+    return;
+  }
+
   const completionContext = !wasCategoryCompleteBefore
     ? buildCategoryCompletionContext(problem.category, levelGroup, progressAfterSolve)
     : null;
@@ -2354,6 +2882,15 @@ function clearAutoNext() {
 }
 
 function getProblemStartFeedback(problem) {
+  if (isAiResponseProblem(problem)) {
+    const count = problem.answerMoveCount ?? 1;
+    return `AI 응수형 ${count}수 문제입니다. 흑만 두세요. 백은 시스템이 응수합니다.`;
+  }
+
+  if (shouldUseAiResponseUx(problem)) {
+    return "흑으로 두세요. 오답이면 백 응수 후보(설정된 좌표)를 체험할 수 있습니다.";
+  }
+
   if (isOxProblem(problem)) {
     return "O/X 중 정답을 선택하세요.";
   }
@@ -2387,8 +2924,12 @@ function removeCapturedStonesAfterMove(move) {
   return result.capturedCount;
 }
 
-function setStatus(message) {
-  elements.status.textContent = message;
+function setStatus(message, options = {}) {
+  if (elements.status) {
+    elements.status.textContent = message;
+  }
+
+  elements.moveStatus?.classList.toggle("is-ai-response-turn", Boolean(options.aiResponseTurn));
 }
 
 function setFeedback(message, tone = "neutral") {

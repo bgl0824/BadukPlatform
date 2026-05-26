@@ -160,6 +160,7 @@ class BoardController {
     this.onSecondaryPlay = onSecondaryPlay;
     this.onInvalidPlay = onInvalidPlay;
     this.stones = [];
+    this.aiResponseSpots = [];
     this.answerMarker = null;
     this.previewContext = {
       enabled: Boolean(preview?.enabled),
@@ -417,6 +418,15 @@ class BoardController {
     this.render();
   }
 
+  setAiResponseSpots(spots = []) {
+    this.aiResponseSpots = Array.isArray(spots) ? [...spots] : [];
+    this.render();
+  }
+
+  clearAiResponseSpots() {
+    this.setAiResponseSpots([]);
+  }
+
   hasStone(point) {
     return this.stones.some((stone) => stone.x === point.x && stone.y === point.y);
   }
@@ -485,6 +495,14 @@ class BoardController {
         type: "TR",
       });
     }
+
+    this.aiResponseSpots.forEach((spot) => {
+      this.board.addObject({
+        x: spot.x,
+        y: spot.y,
+        type: spot.type,
+      });
+    });
 
     this.previewState = previewState;
     this.syncGhostObject();

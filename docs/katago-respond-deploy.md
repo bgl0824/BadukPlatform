@@ -157,7 +157,7 @@ ALLOWED_ORIGIN=https://your-app.vercel.app
 
 ### 3) Vercel 환경 변수 (프론트 + serverless)
 
-Vercel 프로젝트 → **Settings → Environment Variables** (템플릿: [`.env.vercel.example`](../.env.vercel.example)):
+Vercel 프로젝트 → **Settings → Environment Variables** (템플릿: [`docs/vercel-katago-env.example`](vercel-katago-env.example)):
 
 | 변수 | 값 (운영 예) |
 |------|----------------|

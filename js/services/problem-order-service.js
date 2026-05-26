@@ -1,5 +1,11 @@
 import { getOrderedCategoryNames } from "./category-service.js";
+import { compareGradeLevels } from "./grade-level-service.js";
 import { LEVEL_GROUPS, normalizeLevelGroup } from "./level-group-service.js";
+
+export const PROBLEM_LIST_SORT = {
+  learning: "learning",
+  grade: "grade",
+};
 
 export function getProblemDisplayOrder(problem) {
   const value = Number(problem?.displayOrder);
@@ -100,7 +106,7 @@ export function assignDisplayOrderForNewProblem(problem, problems) {
   return resolveAppendDisplayOrder(problem, problems).problem;
 }
 
-export function sortProblemsGlobally(problems, { categoryOrderByLevelGroup } = {}) {
+function createProblemListSortContext({ categoryOrderByLevelGroup } = {}) {
   const categoryOrderCache = new Map();
 
   const getCategoryOrder = (levelGroup) => {
@@ -123,30 +129,69 @@ export function sortProblemsGlobally(problems, { categoryOrderByLevelGroup } = {
   };
 
   const categoryIndex = (problem) => {
-    const order = getCategoryOrder(problem.levelGroup);
-    const index = order.indexOf(problem.category);
+    const order = getCategoryOrder(problem?.levelGroup);
+    const index = order.indexOf(String(problem?.category ?? "").trim());
     return index === -1 ? order.length : index;
   };
 
-  return [...problems].sort((left, right) => {
-    const levelDiff = levelGroupIndex(left.levelGroup) - levelGroupIndex(right.levelGroup);
-    if (levelDiff !== 0) {
-      return levelDiff;
-    }
-
-    const categoryDiff = categoryIndex(left) - categoryIndex(right);
-    if (categoryDiff !== 0) {
-      return categoryDiff;
-    }
-
-    return compareProblemsInCategory(left, right);
-  });
+  return { levelGroupIndex, categoryIndex };
 }
 
-export function sortFilteredProblemEntries(entries) {
-  return [...entries].sort((left, right) =>
-    compareProblemsInCategory(left.problem, right.problem),
+/**
+ * display_order는 카테고리 내부 순서 — 전역 정렬에 쓰지 않음.
+ * level_group → category(커리큘럼) → [grade_level] → display_order
+ */
+export function compareProblemsForListView(
+  left,
+  right,
+  { sortMode = PROBLEM_LIST_SORT.learning, categoryOrderByLevelGroup } = {},
+) {
+  const { levelGroupIndex, categoryIndex } = createProblemListSortContext({
+    categoryOrderByLevelGroup,
+  });
+
+  const levelDiff = levelGroupIndex(left?.levelGroup) - levelGroupIndex(right?.levelGroup);
+  if (levelDiff !== 0) {
+    return levelDiff;
+  }
+
+  const categoryDiff = categoryIndex(left) - categoryIndex(right);
+  if (categoryDiff !== 0) {
+    return categoryDiff;
+  }
+
+  if (sortMode === PROBLEM_LIST_SORT.grade) {
+    const gradeDiff = compareGradeLevels(left?.gradeLevel, right?.gradeLevel);
+    if (gradeDiff !== 0) {
+      return gradeDiff;
+    }
+  }
+
+  return compareProblemsInCategory(left, right);
+}
+
+export function sortProblemsGlobally(problems, options = {}) {
+  const sortMode = options.sortMode ?? PROBLEM_LIST_SORT.learning;
+  return [...problems].sort((left, right) =>
+    compareProblemsForListView(left, right, { ...options, sortMode }),
   );
+}
+
+export function sortFilteredProblemEntries(
+  entries,
+  { sortMode = PROBLEM_LIST_SORT.learning, categoryOrderByLevelGroup } = {},
+) {
+  return [...entries].sort((left, right) => {
+    const orderDiff = compareProblemsForListView(left.problem, right.problem, {
+      sortMode,
+      categoryOrderByLevelGroup,
+    });
+    if (orderDiff !== 0) {
+      return orderDiff;
+    }
+
+    return left.index - right.index;
+  });
 }
 
 export function buildDisplayOrderUpdates(orderedProblemIds) {

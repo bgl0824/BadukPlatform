@@ -2,6 +2,8 @@ export const appState = {
   mode: "list",
   selectedLevelGroup: "입문",
   selectedCategory: "활로",
+  problemListSort: "learning",
+  problemGradeFilter: "all",
   currentProblemIndex: 0,
   solvedAnswerKeys: new Set(),
   isSolved: false,
@@ -17,4 +19,10 @@ export const appState = {
   reviewSession: null,
   pendingCategoryCompletion: null,
   studyExpandedLevelGroups: null,
+  /** @type {{ examSetId: string, title: string, problemIds: string[], currentIndex: number } | null} */
+  examSession: null,
+  /** @deprecated 스팟 UX 프로토타입 */
+  aiResponseSession: null,
+  /** AI 응수형 풀이 (problem_mode = ai_response) */
+  aiResponseSolveSession: null,
 };
