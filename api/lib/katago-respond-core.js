@@ -3,8 +3,8 @@
  */
 
 /** 교육용: 즉각 리듬 우선 — policy 후보 + 극소 탐색 */
-const DEFAULT_KATAGO_MAX_VISITS = 12;
-const DEFAULT_KATAGO_MAX_TIME = 0.25;
+const DEFAULT_KATAGO_MAX_VISITS = 8;
+const DEFAULT_KATAGO_MAX_TIME = 0.15;
 const MIN_KATAGO_CANDIDATES = 30;
 
 function resolveMaxVisits(frontendPayload) {

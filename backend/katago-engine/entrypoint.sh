@@ -32,5 +32,5 @@ if [ "$KATAGO_CONFIG_PATH" != "./analysis_config.cfg" ] && [ -f "$KATAGO_CONFIG_
   cp "$KATAGO_CONFIG_PATH" ./analysis_config.cfg
 fi
 
-echo "[katago-engine] model=${KATAGO_MODEL:-unknown} maxVisits=12 maxTime=0.3 cache=2^11 threads=1"
+echo "[katago-engine] model=${KATAGO_MODEL:-unknown} maxVisits=8 maxTime=0.18 cache=2^11 threads=1"
 exec ./katago-server

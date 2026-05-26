@@ -21,8 +21,8 @@ function toMoveEntry(move) {
 }
 
 const KATAGO_SOURCE = "katago";
-const DEFAULT_KATAGO_MAX_VISITS = 12;
-const DEFAULT_KATAGO_MAX_TIME = 0.25;
+const DEFAULT_KATAGO_MAX_VISITS = 8;
+const DEFAULT_KATAGO_MAX_TIME = 0.15;
 
 function getKatagoRespondMaxVisits() {
   const configured = Number(window.BadukConfig?.katagoRespondMaxVisits);

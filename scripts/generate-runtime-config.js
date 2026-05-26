@@ -16,8 +16,8 @@ const katagoRespondApiEnabled =
   process.env.KATAGO_RESPOND_API_ENABLED === "true" ||
   process.env.KATAGO_RESPOND_API_ENABLED === "1";
 
-const katagoRespondMaxVisits = Number(process.env.KATAGO_RESPOND_MAX_VISITS) || 12;
-const katagoRespondMaxTime = Number(process.env.KATAGO_RESPOND_MAX_TIME) || 0.25;
+const katagoRespondMaxVisits = Number(process.env.KATAGO_RESPOND_MAX_VISITS) || 8;
+const katagoRespondMaxTime = Number(process.env.KATAGO_RESPOND_MAX_TIME) || 0.15;
 
 const aiResponseSolveEnabled =
   process.env.AI_RESPONSE_SOLVE_ENABLED !== "false" &&
