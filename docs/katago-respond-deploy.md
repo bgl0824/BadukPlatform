@@ -157,17 +157,39 @@ ALLOWED_ORIGIN=https://your-app.vercel.app
 
 ### 3) Vercel 환경 변수 (프론트 + serverless)
 
-Vercel 프로젝트 → **Settings → Environment Variables**:
+Vercel 프로젝트 → **Settings → Environment Variables** (템플릿: [`.env.vercel.example`](../.env.vercel.example)):
 
-| 변수 | 값 |
-|------|-----|
-| `KATAGO_SERVER_URL` | `https://baduk-katago-engine.onrender.com` |
+| 변수 | 값 (운영 예) |
+|------|----------------|
+| `KATAGO_SERVER_URL` | `https://baduk-katago-engine-light.onrender.com` |
 | `KATAGO_ANALYZE_PATH` | `/api/v1/analysis` |
 | `KATAGO_API_STYLE` | `goban` |
 | `KATAGO_RESPOND_API_ENABLED` | `true` |
-| `ALLOWED_ORIGIN` | `https://your-app.vercel.app` |
+| `KATAGO_RESPOND_API_URL` | `/api/katago/respond` |
+| `AI_RESPONSE_SOLVE_ENABLED` | `true` |
+| `ALLOWED_ORIGIN` | `https://your-app.vercel.app` (선택) |
 
-재배포 후 `js/runtime-config.js`에 `katagoRespondApiEnabled: true` 반영.
+**프록시 경로**
+
+```text
+브라우저 → POST /api/katago/respond     (Vercel api/katago/respond.js)
+         → POST {KATAGO_SERVER_URL}/api/v1/analysis   (Render katago-server)
+         → { move: "E4", source: "katago" }
+```
+
+`api/katago/respond.js`, `api/lib/katago-respond-core.js` 가 GitHub에 포함되어 있어야 Vercel에서 동작합니다.
+
+재배포 후 `npm run build` 가 `js/runtime-config.js` 에 `katagoRespondApiEnabled: true` 를 기록합니다.
+
+**배포 후 검증 (Vercel 사이트 URL)**
+
+```bash
+curl -s -X POST https://YOUR-APP.vercel.app/api/katago/respond \
+  -H "Content-Type: application/json" \
+  -d '{"boardSize":19,"moves":[{"color":"B","move":"D4"}],"lastMove":{"color":"B","move":"D4"},"studentMoveResult":"correct","currentPly":2}'
+```
+
+응답: `{"move":"...","source":"katago"}`
 
 **Vercel serverless만 쓰는 경우**: 어댑터 Render 서비스 없이 Vercel `api/katago/respond`가 Render KataGo 엔진을 직접 호출합니다.
 

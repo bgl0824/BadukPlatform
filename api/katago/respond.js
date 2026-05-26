@@ -1,0 +1,40 @@
+const { produceKatagoRespond } = require("../lib/katago-respond-core");
+
+/**
+ * Vercel Serverless: POST /api/katago/respond
+ * Env: KATAGO_SERVER_URL, KATAGO_ANALYZE_PATH
+ */
+module.exports = async function handler(request, response) {
+  setCorsHeaders(response);
+
+  if (request.method === "OPTIONS") {
+    response.status(204).end();
+    return;
+  }
+
+  if (request.method !== "POST") {
+    response.status(405).json({ error: "Method not allowed", source: "error" });
+    return;
+  }
+
+  try {
+    const body = typeof request.body === "string" ? JSON.parse(request.body) : request.body;
+    const result = await produceKatagoRespond(body ?? {});
+    response.status(200).json(result);
+  } catch (error) {
+    console.error("[api/katago/respond]", error);
+    const status = error.code === "KATAGO_NOT_CONFIGURED" ? 503 : 502;
+    response.status(status).json({
+      error: error.message ?? "KataGo respond failed",
+      code: error.code ?? "KATAGO_ERROR",
+      source: "error",
+    });
+  }
+};
+
+function setCorsHeaders(response) {
+  const allowedOrigin = process.env.ALLOWED_ORIGIN || "*";
+  response.setHeader("Access-Control-Allow-Origin", allowedOrigin);
+  response.setHeader("Access-Control-Allow-Methods", "POST,OPTIONS");
+  response.setHeader("Access-Control-Allow-Headers", "Content-Type");
+}

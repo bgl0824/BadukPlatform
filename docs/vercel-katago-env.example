@@ -1,0 +1,11 @@
+# Vercel → Settings → Environment Variables
+# Production / Preview 적용 후 Redeploy
+
+KATAGO_SERVER_URL=https://baduk-katago-engine-light.onrender.com
+KATAGO_ANALYZE_PATH=/api/v1/analysis
+KATAGO_API_STYLE=goban
+KATAGO_KOMI=6.5
+
+KATAGO_RESPOND_API_ENABLED=true
+KATAGO_RESPOND_API_URL=/api/katago/respond
+AI_RESPONSE_SOLVE_ENABLED=true
