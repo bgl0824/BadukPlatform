@@ -69,7 +69,8 @@ RUN echo "=== [5/5] entrypoint + logs dir ===" \
  && chmod +x /app/entrypoint.sh \
  && mkdir -p /app/analysis_logs \
  && KATAGO_MODEL="$(cat /app/.katago-model-filename)" \
- && ls -la /app/katago /app/katago-lib /app/entrypoint.sh "/app/${KATAGO_MODEL}" /app/analysis_config.cfg
+ && ls -la /app/katago /app/entrypoint.sh "/app/${KATAGO_MODEL}" /app/analysis_config.cfg \
+ && ( [ -d /app/katago-lib ] && echo "katago-lib present:" && ls -la /app/katago-lib ) || echo "katago-lib: (none — static binary, OK)"
 
 # 런타임: entrypoint가 .katago-model-filename 읽음
 ENV KATAGO_MODEL=kata1-b10c128-s1141046784-d204142634.txt.gz
