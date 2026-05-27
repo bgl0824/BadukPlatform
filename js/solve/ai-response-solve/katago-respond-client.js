@@ -12,6 +12,10 @@ import {
   filterCandidatesInRegion,
 } from "./problem-region.js";
 import {
+  logKatagoRespondFailure,
+  logKatagoRespondSuccess,
+} from "./respond-diagnostics.js";
+import {
   KATAGO_SOURCE,
   selectWrongRevealLocalFallback,
   TACTICAL_FALLBACK_SOURCE,
@@ -354,7 +358,7 @@ function finalizeKatagoSelection({
     usedLocalFallback: false,
   });
 
-  return {
+  const success = {
     ok: true,
     point: selected.point,
     source: KATAGO_SOURCE,
@@ -373,6 +377,15 @@ function finalizeKatagoSelection({
     totalElapsedMs,
     usedLocalFallback: false,
   };
+  logKatagoRespondSuccess("tactical selection", {
+    selectedReason: success.selectedReason,
+    move: success.move,
+    studentMoveResult,
+    usedLocalFallback: false,
+    katagoElapsedMs,
+    totalElapsedMs,
+  });
+  return success;
 }
 
 function formatWrongRevealFallbackResult({
@@ -445,10 +458,22 @@ async function processKatagoRespondResponse({
   maxTime,
 }) {
   if (!response.ok) {
+    logKatagoRespondFailure("upstream HTTP error", {
+      httpStatus: response.status,
+      studentMoveResult,
+      responseBody: data,
+      katagoElapsedMs,
+    });
     return { ok: false, httpStatus: response.status, data };
   }
 
   if (data?.source !== KATAGO_SOURCE) {
+    logKatagoRespondFailure("invalid response source", {
+      source: data?.source,
+      studentMoveResult,
+      responseBody: data,
+      katagoElapsedMs,
+    });
     return { ok: false, invalidSource: true };
   }
 
@@ -595,6 +620,14 @@ async function requestKatagoRespondWrong({
     return lateKatago;
   }
 
+  logKatagoRespondFailure("wrong-reveal — no move resolved", {
+    payload,
+    replaceMs,
+    immediateFallbackOk: immediateFallback.ok,
+    racedKind: raced.kind,
+    katagoElapsedMs: Date.now() - requestStart,
+  });
+
   return {
     ok: false,
     needsServer: true,
@@ -737,6 +770,15 @@ export async function requestKatagoRespond({
         message = `KataGo respond HTTP ${response.status}`;
       }
 
+      logKatagoRespondFailure("request failed — HTTP", {
+        payload,
+        httpStatus: response.status,
+        studentMoveResult,
+        responseBody: data,
+        upstreamBody: upstreamDetail,
+        katagoElapsedMs,
+      });
+
       return {
         ok: false,
         needsServer: true,
@@ -748,6 +790,12 @@ export async function requestKatagoRespond({
 
     if (data?.source !== KATAGO_SOURCE) {
       console.error("[KatagoRespond] invalid source", data?.source);
+      logKatagoRespondFailure("request failed — invalid source", {
+        payload,
+        studentMoveResult,
+        responseBody: data,
+        katagoElapsedMs,
+      });
       logKatagoRespondTiming({
         requestStart,
         katagoElapsedMs,

@@ -22,6 +22,10 @@ import {
   shouldUseAiResponseUx,
 } from "./game/problem-mode.js";
 import { createAiResponseSolveEngine } from "./solve/ai-response-solve/engine.js";
+import {
+  logAiResponseSessionSnapshot,
+  logLearningFlow,
+} from "./solve/ai-response-solve/respond-diagnostics.js";
 import { AI_RESPONSE_UX_MESSAGES } from "./solve/ai-response-ux/config.js";
 import { isOxProblem } from "./game/problem-type.js";
 import { createAiResponseUxController } from "./solve/ai-response-ux/controller.js";
@@ -937,7 +941,12 @@ function bindStudyScreenEvents() {
     if (startButton) {
       const problemIndex = Number(startButton.dataset.startProblemIndex);
       if (!Number.isNaN(problemIndex)) {
-        loadProblem(problemIndex);
+        const isContinue = startButton.classList.contains("study-flow-continue-button");
+        if (isContinue) {
+          startProblemFromStudyHub(problemIndex, { source: "study-continue" });
+        } else {
+          loadProblem(problemIndex, { source: "study-recommend" });
+        }
       }
       return;
     }
@@ -1333,13 +1342,80 @@ function clearExamSession() {
   examView.clearExamSessionBanner();
 }
 
-function loadProblem(index) {
-  const problem = problems[index];
+function resolveProblemEntry(index) {
+  if (!Number.isInteger(index) || index < 0 || index >= problems.length) {
+    logLearningFlow("resolveProblemEntry — invalid index", {
+      index,
+      problemsLength: problems.length,
+    });
+    return null;
+  }
 
+  const problem = problems[index];
   if (!problem) {
+    logLearningFlow("resolveProblemEntry — missing problem at index", { index });
+    return null;
+  }
+
+  return { problem, index };
+}
+
+function logResumeAiResponseState(problem, source) {
+  const session = appState.aiResponseSolveSession;
+  logLearningFlow("resume/continue — before load", {
+    source,
+    problemId: problem?.id,
+    problemIndex: appState.currentProblemIndex,
+    currentProblemId: appState.currentProblemId,
+    category: problem?.category,
+    answerMoveCount: problem?.answerMoveCount ?? problem?.answer_move_count,
+    fullAnswerSequenceLength: Array.isArray(problem?.full_answer_sequence)
+      ? problem.full_answer_sequence.length
+      : Array.isArray(problem?.fullAnswerSequence)
+        ? problem.fullAnswerSequence.length
+        : 0,
+    sessionPhaseBeforeLoad: session?.phase ?? null,
+    blackAnswerIndexBeforeLoad: session?.blackAnswerIndex ?? null,
+    isSolved: appState.isSolved,
+    isAiThinking: appState.isAiThinking,
+  });
+}
+
+function startProblemFromStudyHub(problemIndex, { source = "study-continue" } = {}) {
+  logLearningFlow("startProblemFromStudyHub", { source, problemIndex });
+  const resolved = resolveProblemEntry(problemIndex);
+  if (!resolved) {
+    setFeedback("문제를 찾을 수 없습니다.", "wrong");
+    return;
+  }
+
+  logResumeAiResponseState(resolved.problem, source);
+  loadProblem(resolved.index, { source });
+
+  if (shouldUseAiResponseSolve(resolved.problem)) {
+    logAiResponseSessionSnapshot(appState, `after continue — ${source}`, {
+      answerMoveCount: appState.aiResponseSolveSession?.answerMoveCount,
+      blackAnswerIndex: appState.aiResponseSolveSession?.blackAnswerIndex,
+      phase: appState.aiResponseSolveSession?.phase,
+    });
+  }
+}
+
+function loadProblem(index, { source = "direct" } = {}) {
+  const resolved = resolveProblemEntry(index);
+  if (!resolved) {
     showEmptyProblemState();
     return;
   }
+
+  const { problem, index: resolvedIndex } = resolved;
+  logLearningFlow("loadProblem", {
+    source,
+    index: resolvedIndex,
+    problemId: problem.id,
+    category: problem.category,
+    mode: appState.mode,
+  });
 
   hideCategoryCompleteModal();
   if (!appState.examSession) {
@@ -1352,16 +1428,19 @@ function loadProblem(index) {
   aiResponseUx?.exit?.({ silent: true });
   aiResponseSolve?.clearSession?.();
   setMode("solve");
-  appState.currentProblemIndex = index;
+  appState.currentProblemIndex = resolvedIndex;
+  appState.currentProblemId = problem.id;
   appState.solvedAnswerKeys = new Set();
   appState.isSolved = false;
   appState.isAiThinking = false;
   appState.playedMoves = [];
   const boardStones = captureInitialBoardState(problem);
-  solveView.renderProblem(problem, index, { boardStones });
+  solveView.renderProblem(problem, resolvedIndex, { boardStones });
   if (shouldUseAiResponseSolve(problem)) {
-    logAiResponseSolveContext(problem, "loadProblem — init ai response session");
+    logAiResponseSolveContext(problem, `loadProblem — init ai response session (${source})`);
+    aiResponseSolve.clearSession?.();
     aiResponseSolve.initSession(problem);
+    logAiResponseSessionSnapshot(appState, `loadProblem — ${source}`);
     setFeedback(getProblemStartFeedback(problem));
   } else if (isAiResponseProblem(problem)) {
     logAiResponseSolveContext(problem, "loadProblem — ai_response but solve engine OFF");
@@ -1377,10 +1456,12 @@ function showEmptyProblemState() {
   hideBoardFeedback();
   setMode("list");
   appState.currentProblemIndex = 0;
+  appState.currentProblemId = null;
   appState.solvedAnswerKeys = new Set();
   appState.isSolved = false;
   appState.isAiThinking = false;
   appState.playedMoves = [];
+  aiResponseSolve?.clearSession?.();
   solveView.renderEmptyProblemState();
   if (problemBankReady) {
     renderProblemLibraryScreen();
@@ -1586,7 +1667,27 @@ function showMainMenuTarget(menuTarget) {
 }
 
 function getCurrentProblem() {
-  return problems[appState.currentProblemIndex];
+  if (appState.currentProblemId) {
+    const byId = problems.findIndex((entry) => entry.id === appState.currentProblemId);
+    if (byId >= 0) {
+      if (byId !== appState.currentProblemIndex) {
+        logLearningFlow("getCurrentProblem — realigned index from id", {
+          previousIndex: appState.currentProblemIndex,
+          nextIndex: byId,
+          problemId: appState.currentProblemId,
+        });
+        appState.currentProblemIndex = byId;
+      }
+      return problems[byId];
+    }
+
+    logLearningFlow("getCurrentProblem — stale problem id", {
+      currentProblemId: appState.currentProblemId,
+      currentProblemIndex: appState.currentProblemIndex,
+    });
+  }
+
+  return problems[appState.currentProblemIndex] ?? null;
 }
 
 function clearPendingAiMove() {
@@ -1602,6 +1703,12 @@ function showSolveMode() {
 
 function showListMode() {
   logScreen("showListMode");
+  logLearningFlow("showListMode", {
+    previousMode: appState.mode,
+    currentProblemIndex: appState.currentProblemIndex,
+    currentProblemId: appState.currentProblemId,
+    sessionPhase: appState.aiResponseSolveSession?.phase ?? null,
+  });
   hideCategoryCompleteModal();
   clearReviewSession();
   clearExamSession();
@@ -1609,6 +1716,8 @@ function showListMode() {
   appState.isAiThinking = false;
   appState.isSolved = false;
   appState.playedMoves = [];
+  appState.currentProblemId = null;
+  aiResponseSolve?.clearSession?.();
   appState.mode = "list";
   refreshProblemBank();
 }
@@ -2771,14 +2880,21 @@ function completeProblem(problem) {
     return;
   }
 
-  const nextProblem = getNextProblemInCurrentCategory();
+  const nextProblem = resolveNextProblemAfterComplete(problem);
   const preset = nextProblem ? "correctNext" : "correctLast";
   boardFeedbackOverlay.showCorrectPreset(preset, { duration: 1000 });
+
+  logLearningFlow("completeProblem — auto next", {
+    problemId: problem?.id,
+    nextProblemId: nextProblem?.problem?.id ?? null,
+    nextIndex: nextProblem?.index ?? null,
+    sessionPhase: appState.aiResponseSolveSession?.phase ?? null,
+  });
 
   if (nextProblem) {
     appState.autoNextTimeout = window.setTimeout(() => {
       hideBoardFeedback();
-      loadProblem(nextProblem.index);
+      loadProblem(nextProblem.index, { source: "auto-next-after-complete" });
     }, 1000);
   }
 }
@@ -2868,6 +2984,68 @@ function getNextProblemInCurrentCategory() {
   }
 
   return filteredProblems[currentIndex + 1];
+}
+
+/** 학습중 이어하기 등 — 문제은행 필터와 무관하게 카테고리 순서로 다음 미해결 문제 */
+function getNextProblemInCategoryAfterCurrent(problem) {
+  if (!problem) {
+    return null;
+  }
+
+  const categoryProblems = getProblemsInCategoryOrder(problem.category, problems, {
+    levelGroup: problem.levelGroup,
+  });
+  const progressByProblemId = getCurrentStudentProgressByProblemId();
+  const currentIdx = categoryProblems.findIndex(({ problem: entry }) => entry.id === problem.id);
+
+  if (currentIdx === -1) {
+    logLearningFlow("getNextProblemInCategoryAfterCurrent — problem not in category order", {
+      problemId: problem.id,
+      category: problem.category,
+    });
+    return null;
+  }
+
+  for (let index = currentIdx + 1; index < categoryProblems.length; index += 1) {
+    const entry = categoryProblems[index];
+    const progress = progressByProblemId?.get(entry.problem.id);
+    const status = progress
+      ? studentProgressService.getProgressStatus(progress)
+      : PROGRESS_STATUS.notStarted;
+    if (status !== PROGRESS_STATUS.solved) {
+      return entry;
+    }
+  }
+
+  return null;
+}
+
+function resolveNextProblemAfterComplete(problem) {
+  const fromListFilter = getNextProblemInCurrentCategory();
+  if (fromListFilter) {
+    logLearningFlow("resolveNextProblemAfterComplete — from list filter", {
+      nextId: fromListFilter.problem?.id,
+      nextIndex: fromListFilter.index,
+    });
+    return fromListFilter;
+  }
+
+  const fromCategory = getNextProblemInCategoryAfterCurrent(problem);
+  if (fromCategory) {
+    logLearningFlow("resolveNextProblemAfterComplete — from category order (study path)", {
+      nextId: fromCategory.problem?.id,
+      nextIndex: fromCategory.index,
+    });
+    return fromCategory;
+  }
+
+  logLearningFlow("resolveNextProblemAfterComplete — no next problem", {
+    problemId: problem?.id,
+    category: problem?.category,
+    selectedCategory: appState.selectedCategory,
+    mode: appState.mode,
+  });
+  return null;
 }
 
 function hideBoardFeedback({ immediate = false } = {}) {

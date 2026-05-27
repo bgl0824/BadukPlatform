@@ -5,6 +5,8 @@ export const appState = {
   problemListSort: "learning",
   problemGradeFilter: "all",
   currentProblemIndex: 0,
+  /** problems 배열 재로드 후 index 보정용 */
+  currentProblemId: null,
   solvedAnswerKeys: new Set(),
   isSolved: false,
   isAiThinking: false,

@@ -12,6 +12,7 @@ import {
   isLastBlackAnswer,
 } from "./session.js";
 import { isValidWhiteResponseMove, resolveWhiteResponse } from "./resolve-white-response.js";
+import { logAiResponseSessionSnapshot } from "./respond-diagnostics.js";
 
 const DEFAULT_AUTHOR_WHITE_RESPONSE_DELAY_MS = 500;
 
@@ -105,6 +106,7 @@ export function createAiResponseSolveEngine({
     if (
       session.phase === "wrong_reveal" ||
       session.phase === "author_white_pending" ||
+      session.phase === "completed" ||
       appState.isAiThinking
     ) {
       return;
@@ -133,6 +135,8 @@ export function createAiResponseSolveEngine({
     }
 
     if (isLastBlackAnswer(session)) {
+      session.phase = "completed";
+      logAiResponseSessionSnapshot(appState, "last black correct — before completeProblem");
       console.log("[AI_RESPONSE] last black correct — complete");
       completeProblem(problem);
       clearSession();
@@ -285,9 +289,20 @@ export function createAiResponseSolveEngine({
       source: result.source,
       point: result.point,
       selectedReason: result.selectedReason,
+      usedLocalFallback: result.usedLocalFallback,
+      katagoElapsedMs: result.katagoElapsedMs,
+      totalElapsedMs: result.totalElapsedMs,
+    });
+    logAiResponseSessionSnapshot(appState, "after resolveWhiteResponse", {
+      respondOk: result.ok,
+      selectedReason: result.selectedReason,
+      usedLocalFallback: result.usedLocalFallback,
     });
 
     if (!isValidWhiteResponseMove(result)) {
+      logAiResponseSessionSnapshot(appState, "invalid white response — rollback", {
+        result,
+      });
       const message = result.message ?? AI_RESPONSE_SOLVE_MESSAGES.serverRequired;
       setFeedback(message, "wrong");
       window.alert?.(message);

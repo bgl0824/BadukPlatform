@@ -1,5 +1,6 @@
 import { isKatagoRespondApiEnabled, requestKatagoRespond } from "./katago-respond-client.js";
 import { logMockWhiteMove, pickMockWhiteResponse } from "./mock-white-response.js";
+import { logKatagoRespondFailure } from "./respond-diagnostics.js";
 import { KATAGO_SOURCE, TACTICAL_FALLBACK_SOURCE } from "./wrong-response-fallback.js";
 
 function isMockAllowed() {
@@ -51,6 +52,17 @@ export async function resolveWhiteResponse({
   }
 
   if (apiResult.disabled || apiResult.needsServer) {
+    logKatagoRespondFailure("resolveWhiteResponse failed", {
+      studentMoveResult,
+      problemId: problem?.id,
+      message: apiResult.message,
+      needsServer: apiResult.needsServer,
+      disabled: apiResult.disabled,
+      upstreamStatus: apiResult.upstreamStatus,
+      responseBody: apiResult,
+      selectedReason: apiResult.selectedReason,
+      usedLocalFallback: apiResult.usedLocalFallback,
+    });
     return {
       ok: false,
       needsServer: true,
@@ -67,7 +79,13 @@ export async function resolveWhiteResponse({
     }
   }
 
-  console.error("[AI_RESPONSE] KataGo respond failed", apiResult);
+  logKatagoRespondFailure("resolveWhiteResponse — no valid move", {
+    studentMoveResult,
+    problemId: problem?.id,
+    responseBody: apiResult,
+    selectedReason: apiResult.selectedReason,
+    usedLocalFallback: apiResult.usedLocalFallback,
+  });
   return {
     ok: false,
     needsServer: true,
