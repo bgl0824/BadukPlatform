@@ -1,3 +1,5 @@
+import { isValidBoardPoint } from "../../game/board-point-validation.js";
+
 const SPOT_HANDLER_KEYS = {
   blue: "AI_RESPONSE_SPOT_BLUE",
   green: "AI_RESPONSE_SPOT_GREEN",
@@ -28,21 +30,24 @@ export function ensureAiResponseSpotDrawHandlers() {
 /**
  * @param {import("./candidates.js").AiResponseCandidate[]} candidates
  */
-export function toBoardSpotDecorations(candidates) {
-  return candidates.map((candidate) => ({
-    x: candidate.x,
-    y: candidate.y,
-    type: candidate.color === "green" ? SPOT_HANDLER_KEYS.green : SPOT_HANDLER_KEYS.blue,
-  }));
+export function toBoardSpotDecorations(candidates, boardSize = 13) {
+  return candidates
+    .filter((candidate) => isValidBoardPoint(candidate, boardSize))
+    .map((candidate) => ({
+      x: candidate.x,
+      y: candidate.y,
+      type: candidate.color === "green" ? SPOT_HANDLER_KEYS.green : SPOT_HANDLER_KEYS.blue,
+    }));
 }
 
 /**
  * @param {import("../../board.js")} boardController
  * @param {import("./candidates.js").AiResponseCandidate[]} candidates
+ * @param {number} [boardSize]
  */
-export function renderAiResponseSpots(boardController, candidates) {
+export function renderAiResponseSpots(boardController, candidates, boardSize = 13) {
   ensureAiResponseSpotDrawHandlers();
-  boardController.setAiResponseSpots(toBoardSpotDecorations(candidates));
+  boardController.setAiResponseSpots(toBoardSpotDecorations(candidates, boardSize));
 }
 
 export function clearAiResponseSpots(boardController) {

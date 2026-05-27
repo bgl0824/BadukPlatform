@@ -1,3 +1,4 @@
+import { sanitizeBoardPoint } from "../../game/board-point-validation.js";
 import { parseGtpCoordinate, pointKey } from "./coordinates.js";
 
 /**
@@ -49,14 +50,18 @@ export function normalizeCandidateList(rawList, boardSize, source = "configured"
     let point = null;
 
     if (entry?.move && typeof entry.move === "object") {
-      point = { x: Number(entry.move.x), y: Number(entry.move.y) };
+      point = sanitizeBoardPoint(
+        { x: Number(entry.move.x), y: Number(entry.move.y) },
+        boardSize,
+        "ai_response_candidate",
+      );
     } else if (typeof entry?.move === "string") {
       point = parseGtpCoordinate(entry.move, boardSize);
     } else if (Number.isInteger(entry?.x) && Number.isInteger(entry?.y)) {
-      point = { x: entry.x, y: entry.y };
+      point = sanitizeBoardPoint(entry, boardSize, "ai_response_candidate");
     }
 
-    if (!point || !isEmptyIntersection(point, boardSize)) {
+    if (!point) {
       return;
     }
 
@@ -70,15 +75,6 @@ export function normalizeCandidateList(rawList, boardSize, source = "configured"
   });
 
   return dedupeCandidates(normalized);
-}
-
-function isEmptyIntersection(point, boardSize) {
-  return (
-    point.x >= 0 &&
-    point.y >= 0 &&
-    point.x < boardSize &&
-    point.y < boardSize
-  );
 }
 
 function dedupeCandidates(candidates) {

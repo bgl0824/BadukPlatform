@@ -1,3 +1,7 @@
+import {
+  isValidBoardPoint,
+  sanitizeBoardPoint,
+} from "../../game/board-point-validation.js";
 import { parseGtpCoordinate } from "../ai-response-ux/coordinates.js";
 import { getExpectedBlackAnswerCount, normalizeAnswerMoveCount } from "./constants.js";
 
@@ -27,11 +31,15 @@ export function normalizeBlackAnswerSequence(raw, boardSize) {
       point = parseGtpCoordinate(entry.move, boardSize);
       label = entry.move;
     } else if (entry?.move && typeof entry.move === "object") {
-      point = { x: Number(entry.move.x), y: Number(entry.move.y) };
-      label = formatCoordLabel(point);
+      point = sanitizeBoardPoint(
+        { x: Number(entry.move.x), y: Number(entry.move.y) },
+        boardSize,
+        "black_answer_sequence",
+      );
+      label = point ? formatCoordLabel(point) : "";
     } else if (Number.isInteger(entry?.x) && Number.isInteger(entry?.y)) {
-      point = { x: entry.x, y: entry.y };
-      label = formatCoordLabel(point);
+      point = sanitizeBoardPoint(entry, boardSize, "black_answer_sequence");
+      label = point ? formatCoordLabel(point) : "";
     }
 
     if (!point) {
@@ -98,18 +106,24 @@ export function normalizeFullAnswerSequence(raw, boardSize) {
         color = index % 2 === 0 ? COLOR_BLACK : COLOR_WHITE;
       }
     } else if (entry?.move && typeof entry.move === "object") {
-      point = { x: Number(entry.move.x), y: Number(entry.move.y) };
-      label = formatCoordLabel(point);
+      point = sanitizeBoardPoint(
+        { x: Number(entry.move.x), y: Number(entry.move.y) },
+        boardSize,
+        "full_answer_sequence",
+      );
+      label = point ? formatCoordLabel(point) : "";
       if (!color) {
         color = index % 2 === 0 ? COLOR_BLACK : COLOR_WHITE;
       }
     } else if (Number.isInteger(entry?.x) && Number.isInteger(entry?.y)) {
-      point = { x: entry.x, y: entry.y };
-      label = formatCoordLabel(point);
+      point = sanitizeBoardPoint(entry, boardSize, "full_answer_sequence");
+      label = point ? formatCoordLabel(point) : "";
       if (!color) {
         color = index % 2 === 0 ? COLOR_BLACK : COLOR_WHITE;
       }
     }
+
+    point = point ? sanitizeBoardPoint(point, boardSize, "full_answer_sequence") : null;
 
     if (!point || !color) {
       return;
@@ -326,6 +340,10 @@ export function validateFullAnswerSequence(problem, boardSize, occupiedKeys) {
     if (entry.color !== expectedColor) {
       return `${index + 1}착은 ${getSequenceColorLabel(expectedColor)}이어야 합니다.`;
     }
+    if (!isValidBoardPoint(entry, boardSize)) {
+      return `정답 수순 ${index + 1}착 좌표가 올바르지 않습니다.`;
+    }
+
     const key = `${entry.x}:${entry.y}`;
     if (occupiedKeys.has(key)) {
       return `정답 수순 ${index + 1}착이 기존 돌과 겹칩니다.`;

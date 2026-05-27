@@ -1,3 +1,8 @@
+import {
+  isValidBoardPoint,
+  sanitizeBoardPoint,
+  sanitizeStone,
+} from "../game/board-point-validation.js";
 import { isBoardProblem, isOxProblem, PROBLEM_TYPE } from "../game/problem-type.js";
 import { PROBLEM_MODE } from "../game/problem-mode.js";
 import {
@@ -616,6 +621,25 @@ export function createAdminEditorController({
     });
   }
 
+  function safeAdminBoardAdd(adminBoard, object, context = "admin") {
+    if (!isValidBoardPoint(object, BOARD_SIZE)) {
+      console.warn("[AdminBoard] skip invalid WGo object", { object, context });
+      return false;
+    }
+
+    try {
+      adminBoard.addObject(object);
+      return true;
+    } catch (error) {
+      console.warn("[AdminBoard] addObject failed", {
+        object,
+        context,
+        message: error?.message,
+      });
+      return false;
+    }
+  }
+
   function renderAdminBoard() {
     const boardElement = elements.adminEditor.querySelector("#admin-board");
     if (!boardElement || !adminState.draft) {
@@ -635,15 +659,19 @@ export function createAdminEditorController({
     });
 
     adminState.draft.stones.forEach((stone) => {
-      adminBoard.addObject({
-        x: stone.x,
-        y: stone.y,
-        c: stone.color === STONE.black ? WGo.B : WGo.W,
+      const sanitized = sanitizeStone(stone, BOARD_SIZE, "admin:stone");
+      if (!sanitized) {
+        return;
+      }
+      safeAdminBoardAdd(adminBoard, {
+        x: sanitized.x,
+        y: sanitized.y,
+        c: sanitized.color === STONE.black ? WGo.B : WGo.W,
       });
 
-      const markType = getWgoMarkType(stone.mark);
+      const markType = getWgoMarkType(sanitized.mark);
       if (markType) {
-        adminBoard.addObject({ x: stone.x, y: stone.y, type: markType });
+        safeAdminBoardAdd(adminBoard, { x: sanitized.x, y: sanitized.y, type: markType });
       }
     });
 
@@ -655,11 +683,18 @@ export function createAdminEditorController({
       adminState.draft.correctMove &&
       !(aiResponseDraft && previewSequence.length > 0)
     ) {
-      adminBoard.addObject({
-        x: adminState.draft.correctMove.x,
-        y: adminState.draft.correctMove.y,
-        type: "TR",
-      });
+      const correctPoint = sanitizeBoardPoint(
+        adminState.draft.correctMove,
+        BOARD_SIZE,
+        "admin:correctMove",
+      );
+      if (correctPoint) {
+        safeAdminBoardAdd(adminBoard, {
+          x: correctPoint.x,
+          y: correctPoint.y,
+          type: "TR",
+        });
+      }
     }
 
     if (
@@ -668,22 +703,29 @@ export function createAdminEditorController({
       Array.isArray(adminState.draft.correctSequence)
     ) {
       adminState.draft.correctSequence.forEach((move) => {
-        adminBoard.addObject({ x: move.x, y: move.y, type: "CR" });
+        const point = sanitizeBoardPoint(move, BOARD_SIZE, "admin:correctSequence");
+        if (point) {
+          safeAdminBoardAdd(adminBoard, { x: point.x, y: point.y, type: "CR" });
+        }
       });
     }
 
     if (isBoardProblem(adminState.draft) && aiResponseDraft) {
       previewSequence.forEach((move) => {
-        adminBoard.addObject({
-          x: move.x,
-          y: move.y,
+        const point = sanitizeBoardPoint(move, BOARD_SIZE, "admin:sequenceMarker");
+        if (!point) {
+          return;
+        }
+        safeAdminBoardAdd(adminBoard, {
+          x: point.x,
+          y: point.y,
           c: move.color === "white" ? WGo.W : WGo.B,
         });
-        adminBoard.addObject({
-          x: move.x,
-          y: move.y,
+        safeAdminBoardAdd(adminBoard, {
+          x: point.x,
+          y: point.y,
           type: "LB",
-          text: String(move.ply),
+          text: String(move.ply ?? ""),
         });
       });
     }

@@ -9,6 +9,7 @@ export const AI_RESPONSE_SOLVE_MESSAGES = {
     "문제 주변에서 백 응수를 찾지 못했습니다. KataGo 응답이 문제 영역 밖입니다.",
   awaitBlack: (ply, total) => `흑 ${ply}수 / 총 ${total}수`,
   katagoThinking: "백이 응수하는 중…",
+  authorWhiteThinking: "백이 응수하는 중…",
   wrongAfterWhite: "오답입니다. 백 응수를 확인한 뒤 다시 도전해 보세요.",
   complete: "정답입니다.",
 };

@@ -1,3 +1,4 @@
+import { isValidBoardPoint } from "../../game/board-point-validation.js";
 import { AI_RESPONSE_SOLVE_MESSAGES } from "./constants.js";
 import { getExpectedAuthorWhite } from "./answer-sequence.js";
 import { isCorrectBlackMove } from "./black-sequence.js";
@@ -11,6 +12,22 @@ import {
   isLastBlackAnswer,
 } from "./session.js";
 import { isValidWhiteResponseMove, resolveWhiteResponse } from "./resolve-white-response.js";
+
+const DEFAULT_AUTHOR_WHITE_RESPONSE_DELAY_MS = 500;
+
+function getAuthorWhiteResponseDelayMs() {
+  const configured = Number(window.BadukConfig?.authorWhiteResponseDelayMs);
+  if (Number.isFinite(configured) && configured >= 0) {
+    return configured;
+  }
+  return DEFAULT_AUTHOR_WHITE_RESPONSE_DELAY_MS;
+}
+
+function delay(ms) {
+  return new Promise((resolve) => {
+    window.setTimeout(resolve, ms);
+  });
+}
 
 /**
  * AI 응수형: 정답 루트 백 = 제작자 수순, 오답 루트 백 = KataGo.
@@ -72,7 +89,12 @@ export function createAiResponseSolveEngine({
       blackAnswerIndex: session?.blackAnswerIndex,
     });
 
-    if (!problem || !session || session.phase === "katago_pending") {
+    if (
+      !problem ||
+      !session ||
+      session.phase === "katago_pending" ||
+      session.phase === "author_white_pending"
+    ) {
       return;
     }
 
@@ -80,7 +102,11 @@ export function createAiResponseSolveEngine({
       return;
     }
 
-    if (session.phase === "wrong_reveal" || appState.isAiThinking) {
+    if (
+      session.phase === "wrong_reveal" ||
+      session.phase === "author_white_pending" ||
+      appState.isAiThinking
+    ) {
       return;
     }
 
@@ -113,7 +139,7 @@ export function createAiResponseSolveEngine({
       return;
     }
 
-    const authorOk = playAuthorWhiteOnCorrect(problem, session);
+    const authorOk = await playAuthorWhiteOnCorrect(problem, session);
     if (!authorOk) {
       return;
     }
@@ -164,7 +190,7 @@ export function createAiResponseSolveEngine({
     clearSession();
   }
 
-  function playAuthorWhiteOnCorrect(problem, session) {
+  async function playAuthorWhiteOnCorrect(problem, session) {
     const expected = getExpectedAuthorWhite(session);
     if (!expected) {
       const message =
@@ -176,7 +202,37 @@ export function createAiResponseSolveEngine({
     }
 
     const point = { x: expected.x, y: expected.y };
+    if (!isValidBoardPoint(point, boardSize)) {
+      console.warn("[AI_RESPONSE] invalid author white coordinate", expected);
+      rollbackAuthorWhiteFailure(session, problem);
+      return false;
+    }
     if (boardController.hasStone(point)) {
+      setFeedback("제작자 정답 백 수 좌표에 이미 돌이 있습니다.", "wrong");
+      rollbackAuthorWhiteFailure(session, problem);
+      return false;
+    }
+
+    const delayMs = getAuthorWhiteResponseDelayMs();
+    session.phase = "author_white_pending";
+    appState.isAiThinking = true;
+    syncBoardPreviewContext();
+    setStatus(AI_RESPONSE_SOLVE_MESSAGES.authorWhiteThinking, { aiResponseTurn: true });
+
+    if (delayMs > 0) {
+      await delay(delayMs);
+    }
+
+    if (getSession() !== session || session.phase !== "author_white_pending") {
+      appState.isAiThinking = false;
+      syncBoardPreviewContext();
+      return false;
+    }
+
+    if (boardController.hasStone(point)) {
+      appState.isAiThinking = false;
+      session.phase = "await_black";
+      syncBoardPreviewContext();
       setFeedback("제작자 정답 백 수 좌표에 이미 돌이 있습니다.", "wrong");
       rollbackAuthorWhiteFailure(session, problem);
       return false;
@@ -186,23 +242,28 @@ export function createAiResponseSolveEngine({
     boardController.addStone(whiteMove);
     removeCapturedStonesAfterMove(whiteMove);
     advanceAfterAuthorWhiteOnCorrect(session, whiteMove);
+    appState.isAiThinking = false;
+    syncBoardPreviewContext();
 
     console.log("[AI_RESPONSE] author white (correct route)", {
       move: expected.label,
       ply: session.currentPly - 1,
       blackAnswerIndex: session.blackAnswerIndex,
+      delayMs,
     });
 
     return true;
   }
 
   function rollbackAuthorWhiteFailure(session, problem) {
+    appState.isAiThinking = false;
     if (session.playedMoves.length > 0) {
       session.playedMoves.pop();
       session.currentPly = Math.max(1, session.currentPly - 1);
       rebuildBoardFromPlayedMoves(problem, session.playedMoves);
     }
     session.phase = "await_black";
+    syncBoardPreviewContext();
   }
 
   async function playKatagoWhiteOnWrong(problem, session, lastBlackMove) {
@@ -234,6 +295,13 @@ export function createAiResponseSolveEngine({
       return false;
     }
 
+    if (!isValidBoardPoint(result.point, boardSize)) {
+      console.warn("[AI_RESPONSE] invalid KataGo white coordinate", result.point);
+      setFeedback("백 응수 좌표가 올바르지 않습니다.", "wrong");
+      rollbackFailedKatago(session, problem);
+      return false;
+    }
+
     if (boardController.hasStone(result.point)) {
       setFeedback("백 응수 좌표가 이미 돌이 있는 곳입니다.", "wrong");
       rollbackFailedKatago(session, problem);
@@ -257,6 +325,7 @@ export function createAiResponseSolveEngine({
       const session = getSession();
       return (
         session?.phase === "katago_pending" ||
+        session?.phase === "author_white_pending" ||
         session?.phase === "wrong_reveal" ||
         appState.isAiThinking
       );

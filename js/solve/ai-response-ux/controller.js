@@ -63,7 +63,7 @@ export function createAiResponseUxController({
     };
 
     appState.isAiThinking = false;
-    renderAiResponseSpots(boardController, candidates);
+    renderAiResponseSpots(boardController, candidates, boardSize);
     renderPanel({ visible: true, showActions: false });
     syncBoardPreviewContext();
     setStatus("백 응수 차례", { aiResponseTurn: true });
@@ -134,7 +134,7 @@ export function createAiResponseUxController({
     session.selectedCandidate = null;
     session.whiteMove = null;
 
-    renderAiResponseSpots(boardController, session.candidates);
+    renderAiResponseSpots(boardController, session.candidates, boardSize);
     renderPanel({ visible: true, showActions: false });
     syncBoardPreviewContext();
     setStatus("백 응수 차례", { aiResponseTurn: true });

@@ -1,4 +1,11 @@
-(function () {
+import {
+  isValidBoardPoint,
+  sanitizeBoardPoint,
+  sanitizeBoardSpot,
+  sanitizeStone,
+  sanitizeStones,
+} from "./game/board-point-validation.js";
+
 const { STONE } = window.BadukProblems;
 
 const STONE_MARK_TYPES = {
@@ -267,6 +274,9 @@ class BoardController {
   }
 
   schedulePreviewUpdate(point) {
+    if (!isValidBoardPoint(point, this.size)) {
+      return;
+    }
     this.pendingPreviewPoint = point;
 
     if (this.previewFrameId !== null) {
@@ -306,6 +316,11 @@ class BoardController {
   }
 
   handlePointerSelect(point, button = "primary") {
+    if (!isValidBoardPoint(point, this.size)) {
+      console.warn("[BoardController] ignore invalid pointer", { point, button });
+      return;
+    }
+
     const isSecondary = button === "secondary";
 
     if (!this.isPreviewEnabled()) {
@@ -399,7 +414,37 @@ class BoardController {
       previewStatus: this.previewState.previewStatus,
     };
 
-    this.board.addObject(this.ghostObject);
+    this.safeAddObject(this.ghostObject, "ghost");
+  }
+
+  /**
+   * WGo에 넘기기 전 좌표 검증 (invalid면 warn만)
+   */
+  safeAddObject(object, context = "") {
+    if (!object || typeof object !== "object") {
+      return false;
+    }
+
+    if (!isValidBoardPoint(object, this.size)) {
+      console.warn("[BoardController] skip invalid WGo object", {
+        object,
+        context,
+        boardSize: this.size,
+      });
+      return false;
+    }
+
+    try {
+      this.board.addObject(object);
+      return true;
+    } catch (error) {
+      console.warn("[BoardController] WGo addObject failed", {
+        object,
+        context,
+        message: error?.message,
+      });
+      return false;
+    }
   }
 
   removeGhostObject() {
@@ -412,14 +457,16 @@ class BoardController {
   }
 
   loadPosition(stones) {
-    this.stones = [...stones];
+    this.stones = sanitizeStones(stones, this.size, "loadPosition");
     this.answerMarker = null;
     this.clearPreview();
     this.render();
   }
 
   setAiResponseSpots(spots = []) {
-    this.aiResponseSpots = Array.isArray(spots) ? [...spots] : [];
+    this.aiResponseSpots = (Array.isArray(spots) ? spots : [])
+      .map((spot) => sanitizeBoardSpot(spot, this.size, "aiResponseSpot"))
+      .filter(Boolean);
     this.render();
   }
 
@@ -428,31 +475,44 @@ class BoardController {
   }
 
   hasStone(point) {
+    if (!isValidBoardPoint(point, this.size)) {
+      return false;
+    }
     return this.stones.some((stone) => stone.x === point.x && stone.y === point.y);
   }
 
   getStoneAt(point) {
+    if (!isValidBoardPoint(point, this.size)) {
+      return undefined;
+    }
     return this.stones.find((stone) => stone.x === point.x && stone.y === point.y);
   }
 
   addStone(stone) {
-    if (this.hasStone(stone)) {
+    const sanitized = sanitizeStone(stone, this.size, "addStone");
+    if (!sanitized) {
       return false;
     }
 
-    this.stones = [...this.stones, stone];
-    this.board.addObject(toWgoStone(stone));
+    if (this.hasStone(sanitized)) {
+      return false;
+    }
+
+    this.stones = [...this.stones, sanitized];
+    this.safeAddObject(toWgoStone(sanitized), "addStone");
     return true;
   }
 
   setStones(stones) {
-    this.stones = [...stones];
+    this.stones = sanitizeStones(stones, this.size, "setStones");
     this.clearPreview();
     this.render();
   }
 
   setAnswerMarker(point) {
-    this.answerMarker = point ? { ...point } : null;
+    this.answerMarker = point
+      ? sanitizeBoardPoint(point, this.size, "answerMarker")
+      : null;
     this.render();
   }
 
@@ -480,28 +540,45 @@ class BoardController {
   render() {
     const previewState = this.previewState;
     this.ghostObject = null;
-    this.board.removeAllObjects();
+
+    try {
+      this.board.removeAllObjects();
+    } catch (error) {
+      console.warn("[BoardController] removeAllObjects failed", error?.message);
+    }
+
     this.stones.forEach((stone) => {
-      this.board.addObject(toWgoStone(stone));
-      const mark = toWgoMark(stone);
+      const sanitized = sanitizeStone(stone, this.size, "render:stone");
+      if (!sanitized) {
+        return;
+      }
+      this.safeAddObject(toWgoStone(sanitized), "render:stone");
+      const mark = toWgoMark(sanitized);
       if (mark) {
-        this.board.addObject(mark);
+        this.safeAddObject(mark, "render:mark");
       }
     });
 
     if (this.answerMarker) {
-      this.board.addObject({
-        ...this.answerMarker,
-        type: "TR",
-      });
+      this.safeAddObject(
+        {
+          x: this.answerMarker.x,
+          y: this.answerMarker.y,
+          type: "TR",
+        },
+        "render:answerMarker",
+      );
     }
 
     this.aiResponseSpots.forEach((spot) => {
-      this.board.addObject({
-        x: spot.x,
-        y: spot.y,
-        type: spot.type,
-      });
+      this.safeAddObject(
+        {
+          x: spot.x,
+          y: spot.y,
+          type: spot.type,
+        },
+        "render:aiResponseSpot",
+      );
     });
 
     this.previewState = previewState;
@@ -538,5 +615,7 @@ function toWgoMark(stone) {
 
 window.BadukBoard = {
   BoardController,
+  isValidBoardPoint,
+  sanitizeBoardPoint,
+  sanitizeStones,
 };
-})();

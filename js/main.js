@@ -12,6 +12,7 @@ import { adminElements } from "./dom/admin-elements.js";
 import { platformAdminElements } from "./dom/platform-admin-elements.js";
 import { problemElements } from "./dom/problem-elements.js";
 import { removeCapturedStonesAfterMove as calculateStonesAfterCapture } from "./game/capture.js";
+import { sanitizeStones } from "./game/board-point-validation.js";
 import { evaluatePlacement, PLACEMENT_STATUS } from "./game/placement-validation.js";
 import { isSamePoint } from "./game/rules.js";
 import {
@@ -2541,7 +2542,9 @@ function getProblemStoreErrorMessage(error, actionLabel) {
 }
 
 function cloneBoardStones(stones = []) {
-  return stones.map((stone) => ({ ...stone }));
+  return sanitizeStones(stones, BOARD_SIZE, "cloneBoardStones").map((stone) => ({
+    ...stone,
+  }));
 }
 
 function captureInitialBoardState(problem) {
