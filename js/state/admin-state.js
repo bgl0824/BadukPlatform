@@ -20,4 +20,6 @@ export const adminState = {
   draft: null,
   activeTool: STONE.black,
   activeMark: "triangle",
+  /** AI 응수형: full_answer_sequence 보드 클릭 입력 모드 */
+  fullSequenceInputMode: false,
 };

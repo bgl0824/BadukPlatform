@@ -1,14 +1,24 @@
 import { isBoardProblem, isOxProblem, PROBLEM_TYPE } from "../game/problem-type.js";
 import { PROBLEM_MODE } from "../game/problem-mode.js";
-import { ANSWER_MOVE_COUNTS } from "../solve/ai-response-solve/constants.js";
-import { getExpectedBlackAnswerCount } from "../solve/ai-response-solve/constants.js";
+import {
+  ANSWER_MOVE_COUNTS,
+  normalizeAnswerMoveCount,
+} from "../solve/ai-response-solve/constants.js";
 import {
   formatCoordLabel,
-  normalizeBlackAnswerSequence,
-  resolveBlackAnswerConfig,
-  syncLegacyCorrectMove,
-  toBlackAnswerSequencePayload,
-} from "../solve/ai-response-solve/black-sequence.js";
+  getNextSequenceColor,
+  getSequenceColorLabel,
+  normalizeFullAnswerSequence,
+  resolveAnswerSequenceConfig,
+  applyFullAnswerSequenceToDraft,
+  renumberSequenceMoves,
+  toFullAnswerSequencePayload,
+  validateFullAnswerSequence,
+} from "../solve/ai-response-solve/answer-sequence.js";
+import {
+  AI_RESPONSE_STYLES,
+  AI_RESPONSE_STYLE_LABELS,
+} from "../solve/ai-response-solve/tactical-response-styles.js";
 import { LEVEL_GROUPS, normalizeLevelGroup } from "../services/level-group-service.js";
 import {
   assignDisplayOrderForNewProblem,
@@ -108,14 +118,27 @@ export function createAdminEditorController({
             <strong id="admin-sequence-label">${formatCorrectSequence(draft)}</strong>
           </p>
           <div class="admin-ai-response-meta${isAiResponseDraft(draft) ? "" : " is-hidden"}">
-            <p class="panel-label">AI 흑 정답 수순 (${formatBlackAnswerSequenceSummary(draft)})</p>
-            <ul id="admin-black-sequence-list" class="admin-black-sequence-list"></ul>
+            <label class="admin-ai-response-style-label">
+              백 응수 전술 스타일
+              <select id="admin-ai-response-style">${renderAiResponseStyleOptions(draft)}</select>
+            </label>
+            <p class="admin-field-hint">비우면 카테고리명으로만 보조 추론(단수치기→capture 등). 사활·맥 문제는 스타일을 직접 지정하세요.</p>
+            <p class="panel-label">정답 수순 (${formatFullAnswerSequenceSummary(draft)})</p>
+            <button
+              type="button"
+              id="admin-full-sequence-input-toggle"
+              class="secondary-button admin-full-sequence-input-toggle"
+            >
+              정답 수순 입력
+            </button>
+            <p id="admin-full-sequence-input-hint" class="admin-field-hint"></p>
+            <ul id="admin-full-sequence-list" class="admin-black-sequence-list"></ul>
             <button
               type="button"
               class="secondary-button admin-black-sequence-clear"
-              data-admin-action="clear-black-sequence"
+              data-admin-action="clear-full-sequence"
             >
-              흑 정답 전체 초기화
+              정답 수순 전체 초기화
             </button>
           </div>
         </div>
@@ -124,7 +147,6 @@ export function createAdminEditorController({
           <button class="admin-board-tool" data-admin-tool="white" type="button">백돌</button>
           <button class="admin-board-tool admin-board-tool--board-only${isOx ? " is-hidden" : ""}" data-admin-tool="answer" type="button">정답 수정</button>
           <button class="admin-board-tool admin-board-tool--board-only${isOx ? " is-hidden" : ""}" data-admin-tool="sequence" type="button">활로 정답 추가</button>
-          <button class="admin-board-tool admin-board-tool--ai-response${isAiResponseDraft(draft) ? "" : " is-hidden"}" data-admin-tool="black-answer" type="button">흑 정답 추가</button>
           <button class="admin-board-tool admin-board-tool--board-only${isOx ? " is-hidden" : ""}" data-admin-tool="clear-sequence" type="button">수순 초기화</button>
         </div>
         <div class="mark-grid">
@@ -160,7 +182,7 @@ export function createAdminEditorController({
           </button>
         </div>
       </section>
-      <p class="admin-board-help${isOx ? " is-hidden" : ""}">활로: 활로 정답 추가. AI 응수형: 흑 정답 추가(백은 KataGo). 일반: 정답 수정.</p>
+      <p class="admin-board-help${isOx ? " is-hidden" : ""}">활로: 활로 정답 추가. AI 응수형: 「정답 수순 입력」 후 보드 클릭. 일반: 정답 수정.</p>
       <p id="admin-editor-status" class="admin-editor-status" aria-live="polite">문제 정보를 입력한 뒤 저장을 눌러 주세요.</p>
       <div class="admin-editor-actions">
         <button id="admin-cancel" class="secondary-button" type="button">취소</button>
@@ -185,21 +207,35 @@ export function createAdminEditorController({
       updateAdminTypeUi();
       updateAdminAnswerLabel();
     });
+    elements.adminEditor.querySelector("#admin-ai-response-style")?.addEventListener("change", (event) => {
+      const value = String(event.target.value ?? "").trim();
+      if (!value) {
+        delete adminState.draft.aiResponseStyle;
+        delete adminState.draft.ai_response_style;
+      } else {
+        adminState.draft.aiResponseStyle = value;
+        adminState.draft.ai_response_style = value;
+      }
+    });
     elements.adminEditor.querySelector("#admin-answer-move-count")?.addEventListener("change", () => {
       adminState.draft.answerMoveCount = Number(
         elements.adminEditor.querySelector("#admin-answer-move-count")?.value ?? 1,
       );
-      trimBlackSequenceToAnswerCount(adminState.draft);
+      trimFullSequenceToAnswerCount(adminState.draft);
+      updateFullSequenceInputUi();
       updateAdminAnswerLabel();
       renderAdminBoard();
     });
-    elements.adminEditor.querySelector("[data-admin-action='clear-black-sequence']")?.addEventListener(
+    elements.adminEditor
+      .querySelector("#admin-full-sequence-input-toggle")
+      ?.addEventListener("click", toggleFullSequenceInputMode);
+    elements.adminEditor.querySelector("[data-admin-action='clear-full-sequence']")?.addEventListener(
       "click",
-      clearAdminBlackAnswerSequence,
+      clearAdminFullSequence,
     );
     elements.adminEditor
-      .querySelector("#admin-black-sequence-list")
-      ?.addEventListener("click", handleBlackSequenceListClick);
+      .querySelector("#admin-full-sequence-list")
+      ?.addEventListener("click", handleFullSequenceListClick);
     elements.adminEditor.querySelectorAll("[data-admin-ox-answer]").forEach((button) => {
       button.addEventListener("click", () => {
         adminState.draft.oxAnswer = button.dataset.adminOxAnswer === "true";
@@ -208,6 +244,7 @@ export function createAdminEditorController({
       });
     });
     renderAdminBoard();
+    updateFullSequenceInputUi();
   }
 
   function updateAdminOxAnswerChoice() {
@@ -257,12 +294,100 @@ export function createAdminEditorController({
       .querySelector(".admin-ai-response-meta")
       ?.classList.toggle("is-hidden", !isAiResponse);
     if (isAiResponse) {
-      renderAdminBlackSequenceList();
+      renderAdminFullSequenceList();
+      updateFullSequenceInputUi();
+    }
+  }
+
+  function updateFullSequenceInputUi() {
+    const toggle = elements.adminEditor.querySelector("#admin-full-sequence-input-toggle");
+    const hint = elements.adminEditor.querySelector("#admin-full-sequence-input-hint");
+    const board = elements.adminEditor.querySelector("#admin-board");
+    if (!toggle || !adminState.draft || !isAiResponseDraft(adminState.draft)) {
+      return;
+    }
+
+    const fullSequence = getAdminFullSequence(adminState.draft);
+    const answerMoveCount = normalizeAnswerMoveCount(
+      adminState.draft.answerMoveCount ?? adminState.draft.answer_move_count ?? 1,
+    );
+    const isComplete = fullSequence.length >= answerMoveCount;
+
+    if (isComplete) {
+      adminState.fullSequenceInputMode = false;
+    }
+
+    const inInput = adminState.fullSequenceInputMode && !isComplete;
+
+    toggle.classList.toggle("is-active", inInput);
+    toggle.textContent = inInput
+      ? "입력 중… (닫기)"
+      : isComplete
+        ? "정답 수순 표시"
+        : "정답 수순 입력";
+
+    board?.classList.toggle("is-full-sequence-input", inInput);
+
+    if (hint) {
+      if (inInput) {
+        const nextPly = fullSequence.length + 1;
+        const nextColor = getSequenceColorLabel(getNextSequenceColor(fullSequence.length));
+        hint.textContent = `${nextPly}수(${nextColor})를 보드에서 클릭하세요. (${fullSequence.length}/${answerMoveCount})`;
+      } else if (isComplete) {
+        hint.textContent = `${answerMoveCount}수 정답 수순 입력 완료. 수정하려면 목록에서 삭제하거나 전체 초기화하세요.`;
+      } else {
+        hint.textContent =
+          "「정답 수순 입력」을 누른 뒤 보드에서 순서대로 찍으세요 (흑·백 교대).";
+      }
+    }
+  }
+
+  function toggleFullSequenceInputMode() {
+    if (!adminState.draft || !isAiResponseDraft(adminState.draft)) {
+      return;
+    }
+
+    const fullSequence = getAdminFullSequence(adminState.draft);
+    const answerMoveCount = normalizeAnswerMoveCount(
+      adminState.draft.answerMoveCount ?? adminState.draft.answer_move_count ?? 1,
+    );
+
+    if (fullSequence.length >= answerMoveCount) {
+      adminState.fullSequenceInputMode = false;
+      updateFullSequenceInputUi();
+      renderAdminBoard();
+      setFeedback(`${answerMoveCount}수 정답 수순 입력 완료`, "correct");
+      return;
+    }
+
+    adminState.fullSequenceInputMode = !adminState.fullSequenceInputMode;
+    updateFullSequenceInputUi();
+    renderAdminBoard();
+
+    if (adminState.fullSequenceInputMode) {
+      setFeedback(
+        `보드에서 ${answerMoveCount}착까지 순서대로 클릭하세요 (1수=흑).`,
+        "correct",
+      );
+    } else {
+      setFeedback("정답 수순 입력을 종료했습니다.");
     }
   }
 
   function isAiResponseDraft(draft) {
     return String(draft?.problemMode ?? "") === PROBLEM_MODE.aiResponse;
+  }
+
+  function renderAiResponseStyleOptions(draft) {
+    const current = String(
+      draft?.aiResponseStyle ?? draft?.ai_response_style ?? "",
+    ).trim();
+    const autoOption = `<option value=""${!current ? " selected" : ""}>자동 (카테고리 보조)</option>`;
+    const styleOptions = AI_RESPONSE_STYLES.map(
+      (style) =>
+        `<option value="${style}"${style === current ? " selected" : ""}>${AI_RESPONSE_STYLE_LABELS[style] ?? style}</option>`,
+    ).join("");
+    return autoOption + styleOptions;
   }
 
   function renderProblemModeOptions(selectedMode) {
@@ -287,57 +412,86 @@ export function createAdminEditorController({
     ).join("");
   }
 
-  function formatBlackAnswerSequenceSummary(draft) {
-    const { blackAnswers, answerMoveCount } = resolveBlackAnswerConfig(draft, BOARD_SIZE);
-    const expected = getExpectedBlackAnswerCount(answerMoveCount);
-    return `${blackAnswers.length} / ${expected}수 (${answerMoveCount}수 문제)`;
+  function formatFullAnswerSequenceSummary(draft) {
+    const answerMoveCount = normalizeAnswerMoveCount(
+      draft?.answerMoveCount ?? draft?.answer_move_count ?? 1,
+    );
+    return `${getAdminFullSequence(draft).length} / ${answerMoveCount}착`;
   }
 
-  function getAdminBlackAnswers(draft = adminState.draft) {
-    return normalizeBlackAnswerSequence(draft?.blackAnswerSequence, BOARD_SIZE);
+  function getAdminFullSequence(draft = adminState.draft) {
+    return normalizeFullAnswerSequence(
+      draft?.fullAnswerSequence ?? draft?.full_answer_sequence ?? [],
+      BOARD_SIZE,
+    );
   }
 
-  function setAdminBlackAnswers(blackAnswers) {
-    adminState.draft.blackAnswerSequence = toBlackAnswerSequencePayload(blackAnswers);
-    syncLegacyCorrectMove(adminState.draft);
-    trimBlackSequenceToAnswerCount(adminState.draft);
+  function setAdminFullSequence(fullSequence) {
+    if (!adminState.draft) {
+      return;
+    }
+    const answerMoveCount = normalizeAnswerMoveCount(
+      adminState.draft.answerMoveCount ?? adminState.draft.answer_move_count ?? 1,
+    );
+    const trimmed = fullSequence.slice(0, answerMoveCount);
+    applyFullAnswerSequenceToDraft(adminState.draft, trimmed, BOARD_SIZE);
   }
 
-  function trimBlackSequenceToAnswerCount(draft) {
-    const { answerMoveCount } = resolveBlackAnswerConfig(draft, BOARD_SIZE);
-    const maxBlack = getExpectedBlackAnswerCount(answerMoveCount);
-    const current = getAdminBlackAnswers(draft);
-    if (current.length > maxBlack) {
-      draft.blackAnswerSequence = toBlackAnswerSequencePayload(current.slice(0, maxBlack));
-      syncLegacyCorrectMove(draft);
+  function trimFullSequenceToAnswerCount(draft) {
+    const answerMoveCount = normalizeAnswerMoveCount(
+      draft?.answerMoveCount ?? draft?.answer_move_count ?? 1,
+    );
+    const current = normalizeFullAnswerSequence(
+      draft?.fullAnswerSequence ?? draft?.full_answer_sequence ?? [],
+      BOARD_SIZE,
+    );
+    if (current.length > answerMoveCount) {
+      applyFullAnswerSequenceToDraft(draft, current.slice(0, answerMoveCount), BOARD_SIZE);
     }
   }
 
-  function renderAdminBlackSequenceList() {
-    const list = elements.adminEditor.querySelector("#admin-black-sequence-list");
+  function refreshAdminSequenceUi() {
+    const answerLabel = elements.adminEditor.querySelector("#admin-answer-label");
+    if (answerLabel && adminState.draft) {
+      answerLabel.textContent = formatBoardAnswerLabel(adminState.draft);
+    }
+    const sequenceLabel = elements.adminEditor.querySelector("#admin-sequence-label");
+    if (sequenceLabel && adminState.draft) {
+      sequenceLabel.textContent = formatCorrectSequence(adminState.draft);
+    }
+    renderAdminFullSequenceList();
+    updateFullSequenceInputUi();
+  }
+
+  function renderAdminFullSequenceList() {
+    const list =
+      elements.adminEditor.querySelector("#admin-full-sequence-list") ??
+      elements.adminEditor.querySelector("#admin-black-sequence-list");
     if (!list || !adminState.draft) {
       return;
     }
 
-    const { blackAnswers, answerMoveCount } = resolveBlackAnswerConfig(adminState.draft, BOARD_SIZE);
-    const expected = getExpectedBlackAnswerCount(answerMoveCount);
+    const fullSequence = getAdminFullSequence(adminState.draft);
+    const answerMoveCount = normalizeAnswerMoveCount(
+      adminState.draft.answerMoveCount ?? adminState.draft.answer_move_count ?? 1,
+    );
 
-    if (blackAnswers.length === 0) {
-      list.innerHTML = `<li class="admin-black-sequence-empty">흑 정답이 없습니다. 「흑 정답 추가」로 ${expected}개를 지정하세요.</li>`;
+    if (fullSequence.length === 0) {
+      list.innerHTML = `<li class="admin-black-sequence-empty">${answerMoveCount}착 정답 수순을 「정답 수순 입력」 후 보드에서 지정하세요.</li>`;
       return;
     }
 
-    list.innerHTML = blackAnswers
+    list.innerHTML = fullSequence
       .map((entry, index) => {
         const label = entry.label ?? formatCoordLabel(entry);
-        const ply = index * 2 + 1;
+        const colorLabel = getSequenceColorLabel(entry.color);
         return `
           <li class="admin-black-sequence-item">
-            <span>${ply}수(흑) <strong>${label}</strong></span>
+            <span>${entry.ply}수(${colorLabel}) <strong>${label}</strong></span>
             <button
               type="button"
               class="secondary-button admin-black-sequence-delete"
-              data-admin-black-delete="${index}"
+              data-admin-sequence-delete="${index}"
             >
               삭제
             </button>
@@ -345,44 +499,62 @@ export function createAdminEditorController({
       })
       .join("");
 
-    if (blackAnswers.length !== expected) {
+    if (fullSequence.length !== answerMoveCount) {
       list.insertAdjacentHTML(
         "beforeend",
-        `<li class="admin-black-sequence-warn">⚠ ${answerMoveCount}수 문제는 흑 정답 ${expected}개가 필요합니다.</li>`,
+        `<li class="admin-black-sequence-warn">⚠ ${answerMoveCount}수 문제는 총 ${answerMoveCount}착이 필요합니다.</li>`,
       );
     }
   }
 
-  function handleBlackSequenceListClick(event) {
-    const button = event.target.closest("[data-admin-black-delete]");
+  function handleFullSequenceListClick(event) {
+    const button = event.target.closest("[data-admin-sequence-delete]");
     if (!button || !adminState.draft) {
       return;
     }
 
-    const index = Number(button.dataset.adminBlackDelete);
+    const index = Number(button.dataset.adminSequenceDelete);
     if (!Number.isInteger(index)) {
       return;
     }
 
-    const next = getAdminBlackAnswers().filter((_, itemIndex) => itemIndex !== index);
-    setAdminBlackAnswers(next);
-    renderAdminBlackSequenceList();
+    const next = renumberSequenceMoves(
+      getAdminFullSequence().filter((_, itemIndex) => itemIndex !== index),
+    );
+    setAdminFullSequence(next);
+
+    const answerMoveCount = normalizeAnswerMoveCount(
+      adminState.draft.answerMoveCount ?? adminState.draft.answer_move_count ?? 1,
+    );
+    adminState.fullSequenceInputMode = next.length < answerMoveCount;
+
     renderAdminBoard();
-    updateAdminAnswerLabel();
-    setFeedback(`흑 정답 ${index + 1}번째 수를 삭제했습니다.`, "correct");
+    refreshAdminSequenceUi();
+    setFeedback(
+      next.length === 0
+        ? "정답 수순을 모두 삭제했습니다."
+        : `정답 수순 ${index + 1}착을 삭제했습니다. (${next.length}/${answerMoveCount})`,
+      "correct",
+    );
   }
 
-  function clearAdminBlackAnswerSequence() {
+  function clearAdminFullSequence() {
     if (!adminState.draft || !isAiResponseDraft(adminState.draft)) {
       return;
     }
 
-    setAdminBlackAnswers([]);
-    adminState.draft.correctMove = null;
-    renderAdminBlackSequenceList();
+    applyFullAnswerSequenceToDraft(adminState.draft, [], BOARD_SIZE);
+    adminState.fullSequenceInputMode = false;
+
+    const status = elements.adminEditor.querySelector("#admin-editor-status");
+    if (status) {
+      status.textContent = "정답 수순을 초기화했습니다.";
+      status.classList.remove("is-correct", "is-wrong");
+    }
+
     renderAdminBoard();
-    updateAdminAnswerLabel();
-    setFeedback("AI 흑 정답 수순을 모두 초기화했습니다.", "correct");
+    refreshAdminSequenceUi();
+    setFeedback("정답 수순을 초기화했습니다.", "correct");
   }
 
   function renderLevelGroupOptions(selectedLevelGroup) {
@@ -430,7 +602,7 @@ export function createAdminEditorController({
 
     if (adminState.activeTool === "clear-sequence") {
       if (isAiResponseDraft(adminState.draft)) {
-        clearAdminBlackAnswerSequence();
+        clearAdminFullSequence();
       } else {
         adminState.draft.correctSequence = [];
         renderAdminBoard();
@@ -450,7 +622,6 @@ export function createAdminEditorController({
       return;
     }
 
-    updateAdminAnswerLabel();
     boardElement.innerHTML = "";
     const adminBoard = new WGo.Board(boardElement, {
       size: BOARD_SIZE,
@@ -476,7 +647,14 @@ export function createAdminEditorController({
       }
     });
 
-    if (isBoardProblem(adminState.draft) && adminState.draft.correctMove) {
+    const aiResponseDraft = isAiResponseDraft(adminState.draft);
+    const previewSequence = aiResponseDraft ? getAdminFullSequence(adminState.draft) : [];
+
+    if (
+      isBoardProblem(adminState.draft) &&
+      adminState.draft.correctMove &&
+      !(aiResponseDraft && previewSequence.length > 0)
+    ) {
       adminBoard.addObject({
         x: adminState.draft.correctMove.x,
         y: adminState.draft.correctMove.y,
@@ -494,10 +672,19 @@ export function createAdminEditorController({
       });
     }
 
-    if (isBoardProblem(adminState.draft) && isAiResponseDraft(adminState.draft)) {
-      const { blackAnswers } = resolveBlackAnswerConfig(adminState.draft, BOARD_SIZE);
-      blackAnswers.forEach((move) => {
-        adminBoard.addObject({ x: move.x, y: move.y, type: "CR" });
+    if (isBoardProblem(adminState.draft) && aiResponseDraft) {
+      previewSequence.forEach((move) => {
+        adminBoard.addObject({
+          x: move.x,
+          y: move.y,
+          c: move.color === "white" ? WGo.W : WGo.B,
+        });
+        adminBoard.addObject({
+          x: move.x,
+          y: move.y,
+          type: "LB",
+          text: String(move.ply),
+        });
       });
     }
 
@@ -508,25 +695,26 @@ export function createAdminEditorController({
       event?.preventDefault?.();
       handleAdminBoardClick(x, y, { button: "secondary" });
     });
+
+    refreshAdminSequenceUi();
   }
 
   function updateAdminAnswerLabel() {
-    const answerLabel = elements.adminEditor.querySelector("#admin-answer-label");
-    if (!answerLabel || !adminState.draft) {
-      return;
-    }
-
-    answerLabel.textContent = formatBoardAnswerLabel(adminState.draft);
-    const sequenceLabel = elements.adminEditor.querySelector("#admin-sequence-label");
-    if (sequenceLabel) {
-      sequenceLabel.textContent = formatCorrectSequence(adminState.draft);
-    }
-    renderAdminBlackSequenceList();
+    refreshAdminSequenceUi();
   }
 
   function handleAdminBoardClick(x, y, { button = "primary" } = {}) {
     const point = { x, y };
     if (!adminState.draft) {
+      return;
+    }
+
+    if (
+      isAiResponseDraft(adminState.draft) &&
+      adminState.fullSequenceInputMode &&
+      button === "primary"
+    ) {
+      addAdminAnswerSequenceMove(point);
       return;
     }
 
@@ -567,46 +755,64 @@ export function createAdminEditorController({
       return;
     }
 
-    if (adminState.activeTool === "black-answer") {
-      if (button === "secondary") {
-        return;
-      }
-      addAdminBlackAnswerMove(point);
-      return;
-    }
-
     const color = button === "secondary" ? STONE.white : STONE.black;
     updateAdminStone(point, color);
   }
 
-  function addAdminBlackAnswerMove(point) {
+  function addAdminAnswerSequenceMove(point) {
     if (!isAiResponseDraft(adminState.draft)) {
-      setFeedback("AI 응수형 문제에서만 흑 정답을 추가할 수 있습니다.", "wrong");
+      setFeedback("AI 응수형 문제에서만 정답 수순을 추가할 수 있습니다.", "wrong");
       return;
     }
 
     if (adminState.draft.stones.some((stone) => isSamePoint(stone, point))) {
-      setFeedback("흑 정답은 빈 곳에만 지정해 주세요.", "wrong");
+      setFeedback("정답 수순은 빈 곳에만 지정해 주세요.", "wrong");
       return;
     }
 
-    const { answerMoveCount } = resolveBlackAnswerConfig(adminState.draft, BOARD_SIZE);
-    const maxBlack = getExpectedBlackAnswerCount(answerMoveCount);
-    const current = normalizeBlackAnswerSequence(
-      adminState.draft.blackAnswerSequence,
-      BOARD_SIZE,
+    const answerMoveCount = normalizeAnswerMoveCount(
+      adminState.draft.answerMoveCount ?? adminState.draft.answer_move_count ?? 1,
     );
+    const current = getAdminFullSequence();
 
-    if (current.length >= maxBlack) {
-      setFeedback(`이 ${answerMoveCount}수 문제는 흑 정답 ${maxBlack}개까지만 필요합니다.`, "wrong");
+    if (current.some((entry) => entry.x === point.x && entry.y === point.y)) {
+      setFeedback("이미 정답 수순에 포함된 자리입니다.", "wrong");
       return;
     }
 
-    const next = [...current, { x: point.x, y: point.y, label: formatCoordLabel(point) }];
-    setAdminBlackAnswers(next);
+    if (current.length >= answerMoveCount) {
+      adminState.fullSequenceInputMode = false;
+      updateFullSequenceInputUi();
+      setFeedback(`${answerMoveCount}수 정답 수순 입력 완료`, "correct");
+      return;
+    }
+
+    const color = getNextSequenceColor(current.length);
+    const ply = current.length + 1;
+    const next = [
+      ...current,
+      {
+        color,
+        x: point.x,
+        y: point.y,
+        label: formatCoordLabel(point),
+        ply,
+      },
+    ];
+    setAdminFullSequence(renumberSequenceMoves(next));
     renderAdminBoard();
-    updateAdminAnswerLabel();
-    setFeedback(`흑 정답 ${next.length}/${maxBlack}을 추가했습니다.`, "correct");
+
+    if (next.length >= answerMoveCount) {
+      adminState.fullSequenceInputMode = false;
+      updateFullSequenceInputUi();
+      setFeedback(`${answerMoveCount}수 정답 수순 입력 완료`, "correct");
+      return;
+    }
+
+    setFeedback(
+      `${ply}수(${getSequenceColorLabel(color)}) ${formatCoordLabel(point)} (${next.length}/${answerMoveCount})`,
+      "correct",
+    );
   }
 
   function addAdminSequenceMove(point) {
@@ -805,17 +1011,30 @@ export function createAdminEditorController({
     }
 
     if (isAiResponseDraft(adminState.draft)) {
+      const styleRaw = String(
+        editor.querySelector("#admin-ai-response-style")?.value ?? "",
+      ).trim();
+      if (styleRaw) {
+        adminState.draft.aiResponseStyle = styleRaw;
+        adminState.draft.ai_response_style = styleRaw;
+      } else {
+        delete adminState.draft.aiResponseStyle;
+        delete adminState.draft.ai_response_style;
+      }
+
       delete adminState.draft.correctSequence;
-      const blackAnswers = normalizeBlackAnswerSequence(
-        adminState.draft.blackAnswerSequence,
+      applyFullAnswerSequenceToDraft(
+        adminState.draft,
+        getAdminFullSequence(),
         BOARD_SIZE,
       );
-      adminState.draft.blackAnswerSequence = toBlackAnswerSequencePayload(blackAnswers);
-      syncLegacyCorrectMove(adminState.draft);
       return;
     }
 
     delete adminState.draft.blackAnswerSequence;
+    delete adminState.draft.black_answer_sequence;
+    delete adminState.draft.fullAnswerSequence;
+    delete adminState.draft.full_answer_sequence;
     delete adminState.draft.answerMoveCount;
 
     if (adminState.draft.category !== "활로") {
@@ -845,17 +1064,7 @@ export function createAdminEditorController({
     }
 
     if (isAiResponseDraft(problem)) {
-      const { blackAnswers, answerMoveCount } = resolveBlackAnswerConfig(problem, BOARD_SIZE);
-      const expected = getExpectedBlackAnswerCount(answerMoveCount);
-      if (blackAnswers.length !== expected) {
-        return `AI 응수형 ${answerMoveCount}수 문제는 흑 정답 ${expected}개가 필요합니다.`;
-      }
-      for (const answer of blackAnswers) {
-        if (occupied.has(`${answer.x}:${answer.y}`)) {
-          return "흑 정답은 기존 돌과 겹칠 수 없습니다.";
-        }
-      }
-      return "";
+      return validateFullAnswerSequence(problem, BOARD_SIZE, occupied) || "";
     }
 
     if (!problem.correctMove) {
@@ -872,6 +1081,7 @@ export function createAdminEditorController({
   function closeAdminEditor() {
     adminState.editingIndex = null;
     adminState.draft = null;
+    adminState.fullSequenceInputMode = false;
     elements.adminEditor.innerHTML = "";
     elements.adminEditor.classList.add("is-hidden");
   }

@@ -674,6 +674,13 @@ function toSupabaseRow(problem) {
     row.ai_response_candidates = problem.aiResponseCandidates;
   }
 
+  const aiResponseStyle = String(
+    problem.aiResponseStyle ?? problem.ai_response_style ?? "",
+  ).trim();
+  if (aiResponseStyle) {
+    row.ai_response_style = aiResponseStyle;
+  }
+
   const answerMoveCount = Number(problem.answerMoveCount);
   if ([1, 3, 5, 7].includes(answerMoveCount)) {
     row.answer_move_count = answerMoveCount;
@@ -681,6 +688,10 @@ function toSupabaseRow(problem) {
 
   if (Array.isArray(problem.blackAnswerSequence) && problem.blackAnswerSequence.length > 0) {
     row.black_answer_sequence = problem.blackAnswerSequence;
+  }
+
+  if (Array.isArray(problem.fullAnswerSequence) && problem.fullAnswerSequence.length > 0) {
+    row.full_answer_sequence = problem.fullAnswerSequence;
   }
 
   return row;
@@ -738,6 +749,11 @@ function fromSupabaseRow(row) {
     problem.aiResponseCandidates = row.ai_response_candidates;
   }
 
+  if (row.ai_response_style) {
+    problem.aiResponseStyle = String(row.ai_response_style).trim();
+    problem.ai_response_style = problem.aiResponseStyle;
+  }
+
   if (Array.isArray(row.candidate_responses)) {
     problem.candidateResponses = row.candidate_responses;
   }
@@ -749,6 +765,11 @@ function fromSupabaseRow(row) {
 
   if (Array.isArray(row.black_answer_sequence)) {
     problem.blackAnswerSequence = row.black_answer_sequence;
+  }
+
+  if (Array.isArray(row.full_answer_sequence)) {
+    problem.fullAnswerSequence = row.full_answer_sequence;
+    problem.full_answer_sequence = problem.fullAnswerSequence;
   }
 
   return problem;
@@ -767,6 +788,8 @@ function cloneProblem(problem) {
       ? problem.stones.map((stone) => ({ ...stone }))
       : [],
     problemMode: problem.problemMode,
+    aiResponseStyle: problem.aiResponseStyle ?? problem.ai_response_style,
+    ai_response_style: problem.aiResponseStyle ?? problem.ai_response_style,
     aiResponseCandidates: Array.isArray(problem.aiResponseCandidates)
       ? problem.aiResponseCandidates.map((entry) => ({ ...entry }))
       : undefined,
@@ -776,6 +799,12 @@ function cloneProblem(problem) {
     answerMoveCount: problem.answerMoveCount,
     blackAnswerSequence: Array.isArray(problem.blackAnswerSequence)
       ? [...problem.blackAnswerSequence]
+      : undefined,
+    fullAnswerSequence: Array.isArray(problem.fullAnswerSequence)
+      ? problem.fullAnswerSequence.map((entry) => ({ ...entry }))
+      : undefined,
+    full_answer_sequence: Array.isArray(problem.fullAnswerSequence)
+      ? problem.fullAnswerSequence.map((entry) => ({ ...entry }))
       : undefined,
   };
 

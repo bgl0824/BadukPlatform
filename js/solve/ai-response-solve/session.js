@@ -1,15 +1,18 @@
-import { resolveBlackAnswerConfig } from "./black-sequence.js";
+import { resolveAnswerSequenceConfig } from "./answer-sequence.js";
 
 /**
  * @param {object} problem
  * @param {number} boardSize
  */
 export function createAiResponseSolveSession(problem, boardSize) {
-  const { answerMoveCount, blackAnswers } = resolveBlackAnswerConfig(problem, boardSize);
+  const { answerMoveCount, fullSequence, blackAnswers, whiteAnswers } =
+    resolveAnswerSequenceConfig(problem, boardSize);
 
   return {
     answerMoveCount,
+    fullSequence,
     blackAnswers,
+    whiteAnswers,
     currentPly: 1,
     blackAnswerIndex: 0,
     phase: "await_black",
@@ -30,15 +33,18 @@ export function advancePlyAfterBlack(session) {
   session.currentPly += 1;
 }
 
-/** 정답 루트에서 백 응수 후 — 다음 흑 정답 인덱스·ply */
-export function advanceAfterKatagoWhiteOnCorrect(session, whiteMove) {
+/** 정답 루트: 제작자 백 수 자동 착수 후 */
+export function advanceAfterAuthorWhiteOnCorrect(session, whiteMove) {
   session.playedMoves.push(whiteMove);
   session.blackAnswerIndex += 1;
   session.currentPly += 1;
   session.phase = "await_black";
 }
 
-/** 오답 루트에서 백 응수 후 */
+/** @deprecated alias */
+export const advanceAfterKatagoWhiteOnCorrect = advanceAfterAuthorWhiteOnCorrect;
+
+/** 오답 루트: KataGo 백 응수 후 */
 export function advanceAfterKatagoWhiteOnWrong(session, whiteMove) {
   session.playedMoves.push(whiteMove);
   session.currentPly += 1;

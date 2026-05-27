@@ -100,7 +100,7 @@ export function filterCandidatesInRegion(candidates, region, boardSize) {
 
 /**
  * KataGo 후보 중 문제 영역 안의 첫 수 (order/visits 순 유지)
- * @deprecated 교육용 선택은 selectEducationalWhiteMove 사용
+ * @deprecated 전술 선택은 selectTacticalWhiteMove 사용
  */
 export function selectCandidateInRegion(candidates, region, boardSize) {
   if (!Array.isArray(candidates) || candidates.length === 0) {

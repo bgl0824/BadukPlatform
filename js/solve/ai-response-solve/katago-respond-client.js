@@ -1,7 +1,7 @@
 import { formatCoordLabel } from "./black-sequence.js";
 import { parseGtpCoordinate } from "../ai-response-ux/coordinates.js";
 import { AI_RESPONSE_SOLVE_MESSAGES } from "./constants.js";
-import { selectEducationalWhiteMove } from "./educational-move-selector.js";
+import { selectTacticalWhiteMove } from "./tactical-response-engine.js";
 import {
   computeAllowedRegion,
   DEFAULT_REGION_MARGIN,
@@ -306,7 +306,7 @@ export async function requestKatagoRespond({
       };
     }
 
-    const education = selectEducationalWhiteMove({
+    const education = selectTacticalWhiteMove({
       regionCandidates,
       stones,
       boardSize,
@@ -315,10 +315,10 @@ export async function requestKatagoRespond({
       problem,
     });
 
+    console.log("[KatagoRespond] aiResponseStyle", education.aiResponseStyle ?? education.style);
     console.log("[KatagoRespond] scoredCandidates", education.scoredCandidates);
     console.log("[KatagoRespond] selectedMove", education.selected ?? null);
     console.log("[KatagoRespond] selectedReason", education.selectedReason);
-    console.log("[KatagoRespond] aiResponseStyle", education.style);
 
     const selected = education.selected;
     if (!selected?.point) {

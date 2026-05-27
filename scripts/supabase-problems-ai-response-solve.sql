@@ -16,7 +16,10 @@ comment on column public.problems.answer_move_count is
   '총 수순 길이: 1, 3, 5, 7 (홀수). 흑·백·흑…';
 
 comment on column public.problems.black_answer_sequence is
-  '학생 흑 정답만 ["D4","F4"] 또는 [{x,y}]. 백은 KataGo';
+  '학생 흑 정답 (하위호환). 신규는 full_answer_sequence 권장';
+
+comment on column public.problems.full_answer_sequence is
+  '정답 루트 전체 수순 흑·백. 정답 시 백 자동착수, 오답 시만 KataGo';
 
 -- 예: 축 테스트 3수 문제 (ID를 실제 값으로 교체)
 -- update public.problems

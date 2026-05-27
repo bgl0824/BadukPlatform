@@ -1,8 +1,9 @@
 import { AI_RESPONSE_SOLVE_MESSAGES } from "./constants.js";
+import { getExpectedAuthorWhite } from "./answer-sequence.js";
 import { isCorrectBlackMove } from "./black-sequence.js";
 import { logAiResponseSolveContext } from "../../game/problem-mode.js";
 import {
-  advanceAfterKatagoWhiteOnCorrect,
+  advanceAfterAuthorWhiteOnCorrect,
   advanceAfterKatagoWhiteOnWrong,
   advancePlyAfterBlack,
   createAiResponseSolveSession,
@@ -12,8 +13,7 @@ import {
 import { isKatagoWhiteMove, resolveWhiteResponse } from "./resolve-white-response.js";
 
 /**
- * AI 응수형 전용 문제풀이 엔진 (일반 handleUserMove와 분리).
- * 오답: 백 응수 자동 → boardFeedbackOverlay 오답 팝업 → 초기화 (한수 문제풀이와 동일).
+ * AI 응수형: 정답 루트 백 = 제작자 수순, 오답 루트 백 = KataGo.
  */
 export function createAiResponseSolveEngine({
   appState,
@@ -113,8 +113,8 @@ export function createAiResponseSolveEngine({
       return;
     }
 
-    const whiteOk = await playWhiteResponse(problem, session, userMove, "correct");
-    if (!whiteOk) {
+    const authorOk = playAuthorWhiteOnCorrect(problem, session);
+    if (!authorOk) {
       return;
     }
     updateTurnUi();
@@ -127,7 +127,7 @@ export function createAiResponseSolveEngine({
     syncBoardPreviewContext();
     setStatus(AI_RESPONSE_SOLVE_MESSAGES.katagoThinking);
 
-    const whiteOk = await playWhiteResponse(problem, session, lastBlackMove, "wrong");
+    const whiteOk = await playKatagoWhiteOnWrong(problem, session, lastBlackMove);
 
     if (!whiteOk) {
       appState.isAiThinking = false;
@@ -151,8 +151,8 @@ export function createAiResponseSolveEngine({
     });
   }
 
-  function rollbackFailedKatago(session, problem, { wasCorrectPath }) {
-    if (wasCorrectPath && session.playedMoves.length > 0) {
+  function rollbackFailedKatago(session, problem) {
+    if (session.playedMoves.length > 0) {
       session.playedMoves.pop();
       session.currentPly = Math.max(1, session.currentPly - 1);
       rebuildBoardFromPlayedMoves(problem, session.playedMoves);
@@ -164,7 +164,48 @@ export function createAiResponseSolveEngine({
     clearSession();
   }
 
-  async function playWhiteResponse(problem, session, lastBlackMove, studentMoveResult) {
+  function playAuthorWhiteOnCorrect(problem, session) {
+    const expected = getExpectedAuthorWhite(session);
+    if (!expected) {
+      const message =
+        "정답 루트의 백 수가 설정되지 않았습니다. 관리자에서 전체 정답 수순을 입력해 주세요.";
+      setFeedback(message, "wrong");
+      window.alert?.(message);
+      rollbackAuthorWhiteFailure(session, problem);
+      return false;
+    }
+
+    const point = { x: expected.x, y: expected.y };
+    if (boardController.hasStone(point)) {
+      setFeedback("제작자 정답 백 수 좌표에 이미 돌이 있습니다.", "wrong");
+      rollbackAuthorWhiteFailure(session, problem);
+      return false;
+    }
+
+    const whiteMove = { ...point, color: stoneColors.white };
+    boardController.addStone(whiteMove);
+    removeCapturedStonesAfterMove(whiteMove);
+    advanceAfterAuthorWhiteOnCorrect(session, whiteMove);
+
+    console.log("[AI_RESPONSE] author white (correct route)", {
+      move: expected.label,
+      ply: session.currentPly - 1,
+      blackAnswerIndex: session.blackAnswerIndex,
+    });
+
+    return true;
+  }
+
+  function rollbackAuthorWhiteFailure(session, problem) {
+    if (session.playedMoves.length > 0) {
+      session.playedMoves.pop();
+      session.currentPly = Math.max(1, session.currentPly - 1);
+      rebuildBoardFromPlayedMoves(problem, session.playedMoves);
+    }
+    session.phase = "await_black";
+  }
+
+  async function playKatagoWhiteOnWrong(problem, session, lastBlackMove) {
     const stones = boardController.getStones();
     const result = await resolveWhiteResponse({
       problem,
@@ -174,47 +215,35 @@ export function createAiResponseSolveEngine({
       initialStones: appState.initialBoardStones ?? problem.stones ?? [],
       lastBlackMove,
       stoneColors,
-      studentMoveResult,
+      studentMoveResult: "wrong",
       currentPly: session.currentPly,
     });
 
-    console.log("[AI_RESPONSE] white response", {
-      studentMoveResult,
+    console.log("[AI_RESPONSE] KataGo white (wrong route)", {
       ok: result.ok,
       source: result.source,
       point: result.point,
       selectedReason: result.selectedReason,
-      currentPly: session.currentPly,
-      needsServer: result.needsServer,
     });
 
     if (!isKatagoWhiteMove(result)) {
       const message = result.message ?? AI_RESPONSE_SOLVE_MESSAGES.serverRequired;
       setFeedback(message, "wrong");
       window.alert?.(message);
-      rollbackFailedKatago(session, problem, {
-        wasCorrectPath: studentMoveResult === "correct",
-      });
+      rollbackFailedKatago(session, problem);
       return false;
     }
 
     if (boardController.hasStone(result.point)) {
       setFeedback("백 응수 좌표가 이미 돌이 있는 곳입니다.", "wrong");
-      rollbackFailedKatago(session, problem, {
-        wasCorrectPath: studentMoveResult === "correct",
-      });
+      rollbackFailedKatago(session, problem);
       return false;
     }
 
     const whiteMove = { ...result.point, color: stoneColors.white };
     boardController.addStone(whiteMove);
     removeCapturedStonesAfterMove(whiteMove);
-
-    if (studentMoveResult === "correct") {
-      advanceAfterKatagoWhiteOnCorrect(session, whiteMove);
-    } else {
-      advanceAfterKatagoWhiteOnWrong(session, whiteMove);
-    }
+    advanceAfterKatagoWhiteOnWrong(session, whiteMove);
 
     return true;
   }
