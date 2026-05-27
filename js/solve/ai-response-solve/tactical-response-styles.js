@@ -89,6 +89,9 @@ function normalizeStyleField(raw) {
 export const STYLE_SIGNAL_WEIGHTS = {
   default: {
     extend_atari: 1,
+    continuous_escape: 1.2,
+    future_liberty_gain: 1.2,
+    connect_target_group: 1,
     increase_liberty: 1,
     connect_white: 1,
     respond_to_black: 0.8,
@@ -101,8 +104,11 @@ export const STYLE_SIGNAL_WEIGHTS = {
   },
   escape: {
     extend_atari: 2.2,
+    continuous_escape: 2.4,
+    future_liberty_gain: 2,
+    connect_target_group: 1.5,
     increase_liberty: 1.6,
-    connect_white: 1.9,
+    connect_white: 0.4,
     respond_to_black: 0.3,
     capture_black: 0.7,
     decrease_black_liberty: 0.6,

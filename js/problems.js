@@ -694,6 +694,15 @@ function toSupabaseRow(problem) {
     row.full_answer_sequence = problem.fullAnswerSequence;
   }
 
+  if (Array.isArray(problem.targetWhiteGroup) && problem.targetWhiteGroup.length > 0) {
+    row.target_white_group = problem.targetWhiteGroup;
+  }
+
+  const targetMark = String(problem.targetWhiteMark ?? problem.target_white_mark ?? "").trim();
+  if (targetMark) {
+    row.target_white_mark = targetMark;
+  }
+
   return row;
 }
 
@@ -772,6 +781,16 @@ function fromSupabaseRow(row) {
     problem.full_answer_sequence = problem.fullAnswerSequence;
   }
 
+  if (Array.isArray(row.target_white_group)) {
+    problem.targetWhiteGroup = row.target_white_group;
+    problem.target_white_group = problem.targetWhiteGroup;
+  }
+
+  if (row.target_white_mark) {
+    problem.targetWhiteMark = String(row.target_white_mark).trim();
+    problem.target_white_mark = problem.targetWhiteMark;
+  }
+
   return problem;
 }
 
@@ -806,6 +825,14 @@ function cloneProblem(problem) {
     full_answer_sequence: Array.isArray(problem.fullAnswerSequence)
       ? problem.fullAnswerSequence.map((entry) => ({ ...entry }))
       : undefined,
+    targetWhiteGroup: Array.isArray(problem.targetWhiteGroup)
+      ? problem.targetWhiteGroup.map((entry) => ({ ...entry }))
+      : undefined,
+    target_white_group: Array.isArray(problem.targetWhiteGroup)
+      ? problem.targetWhiteGroup.map((entry) => ({ ...entry }))
+      : undefined,
+    targetWhiteMark: problem.targetWhiteMark ?? problem.target_white_mark,
+    target_white_mark: problem.targetWhiteMark ?? problem.target_white_mark,
   };
 
   if (clonedProblem.type === "ox") {

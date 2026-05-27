@@ -17,6 +17,13 @@ import {
   getStyleWeights,
   resolveAiResponseStyle,
 } from "./tactical-response-styles.js";
+import {
+  formatTargetWhiteGroupForLog,
+  isMoveAdjacentToTargetGroup,
+  isMoveOnTargetAtariLiberty,
+  measureTargetGroupAfterMove,
+  resolveTargetWhiteGroup,
+} from "./target-white-group.js";
 
 export { resolveAiResponseStyle } from "./tactical-response-styles.js";
 
@@ -36,11 +43,14 @@ const REASON_PRIORITY = {
 /** 오답 대응 — internal reason 키 기준 (정렬용) */
 const WRONG_REVEAL_INTERNAL_PRIORITY = {
   extend_atari: 6,
-  connect_white: 5,
-  increase_liberty: 4,
-  escape_from_last_black: 3,
+  continuous_escape: 5,
+  future_liberty_gain: 4,
+  connect_target_group: 3,
   near_last_black: 2,
   katago_prior: 1,
+  connect_white: 0,
+  increase_liberty: 0,
+  escape_from_last_black: 0,
   capture_black: 0,
   general: 0,
   sacrifice_play: -10,
@@ -48,9 +58,12 @@ const WRONG_REVEAL_INTERNAL_PRIORITY = {
 
 const WRONG_REVEAL_REASON_LABEL = {
   extend_atari: "forced_extend_atari",
+  continuous_escape: "continuous_escape",
+  future_liberty_gain: "future_liberty_gain",
+  connect_target_group: "connect_target_group",
   connect_white: "connect_white_group",
-  increase_liberty: "increase_liberty",
-  escape_from_last_black: "escape_from_last_black",
+  increase_liberty: "future_liberty_gain",
+  escape_from_last_black: "continuous_escape",
   near_last_black: "near_last_black",
   katago_prior: "region_candidate",
   respond_to_black: "region_candidate",
@@ -175,6 +188,130 @@ function candidateHasSacrificePlay(scored) {
   );
 }
 
+function scoreWrongRevealWithTarget({
+  candidate,
+  stones,
+  afterStones,
+  point,
+  moveKey,
+  boardSize,
+  stoneColors,
+  lastBlackMove,
+  style,
+  problem,
+  targetContext,
+  weights,
+}) {
+  const signals = {};
+  const reasons = [];
+  let candidateFutureLiberties = targetContext.minLiberties;
+
+  if (isMoveOnTargetAtariLiberty(moveKey, targetContext)) {
+    signals.extend_atari = 2500;
+    reasons.push("extend_atari");
+  }
+
+  const targetAfter = measureTargetGroupAfterMove(
+    problem,
+    afterStones,
+    boardSize,
+    stoneColors,
+    targetContext,
+  );
+  const targetGain = targetAfter?.libertyGain ?? 0;
+  candidateFutureLiberties = targetAfter?.minLiberties ?? candidateFutureLiberties;
+
+  const hadTargetNeighbor = isMoveAdjacentToTargetGroup(
+    point,
+    targetContext,
+    stones,
+    boardSize,
+  );
+
+  if (targetGain > 0) {
+    signals.future_liberty_gain = 900 + targetGain * 150;
+    reasons.push("future_liberty_gain");
+  }
+
+  if (hadTargetNeighbor) {
+    const placed = getStoneAtPoint(afterStones, point);
+    const ownGroup = placed
+      ? collectConnectedGroup(afterStones, placed, boardSize)
+      : [];
+    const ownLibs = countGroupLiberties(afterStones, ownGroup, boardSize);
+    signals.connect_target_group = 500 + ownLibs * 35;
+    reasons.push("connect_target_group");
+  }
+
+  const distToBlack = lastBlackMove ? manhattanDistance(point, lastBlackMove) : 99;
+  const isEscapeLine =
+    hadTargetNeighbor &&
+    (targetGain > 0 ||
+      (targetAfter?.minLiberties ?? 0) >= 2 ||
+      distToBlack >= 2);
+  if (isEscapeLine) {
+    signals.continuous_escape =
+      1100 +
+      targetGain * 120 +
+      ((targetAfter?.minLiberties ?? 0) >= 2 ? 100 : 0);
+    reasons.push("continuous_escape");
+  }
+
+  if (lastBlackMove) {
+    const dist = manhattanDistance(point, lastBlackMove);
+    if (dist >= 1 && dist <= 2 && (hadTargetNeighbor || targetGain >= 0)) {
+      signals.near_last_black = 220 - dist * 35;
+      reasons.push("near_last_black");
+    } else if (dist > 4) {
+      signals.far_from_last_black = -320 - (dist - 4) * 50;
+    }
+  }
+
+  const policyBonus = (candidate.policyPrior ?? 0) * 10;
+  const orderBonus = Math.max(0, 20 - (candidate.order ?? 20));
+  signals.katago_prior = policyBonus + orderBonus + (candidate.fromRegion ? 4 : 0);
+  if (signals.katago_prior > 4) {
+    reasons.push("katago_prior");
+  }
+
+  if (reasons.length === 0) {
+    reasons.push("general");
+  }
+
+  let tieScore = 0;
+  for (const [signal, raw] of Object.entries(signals)) {
+    let weight = weights[signal] ?? 1;
+    if (signal === "katago_prior") {
+      weight *= 0.3;
+    }
+    tieScore += raw * weight;
+  }
+
+  const primaryReason = [...new Set(reasons)].sort(
+    (a, b) =>
+      (WRONG_REVEAL_INTERNAL_PRIORITY[b] ?? 0) -
+      (WRONG_REVEAL_INTERNAL_PRIORITY[a] ?? 0),
+  )[0];
+
+  const selectedReason = mapWrongRevealReason(primaryReason);
+  const priority = WRONG_REVEAL_INTERNAL_PRIORITY[primaryReason] ?? 0;
+
+  return {
+    ...candidate,
+    point,
+    reasons: [...new Set(reasons)],
+    signals,
+    primaryReason,
+    selectedReason,
+    tieScore,
+    totalScore: priority * 10000 + tieScore,
+    aiResponseStyle: style,
+    responseMode: "wrong_reveal",
+    candidateFutureLiberties,
+    targetGroupLibertiesBefore: targetContext.minLiberties,
+  };
+}
+
 function scoreCandidate({
   candidate,
   stones,
@@ -183,6 +320,8 @@ function scoreCandidate({
   lastBlackMove,
   style,
   responseMode = "default",
+  problem = null,
+  targetContext = null,
 }) {
   const isWrongReveal = responseMode === "wrong_reveal";
   const allowSacrifice = style === "sacrifice";
@@ -198,6 +337,24 @@ function scoreCandidate({
   }
 
   const moveKey = pointKey(point);
+
+  if (isWrongReveal && targetContext) {
+    return scoreWrongRevealWithTarget({
+      candidate,
+      stones,
+      afterStones,
+      point,
+      moveKey,
+      boardSize,
+      stoneColors,
+      lastBlackMove,
+      style,
+      problem,
+      targetContext,
+      weights,
+    });
+  }
+
   const signals = {};
   const reasons = [];
 
@@ -411,6 +568,10 @@ export function selectTacticalWhiteMove({
 }) {
   const style = resolveAiResponseStyle(problem);
   const responseMode = studentMoveResult === "wrong" ? "wrong_reveal" : "default";
+  const targetContext =
+    responseMode === "wrong_reveal"
+      ? resolveTargetWhiteGroup(problem, stones, boardSize, stoneColors)
+      : null;
 
   const scoredCandidates = regionCandidates
     .map((candidate) =>
@@ -422,6 +583,8 @@ export function selectTacticalWhiteMove({
         lastBlackMove,
         style,
         responseMode,
+        problem,
+        targetContext,
       }),
     )
     .filter(Boolean)
@@ -447,10 +610,23 @@ export function selectTacticalWhiteMove({
     );
   }
 
+  if (responseMode === "wrong_reveal") {
+    console.log("[KatagoRespond] tactical target selection", {
+      targetWhiteGroup: formatTargetWhiteGroupForLog(targetContext),
+      targetGroupLiberties: targetContext?.minLiberties ?? null,
+      candidateFutureLiberties: selected?.candidateFutureLiberties ?? null,
+      selectedReason: selected?.selectedReason ?? null,
+      selectedMove:
+        selected?.move ??
+        (selected ? { x: selected.x, y: selected.y } : null),
+    });
+  }
+
   return {
     style,
     aiResponseStyle: style,
     responseMode,
+    targetContext,
     scoredCandidates,
     selected,
     selectedReason: selected?.selectedReason ?? null,

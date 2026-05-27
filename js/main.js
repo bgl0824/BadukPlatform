@@ -1284,12 +1284,21 @@ function loadReviewProblem(queueIndex) {
   hideBoardFeedback();
   setMode("solve");
   appState.currentProblemIndex = reviewItem.index;
+  appState.currentProblemId = reviewItem.problem.id;
   appState.solvedAnswerKeys = new Set();
   appState.isSolved = false;
   appState.isAiThinking = false;
   appState.playedMoves = [];
+  aiResponseSolve?.clearSession?.();
   const boardStones = captureInitialBoardState(reviewItem.problem);
   solveView.renderProblem(reviewItem.problem, reviewItem.index, { reviewItem, boardStones });
+  logLearningFlow("loadReviewProblem", {
+    source: "review",
+    problemId: reviewItem.problem.id,
+    problemMode: reviewItem.problem.problemMode ?? reviewItem.problem.problem_mode,
+    queueIndex,
+  });
+  ensureAiResponseSolveSession(reviewItem.problem, { source: "review", forceReinit: true });
   syncBoardPreviewContext();
 }
 
@@ -1431,6 +1440,47 @@ function clearStudySolvePath() {
   appState.studySolvePath = null;
 }
 
+function logAiResponseEntry(problem, source, session) {
+  console.log("[AI_RESPONSE] entry", {
+    problemId: problem?.id,
+    problemMode: problem?.problemMode ?? problem?.problem_mode,
+    source,
+    phase: session?.phase,
+    currentPly: session?.currentPly,
+    blackAnswerIndex: session?.blackAnswerIndex,
+  });
+}
+
+/**
+ * AI 응수형 세션 — 모든 진입 경로에서 동일하게 초기화
+ * @param {object} problem
+ * @param {{ source?: string, forceReinit?: boolean }} [options]
+ */
+function ensureAiResponseSolveSession(problem, { source = "direct", forceReinit = false } = {}) {
+  if (!shouldUseAiResponseSolve(problem)) {
+    return;
+  }
+
+  const existing = appState.aiResponseSolveSession;
+  const needsInit = forceReinit || !existing?.phase;
+
+  if (!needsInit) {
+    logAiResponseSessionSnapshot(appState, `ensure — existing (${source})`);
+    logAiResponseEntry(problem, source, existing);
+    return;
+  }
+
+  aiResponseSolve?.clearSession?.();
+  logAiResponseSolveContext(problem, `ensure init (${source})`);
+  aiResponseSolve.initSession(problem);
+  logAiResponseSessionSnapshot(appState, `ensure — ${source}`);
+  logAiResponseEntry(problem, source, appState.aiResponseSolveSession);
+
+  if (source === "review" || source === "direct" || isStudySolveSource(source)) {
+    setFeedback(getProblemStartFeedback(problem));
+  }
+}
+
 function startProblemFromStudyHub(problemIndex, { source = "study-continue" } = {}) {
   logLearningFlow("startProblemFromStudyHub", { source, problemIndex });
   const resolved = resolveProblemEntry(problemIndex);
@@ -1494,13 +1544,8 @@ function loadProblem(index, { source = "direct" } = {}) {
   appState.playedMoves = [];
   const boardStones = captureInitialBoardState(problem);
   solveView.renderProblem(problem, resolvedIndex, { boardStones });
-  if (shouldUseAiResponseSolve(problem)) {
-    logAiResponseSolveContext(problem, `loadProblem — init ai response session (${source})`);
-    aiResponseSolve.clearSession?.();
-    aiResponseSolve.initSession(problem);
-    logAiResponseSessionSnapshot(appState, `loadProblem — ${source}`);
-    setFeedback(getProblemStartFeedback(problem));
-  } else if (isAiResponseProblem(problem)) {
+  ensureAiResponseSolveSession(problem, { source, forceReinit: true });
+  if (!shouldUseAiResponseSolve(problem) && isAiResponseProblem(problem)) {
     logAiResponseSolveContext(problem, "loadProblem — ai_response but solve engine OFF");
   }
 

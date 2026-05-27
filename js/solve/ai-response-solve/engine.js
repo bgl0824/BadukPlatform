@@ -2,7 +2,7 @@ import { isValidBoardPoint } from "../../game/board-point-validation.js";
 import { AI_RESPONSE_SOLVE_MESSAGES } from "./constants.js";
 import { getExpectedAuthorWhite } from "./answer-sequence.js";
 import { isCorrectBlackMove } from "./black-sequence.js";
-import { logAiResponseSolveContext } from "../../game/problem-mode.js";
+import { logAiResponseSolveContext, shouldUseAiResponseSolve } from "../../game/problem-mode.js";
 import {
   advanceAfterAuthorWhiteOnCorrect,
   advanceAfterKatagoWhiteOnWrong,
@@ -81,7 +81,15 @@ export function createAiResponseSolveEngine({
 
   async function handleStudentBlackMove(point) {
     const problem = getCurrentProblem();
-    const session = getSession();
+    let session = getSession();
+
+    if (!session?.phase && problem && shouldUseAiResponseSolve(problem)) {
+      console.warn("[AI_RESPONSE] missing session — auto initSession", {
+        problemId: problem.id,
+      });
+      initSession(problem);
+      session = getSession();
+    }
 
     console.log("[AI_RESPONSE] handleStudentBlackMove", {
       point,

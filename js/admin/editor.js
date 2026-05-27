@@ -24,6 +24,7 @@ import {
   AI_RESPONSE_STYLES,
   AI_RESPONSE_STYLE_LABELS,
 } from "../solve/ai-response-solve/tactical-response-styles.js";
+import { syncTargetWhiteGroupOnProblem } from "../solve/ai-response-solve/target-white-group.js";
 import { LEVEL_GROUPS, normalizeLevelGroup } from "../services/level-group-service.js";
 import {
   assignDisplayOrderForNewProblem,
@@ -128,6 +129,7 @@ export function createAdminEditorController({
               <select id="admin-ai-response-style">${renderAiResponseStyleOptions(draft)}</select>
             </label>
             <p class="admin-field-hint">비우면 카테고리명으로만 보조 추론(단수치기→capture 등). 사활·맥 문제는 스타일을 직접 지정하세요.</p>
+            <p class="admin-field-hint">오답 백 응수 타깃: 백돌에 △(세모) 표시 → 저장 시 <code>target_white_group</code>으로 동기화됩니다.</p>
             <p class="panel-label">정답 수순 (${formatFullAnswerSequenceSummary(draft)})</p>
             <button
               type="button"
@@ -950,6 +952,14 @@ export function createAdminEditorController({
     setAdminEditorStatus("Supabase에 문제를 저장하는 중입니다...");
 
     try {
+      if (isAiResponseDraft(savedProblemDraft)) {
+        const synced = syncTargetWhiteGroupOnProblem(savedProblemDraft);
+        console.log("[Admin] target_white_group synced from marks", {
+          problemId: savedProblemDraft.id,
+          count: synced.length,
+        });
+      }
+
       const savedProblem = await problemService.saveProblem({
         user: getCurrentUser(),
         problem: savedProblemDraft,
