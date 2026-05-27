@@ -5,30 +5,44 @@
 /** 교육용: 즉각 리듬 우선 — policy 후보 + 극소 탐색 */
 const DEFAULT_KATAGO_MAX_VISITS = 8;
 const DEFAULT_KATAGO_MAX_TIME = 0.15;
+const WRONG_REVEAL_MAX_VISITS = 6;
+const WRONG_REVEAL_MAX_TIME = 0.12;
 const MIN_KATAGO_CANDIDATES = 30;
 
+function isWrongRevealRequest(frontendPayload) {
+  return frontendPayload?.studentMoveResult === "wrong";
+}
+
 function resolveMaxVisits(frontendPayload) {
+  const wrongReveal = isWrongRevealRequest(frontendPayload);
+  const hardCap = wrongReveal ? WRONG_REVEAL_MAX_VISITS : 64;
+  const fallbackDefault = wrongReveal ? WRONG_REVEAL_MAX_VISITS : DEFAULT_KATAGO_MAX_VISITS;
+
   const fromPayload = Number(frontendPayload?.maxVisits);
   if (Number.isFinite(fromPayload) && fromPayload > 0) {
-    return Math.min(fromPayload, 64);
+    return Math.min(fromPayload, hardCap);
   }
   const fromEnv = Number(process.env.KATAGO_MAX_VISITS);
   if (Number.isFinite(fromEnv) && fromEnv > 0) {
-    return Math.min(fromEnv, 64);
+    return Math.min(fromEnv, hardCap);
   }
-  return DEFAULT_KATAGO_MAX_VISITS;
+  return fallbackDefault;
 }
 
 function resolveMaxTime(frontendPayload) {
+  const wrongReveal = isWrongRevealRequest(frontendPayload);
+  const hardCap = wrongReveal ? WRONG_REVEAL_MAX_TIME : 5;
+  const fallbackDefault = wrongReveal ? WRONG_REVEAL_MAX_TIME : DEFAULT_KATAGO_MAX_TIME;
+
   const fromPayload = Number(frontendPayload?.maxTime);
   if (Number.isFinite(fromPayload) && fromPayload > 0) {
-    return Math.min(fromPayload, 5);
+    return Math.min(fromPayload, hardCap);
   }
   const fromEnv = Number(process.env.KATAGO_MAX_TIME);
   if (Number.isFinite(fromEnv) && fromEnv > 0) {
-    return Math.min(fromEnv, 5);
+    return Math.min(fromEnv, hardCap);
   }
-  return DEFAULT_KATAGO_MAX_TIME;
+  return fallbackDefault;
 }
 
 function formatGtpPoint(point) {

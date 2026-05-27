@@ -20,7 +20,6 @@ import {
 
 export { resolveAiResponseStyle } from "./tactical-response-styles.js";
 
-/** selectedReason 우선순위 (동점 시) */
 const REASON_PRIORITY = {
   extend_atari: 6,
   capture_black: 5,
@@ -32,6 +31,28 @@ const REASON_PRIORITY = {
   escape_from_last_black: 2,
   katago_prior: 1,
   general: 0,
+};
+
+/** 오답 대응: 교육용 근처 응수 우선 */
+const WRONG_REVEAL_REASON_PRIORITY = {
+  forced_extend_atari: 6,
+  connect_white_group: 5,
+  increase_liberty: 4,
+  escape_from_last_black: 3,
+  region_candidate: 2,
+  capture_black: 1,
+  general: 0,
+};
+
+const WRONG_REVEAL_REASON_LABEL = {
+  extend_atari: "forced_extend_atari",
+  connect_white: "connect_white_group",
+  increase_liberty: "increase_liberty",
+  escape_from_last_black: "escape_from_last_black",
+  katago_prior: "region_candidate",
+  respond_to_black: "region_candidate",
+  capture_black: "capture_black",
+  general: "region_candidate",
 };
 
 function manhattanDistance(a, b) {
@@ -126,13 +147,10 @@ function putsEnemyInAtari(stones, point, boardSize, stoneColors) {
   return false;
 }
 
-function isWhiteInAtariAfter(stones, boardSize, stoneColors) {
-  return getAtariLibertyKeys(stones, stoneColors.white, boardSize).size > 0;
+function mapWrongRevealReason(internalReason) {
+  return WRONG_REVEAL_REASON_LABEL[internalReason] ?? internalReason;
 }
 
-/**
- * @param {import("./tactical-response-styles.js").AiResponseStyle} style
- */
 function scoreCandidate({
   candidate,
   stones,
@@ -140,7 +158,9 @@ function scoreCandidate({
   stoneColors,
   lastBlackMove,
   style,
+  responseMode = "default",
 }) {
+  const isWrongReveal = responseMode === "wrong_reveal";
   const weights = getStyleWeights(style);
   const point = { x: candidate.x, y: candidate.y };
   if (!isOnBoard(point, boardSize)) {
@@ -162,16 +182,20 @@ function scoreCandidate({
     boardSize,
   );
   if (whiteAtariLibsBefore.has(moveKey)) {
-    signals.extend_atari = 520;
+    signals.extend_atari = isWrongReveal ? 800 : 520;
     reasons.push("extend_atari");
   }
 
   const capturedCount = countCaptures(stones, afterStones, stoneColors.black);
-  if (capturedCount > 0) {
+
+  if (!isWrongReveal && capturedCount > 0) {
     signals.capture_black = 450 + capturedCount * 80;
     reasons.push("capture_black");
-  } else if (putsEnemyInAtari(afterStones, point, boardSize, stoneColors)) {
+  } else if (!isWrongReveal && putsEnemyInAtari(afterStones, point, boardSize, stoneColors)) {
     signals.capture_black = 380;
+    reasons.push("capture_black");
+  } else if (isWrongReveal && style === "capture" && capturedCount > 0) {
+    signals.capture_black = 200 + capturedCount * 40;
     reasons.push("capture_black");
   }
 
@@ -179,12 +203,6 @@ function scoreCandidate({
   const minWhiteAfter = minGroupLibertiesForColor(
     afterStones,
     stoneColors.white,
-    boardSize,
-  );
-  const minBlackBefore = minGroupLibertiesForColor(stones, stoneColors.black, boardSize);
-  const minBlackAfter = minGroupLibertiesForColor(
-    afterStones,
-    stoneColors.black,
     boardSize,
   );
 
@@ -196,18 +214,9 @@ function scoreCandidate({
 
   const libertyGain = minWhiteAfter - minWhiteBefore;
   if (libertyGain > 0 || ownLibs >= 3) {
-    signals.increase_liberty = 35 + libertyGain * 40 + ownLibs * 6;
+    signals.increase_liberty =
+      (isWrongReveal ? 120 : 35) + libertyGain * (isWrongReveal ? 50 : 40) + ownLibs * 8;
     reasons.push("increase_liberty");
-  }
-
-  const blackLibertyDrop = minBlackBefore - minBlackAfter;
-  if (blackLibertyDrop > 0) {
-    const fightScore = 30 + blackLibertyDrop * 35;
-    signals.decrease_black_liberty = fightScore;
-    if (style === "liberty_fight") {
-      signals.liberty_fight = fightScore + 25;
-      reasons.push("liberty_fight");
-    }
   }
 
   const hadWhiteNeighbor = getNeighborPoints(point, boardSize).some((neighbor) => {
@@ -216,20 +225,22 @@ function scoreCandidate({
   });
   if (hadWhiteNeighbor) {
     const groupSize = ownGroup.length;
-    signals.connect_white = 28 + groupSize * 4;
+    signals.connect_white =
+      (isWrongReveal ? 150 : 28) + groupSize * (isWrongReveal ? 8 : 4);
     reasons.push("connect_white");
   }
 
   if (lastBlackMove) {
     const dist = manhattanDistance(point, lastBlackMove);
-    if (dist === 1) {
-      signals.respond_to_black = 45;
-      reasons.push("respond_to_black");
-    } else if (dist === 2) {
-      signals.respond_to_black = 22;
-    }
 
-    if (style === "escape") {
+    if (isWrongReveal) {
+      if (dist >= 2) {
+        signals.escape_from_last_black = 90 + dist * 18;
+        reasons.push("escape_from_last_black");
+      } else if (dist === 1 && style === "escape") {
+        signals.escape_from_last_black = -40;
+      }
+    } else if (style === "escape") {
       if (dist >= 2) {
         signals.escape_from_last_black = 35 + dist * 10;
         reasons.push("escape_from_last_black");
@@ -237,29 +248,34 @@ function scoreCandidate({
         signals.escape_from_last_black = -30;
       }
     }
+
+    if (!isWrongReveal && dist === 1) {
+      signals.respond_to_black = 45;
+      reasons.push("respond_to_black");
+    }
   }
 
-  const riskySelfAtari =
-    isWhiteInAtariAfter(afterStones, boardSize, stoneColors) &&
-    capturedCount === 0;
-  if (riskySelfAtari) {
-    signals.self_atari_penalty = -120;
+  if (style === "sacrifice") {
+    const riskySelfAtari =
+      getAtariLibertyKeys(afterStones, stoneColors.white, boardSize).size > 0 &&
+      capturedCount === 0;
+    const sacrificeValue =
+      (riskySelfAtari ? 80 : 0) +
+      capturedCount * 70 +
+      (minGroupLibertiesForColor(stones, stoneColors.black, boardSize) -
+        minGroupLibertiesForColor(afterStones, stoneColors.black, boardSize)) *
+        25;
+    if (sacrificeValue >= 90 && (riskySelfAtari || capturedCount > 0)) {
+      signals.sacrifice_play = sacrificeValue;
+      reasons.push("sacrifice_play");
+    }
   }
 
-  const sacrificeValue =
-    (riskySelfAtari ? 80 : 0) +
-    capturedCount * 70 +
-    blackLibertyDrop * 25;
-  if (sacrificeValue >= 90 && (riskySelfAtari || capturedCount > 0)) {
-    signals.sacrifice_play = sacrificeValue;
-    reasons.push("sacrifice_play");
-  }
-
-  const orderBonus = Math.max(0, 36 - (candidate.order ?? 36));
-  const visitBonus = Math.min(candidate.visits ?? 0, 120) * 0.04;
-  const policyBonus = (candidate.policyPrior ?? 0) * 40;
-  signals.katago_prior = orderBonus + visitBonus + policyBonus;
-  if (signals.katago_prior > 8) {
+  const policyBonus = (candidate.policyPrior ?? 0) * (isWrongReveal ? 25 : 40);
+  const orderBonus = Math.max(0, 28 - (candidate.order ?? 28));
+  signals.katago_prior =
+    policyBonus + orderBonus + (isWrongReveal ? candidate.fromRegion ? 5 : 0 : 0);
+  if (signals.katago_prior > 5 || !isWrongReveal) {
     reasons.push("katago_prior");
   }
 
@@ -269,15 +285,26 @@ function scoreCandidate({
 
   let tieScore = 0;
   for (const [signal, raw] of Object.entries(signals)) {
-    const weight = weights[signal] ?? 1;
+    let weight = weights[signal] ?? 1;
+    if (isWrongReveal && signal === "sacrifice_play" && style !== "sacrifice") {
+      continue;
+    }
+    if (isWrongReveal && signal === "capture_black" && style !== "capture") {
+      weight *= 0.2;
+    }
     tieScore += raw * weight;
   }
 
+  const priorityTable = isWrongReveal ? WRONG_REVEAL_REASON_PRIORITY : REASON_PRIORITY;
   const primaryReason = [...new Set(reasons)].sort(
-    (a, b) => (REASON_PRIORITY[b] ?? 0) - (REASON_PRIORITY[a] ?? 0),
+    (a, b) => (priorityTable[b] ?? 0) - (priorityTable[a] ?? 0),
   )[0];
 
-  const priority = REASON_PRIORITY[primaryReason] ?? 0;
+  const selectedReason = isWrongReveal
+    ? mapWrongRevealReason(primaryReason)
+    : primaryReason;
+
+  const priority = priorityTable[selectedReason] ?? priorityTable[primaryReason] ?? 0;
   const totalScore = priority * 10000 + tieScore;
 
   return {
@@ -286,15 +313,15 @@ function scoreCandidate({
     reasons: [...new Set(reasons)],
     signals,
     primaryReason,
-    selectedReason: primaryReason,
+    selectedReason,
     tieScore,
     totalScore,
     aiResponseStyle: style,
+    responseMode,
   };
 }
 
 /**
- * 전술 응수 엔진 — KataGo region 후보 중 백 수 선택.
  * @param {{
  *   regionCandidates: object[],
  *   stones: object[],
@@ -302,6 +329,7 @@ function scoreCandidate({
  *   stoneColors: { black: string, white: string },
  *   lastBlackMove: object,
  *   problem: object,
+ *   studentMoveResult?: "correct"|"wrong",
  * }} params
  */
 export function selectTacticalWhiteMove({
@@ -311,8 +339,11 @@ export function selectTacticalWhiteMove({
   stoneColors,
   lastBlackMove,
   problem,
+  studentMoveResult,
 }) {
   const style = resolveAiResponseStyle(problem);
+  const responseMode = studentMoveResult === "wrong" ? "wrong_reveal" : "default";
+
   const scoredCandidates = regionCandidates
     .map((candidate) =>
       scoreCandidate({
@@ -322,6 +353,7 @@ export function selectTacticalWhiteMove({
         stoneColors,
         lastBlackMove,
         style,
+        responseMode,
       }),
     )
     .filter(Boolean)
@@ -332,6 +364,7 @@ export function selectTacticalWhiteMove({
   return {
     style,
     aiResponseStyle: style,
+    responseMode,
     scoredCandidates,
     selected,
     selectedReason: selected?.selectedReason ?? null,

@@ -10,7 +10,7 @@ import {
   getExpectedBlackAnswer,
   isLastBlackAnswer,
 } from "./session.js";
-import { isKatagoWhiteMove, resolveWhiteResponse } from "./resolve-white-response.js";
+import { isValidWhiteResponseMove, resolveWhiteResponse } from "./resolve-white-response.js";
 
 /**
  * AI 응수형: 정답 루트 백 = 제작자 수순, 오답 루트 백 = KataGo.
@@ -226,7 +226,7 @@ export function createAiResponseSolveEngine({
       selectedReason: result.selectedReason,
     });
 
-    if (!isKatagoWhiteMove(result)) {
+    if (!isValidWhiteResponseMove(result)) {
       const message = result.message ?? AI_RESPONSE_SOLVE_MESSAGES.serverRequired;
       setFeedback(message, "wrong");
       window.alert?.(message);

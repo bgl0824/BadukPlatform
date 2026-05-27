@@ -1,7 +1,6 @@
 import { isKatagoRespondApiEnabled, requestKatagoRespond } from "./katago-respond-client.js";
 import { logMockWhiteMove, pickMockWhiteResponse } from "./mock-white-response.js";
-
-const KATAGO_SOURCE = "katago";
+import { KATAGO_SOURCE, TACTICAL_FALLBACK_SOURCE } from "./wrong-response-fallback.js";
 
 function isMockAllowed() {
   return window.BadukConfig?.katagoRespondAllowMock === true;
@@ -43,7 +42,11 @@ export async function resolveWhiteResponse({
     currentPly,
   });
 
-  if (apiResult.ok && apiResult.point && apiResult.source === KATAGO_SOURCE) {
+  if (
+    apiResult.ok &&
+    apiResult.point &&
+    (apiResult.source === KATAGO_SOURCE || apiResult.source === TACTICAL_FALLBACK_SOURCE)
+  ) {
     return apiResult;
   }
 
@@ -72,7 +75,16 @@ export async function resolveWhiteResponse({
   };
 }
 
-/** 백 자동 착수 허용 여부 */
+/** 백 자동 착수 허용 (KataGo 선택 또는 오답 전술 폴백) */
+export function isValidWhiteResponseMove(result) {
+  return Boolean(
+    result?.ok &&
+      result?.point &&
+      (result.source === KATAGO_SOURCE || result.source === TACTICAL_FALLBACK_SOURCE),
+  );
+}
+
+/** @deprecated — use isValidWhiteResponseMove */
 export function isKatagoWhiteMove(result) {
-  return Boolean(result?.ok && result?.point && result?.source === KATAGO_SOURCE);
+  return isValidWhiteResponseMove(result);
 }
