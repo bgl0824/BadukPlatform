@@ -41,3 +41,39 @@ export function logAiResponseSessionSnapshot(appState, label, extra = {}) {
 export function logLearningFlow(label, details = {}) {
   console.info(`[LearningFlow] ${label}`, details);
 }
+
+/**
+ * @param {{
+ *   studyPath: object|null,
+ *   problem: object|null,
+ *   progressByProblemId: Map<string, object>|null,
+ *   appState: object,
+ *   nextProblem?: object|null,
+ *   remainingProblemIds?: string[],
+ *   isActuallyLastProblem?: boolean,
+ * }} params
+ */
+export function logStudyPathDiagnostics({
+  studyPath,
+  problem,
+  appState,
+  nextProblem = null,
+  remainingProblemIds = [],
+  isActuallyLastProblem = false,
+}) {
+  const currentProblemId = problem?.id ?? appState?.currentProblemId ?? null;
+  const studyPathProblemIds = studyPath?.problemIds ?? [];
+  let currentIndexInStudyPath = studyPathProblemIds.indexOf(currentProblemId);
+  if (currentIndexInStudyPath === -1 && appState?.currentProblemId) {
+    currentIndexInStudyPath = studyPathProblemIds.indexOf(appState.currentProblemId);
+  }
+
+  logLearningFlow("studyPathProblemIds", { studyPathProblemIds });
+  logLearningFlow("currentProblemId", { currentProblemId });
+  logLearningFlow("currentIndexInStudyPath", { currentIndexInStudyPath });
+  logLearningFlow("nextProblemId", {
+    nextProblemId: nextProblem?.problem?.id ?? null,
+  });
+  logLearningFlow("remainingProblemIds", { remainingProblemIds });
+  logLearningFlow("isActuallyLastProblem", { isActuallyLastProblem });
+}

@@ -27,4 +27,9 @@ export const appState = {
   aiResponseSession: null,
   /** AI 응수형 풀이 (problem_mode = ai_response) */
   aiResponseSolveSession: null,
+  /**
+   * 학습중 이어하기/추천 — 카테고리 순서 고정 (문제은행 필터와 무관)
+   * @type {{ categoryName: string, levelGroup: string, problemIds: string[], entries: { problemId: string, index: number }[] } | null}
+   */
+  studySolvePath: null,
 };
