@@ -1,7 +1,11 @@
 import { formatCoordLabel } from "./black-sequence.js";
 import { parseGtpCoordinate } from "../ai-response-ux/coordinates.js";
 import { AI_RESPONSE_SOLVE_MESSAGES } from "./constants.js";
-import { selectTacticalWhiteMove } from "./tactical-response-engine.js";
+import {
+  isForbiddenWrongRevealReason,
+  resolveAiResponseStyle,
+  selectTacticalWhiteMove,
+} from "./tactical-response-engine.js";
 import {
   computeAllowedRegion,
   DEFAULT_REGION_MARGIN,
@@ -29,7 +33,7 @@ const DEFAULT_KATAGO_MAX_VISITS = 8;
 const DEFAULT_KATAGO_MAX_TIME = 0.15;
 const WRONG_KATAGO_MAX_VISITS = 6;
 const WRONG_KATAGO_MAX_TIME = 0.12;
-const WRONG_KATAGO_TIMEOUT_MS = 1000;
+const WRONG_KATAGO_REPLACE_MS = 700;
 
 function getKatagoRespondMaxVisits() {
   const configured = Number(window.BadukConfig?.katagoRespondMaxVisits);
@@ -59,12 +63,12 @@ function getWrongKatagoMaxTime() {
   return Math.min(base, 0.15);
 }
 
-function getWrongKatagoTimeoutMs() {
-  const configured = Number(window.BadukConfig?.katagoWrongTimeoutMs);
+function getWrongKatagoReplaceMs() {
+  const configured = Number(window.BadukConfig?.katagoWrongReplaceMs);
   if (Number.isFinite(configured) && configured > 0) {
-    return configured;
+    return Math.min(Math.max(configured, 500), 800);
   }
-  return WRONG_KATAGO_TIMEOUT_MS;
+  return WRONG_KATAGO_REPLACE_MS;
 }
 
 function resolveKatagoLimits(studentMoveResult) {
@@ -72,14 +76,20 @@ function resolveKatagoLimits(studentMoveResult) {
     return {
       maxVisits: getWrongKatagoMaxVisits(),
       maxTime: getWrongKatagoMaxTime(),
-      timeoutMs: getWrongKatagoTimeoutMs(),
+      replaceMs: getWrongKatagoReplaceMs(),
     };
   }
   return {
     maxVisits: getKatagoRespondMaxVisits(),
     maxTime: getKatagoRespondMaxTime(),
-    timeoutMs: 0,
+    replaceMs: 0,
   };
+}
+
+function delay(ms) {
+  return new Promise((resolve) => {
+    setTimeout(resolve, ms);
+  });
 }
 
 function logKatagoRespondTiming({
@@ -286,6 +296,33 @@ function finalizeKatagoSelection({
   console.log("[KatagoRespond] selectedReason", education.selectedReason);
 
   const selected = education.selected;
+  const style = education.aiResponseStyle ?? education.style ?? resolveAiResponseStyle(problem);
+
+  if (
+    selected?.point &&
+    studentMoveResult === "wrong" &&
+    isForbiddenWrongRevealReason(education.selectedReason, style)
+  ) {
+    console.warn("[KatagoRespond] sacrifice_play on non-sacrifice style — tactical fallback", {
+      style,
+      rejected: selected.move,
+    });
+    return tryWrongRevealLocalFallback({
+      allowedRegion,
+      stones,
+      boardSize,
+      stoneColors,
+      lastMove,
+      problem,
+      regionCandidates,
+      requestStart,
+      katagoElapsedMs,
+      maxVisits,
+      maxTime,
+      reason: "forbidden_sacrifice_play",
+    });
+  }
+
   if (!selected?.point) {
     if (studentMoveResult === "wrong") {
       return tryWrongRevealLocalFallback({
@@ -330,11 +367,238 @@ function finalizeKatagoSelection({
     scoredCandidates: education.scoredCandidates,
     selectedCandidate: selected,
     selectedReason: education.selectedReason,
-    aiResponseStyle: education.style,
+    aiResponseStyle: style,
     requestStart: new Date(requestStart).toISOString(),
     katagoElapsedMs,
     totalElapsedMs,
     usedLocalFallback: false,
+  };
+}
+
+function formatWrongRevealFallbackResult({
+  fallback,
+  allowedRegion,
+  requestStart,
+  katagoElapsedMs,
+  maxVisits,
+  maxTime,
+  reason,
+}) {
+  const totalElapsedMs = Date.now() - requestStart;
+  console.warn("[KatagoRespond] wrong-reveal using local tactical", {
+    reason,
+    katagoElapsedMs,
+    selectedReason: fallback.selectedReason,
+    move: fallback.move,
+    totalElapsedMs,
+  });
+  logKatagoRespondTiming({
+    requestStart,
+    katagoElapsedMs,
+    totalElapsedMs,
+    maxVisits,
+    maxTime,
+    studentMoveResult: "wrong",
+    usedLocalFallback: true,
+  });
+
+  return {
+    ok: true,
+    point: fallback.point,
+    source: TACTICAL_FALLBACK_SOURCE,
+    move: fallback.move,
+    allowedRegion,
+    scoredCandidates: fallback.scoredCandidates,
+    selectedReason: fallback.selectedReason,
+    aiResponseStyle: fallback.aiResponseStyle,
+    usedLocalFallback: true,
+    requestStart: new Date(requestStart).toISOString(),
+    katagoElapsedMs,
+    totalElapsedMs,
+  };
+}
+
+async function fetchKatagoRespondPayload(url, payload, signal) {
+  const response = await fetch(url, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(payload),
+    signal,
+  });
+  const data = await response.json().catch(() => ({}));
+  return { response, data };
+}
+
+async function processKatagoRespondResponse({
+  response,
+  data,
+  boardSize,
+  allowedRegion,
+  stones,
+  stoneColors,
+  lastMove,
+  problem,
+  studentMoveResult,
+  requestStart,
+  katagoElapsedMs,
+  maxVisits,
+  maxTime,
+}) {
+  if (!response.ok) {
+    return { ok: false, httpStatus: response.status, data };
+  }
+
+  if (data?.source !== KATAGO_SOURCE) {
+    return { ok: false, invalidSource: true };
+  }
+
+  const rawCandidates = normalizeApiCandidates(data, boardSize);
+  const totalCandidates = data?.totalCandidates ?? rawCandidates.length;
+  const regionCandidates = filterCandidatesInRegion(
+    rawCandidates,
+    allowedRegion,
+    boardSize,
+  );
+  const regionCandidateCount = data?.regionCandidates ?? regionCandidates.length;
+
+  if (regionCandidates.length === 0) {
+    return { ok: false, emptyRegion: true, rawCandidates, totalCandidates };
+  }
+
+  const finalized = finalizeKatagoSelection({
+    regionCandidates,
+    stones,
+    boardSize,
+    stoneColors,
+    lastMove,
+    problem,
+    studentMoveResult,
+    allowedRegion,
+    rawCandidates,
+    totalCandidates,
+    regionCandidateCount,
+    requestStart,
+    katagoElapsedMs,
+    maxVisits,
+    maxTime,
+  });
+
+  return finalized ? { ok: true, result: finalized } : { ok: false, emptyRegion: true };
+}
+
+/**
+ * 오답: 로컬 전술을 즉시 계산하고, KataGo가 replaceMs 안에 오면 교체
+ */
+async function requestKatagoRespondWrong({
+  url,
+  payload,
+  allowedRegion,
+  boardSize,
+  stones,
+  stoneColors,
+  lastMove,
+  problem,
+  requestStart,
+  maxVisits,
+  maxTime,
+  replaceMs,
+}) {
+  const immediateFallback = selectWrongRevealLocalFallback({
+    region: allowedRegion,
+    stones,
+    boardSize,
+    stoneColors,
+    lastBlackMove: lastMove,
+    problem,
+    regionCandidates: [],
+  });
+
+  const controller = new AbortController();
+  const katagoTask = (async () => {
+    try {
+      const { response, data } = await fetchKatagoRespondPayload(
+        url,
+        payload,
+        controller.signal,
+      );
+      const katagoElapsedMs = Date.now() - requestStart;
+
+      if (Number.isFinite(data?.katagoElapsedMs)) {
+        console.log("[KatagoRespond] server katagoElapsedMs", data.katagoElapsedMs);
+      }
+
+      const processed = await processKatagoRespondResponse({
+        response,
+        data,
+        boardSize,
+        allowedRegion,
+        stones,
+        stoneColors,
+        lastMove,
+        problem,
+        studentMoveResult: "wrong",
+        requestStart,
+        katagoElapsedMs,
+        maxVisits,
+        maxTime,
+      });
+
+      if (processed.ok && processed.result) {
+        return processed.result;
+      }
+      return null;
+    } catch (error) {
+      if (error?.name !== "AbortError") {
+        console.warn("[KatagoRespond] wrong-reveal katago task failed", error);
+      }
+      return null;
+    }
+  })();
+
+  const raced = await Promise.race([
+    katagoTask.then((result) => ({ kind: "katago", result })),
+    delay(replaceMs).then(() => ({ kind: "wait" })),
+  ]);
+
+  if (raced.kind === "wait") {
+    controller.abort();
+    if (immediateFallback.ok) {
+      return formatWrongRevealFallbackResult({
+        fallback: immediateFallback,
+        allowedRegion,
+        requestStart,
+        katagoElapsedMs: Date.now() - requestStart,
+        maxVisits,
+        maxTime,
+        reason: "replace_window_expired",
+      });
+    }
+  } else if (raced.result?.ok) {
+    raced.result.usedLocalFallback = false;
+    return raced.result;
+  }
+
+  if (immediateFallback.ok) {
+    return formatWrongRevealFallbackResult({
+      fallback: immediateFallback,
+      allowedRegion,
+      requestStart,
+      katagoElapsedMs: Date.now() - requestStart,
+      maxVisits,
+      maxTime,
+      reason: raced.kind === "katago" ? "katago_rejected" : "no_katago",
+    });
+  }
+
+  const lateKatago = await katagoTask;
+  if (lateKatago?.ok) {
+    return lateKatago;
+  }
+
+  return {
+    ok: false,
+    needsServer: true,
+    message: "AI 응수 서버 연결 필요",
   };
 }
 
@@ -383,7 +647,7 @@ export async function requestKatagoRespond({
     .map((move) => toMoveEntry(move))
     .filter(Boolean);
 
-  const { maxVisits, maxTime, timeoutMs } = resolveKatagoLimits(studentMoveResult);
+  const { maxVisits, maxTime, replaceMs } = resolveKatagoLimits(studentMoveResult);
   const isWrongReveal = studentMoveResult === "wrong";
 
   const payload = {
@@ -419,28 +683,29 @@ export async function requestKatagoRespond({
     studentMoveResult,
     maxVisits,
     maxTime,
-    timeoutMs: isWrongReveal ? timeoutMs : null,
+    replaceMs: isWrongReveal ? replaceMs : null,
   });
 
-  const controller = isWrongReveal && timeoutMs > 0 ? new AbortController() : null;
-  const timeoutId =
-    controller && timeoutMs > 0
-      ? setTimeout(() => controller.abort(), timeoutMs)
-      : null;
+  if (isWrongReveal) {
+    return requestKatagoRespondWrong({
+      url,
+      payload,
+      allowedRegion,
+      boardSize,
+      stones,
+      stoneColors,
+      lastMove,
+      problem,
+      requestStart,
+      maxVisits,
+      maxTime,
+      replaceMs,
+    });
+  }
 
   try {
-    const response = await fetch(url, {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify(payload),
-      signal: controller?.signal,
-    });
+    const { response, data } = await fetchKatagoRespondPayload(url, payload);
 
-    if (timeoutId) {
-      clearTimeout(timeoutId);
-    }
-
-    const data = await response.json().catch(() => ({}));
     const katagoElapsedMs = Date.now() - requestStart;
 
     if (!response.ok) {
@@ -461,25 +726,6 @@ export async function requestKatagoRespond({
       console.error("[KatagoRespond] HTTP error", response.status, data);
       if (upstreamDetail) {
         console.error("[KatagoRespond] upstream body", upstreamDetail);
-      }
-
-      if (isWrongReveal) {
-        const local = tryWrongRevealLocalFallback({
-          allowedRegion,
-          stones,
-          boardSize,
-          stoneColors,
-          lastMove,
-          problem,
-          requestStart,
-          katagoElapsedMs,
-          maxVisits,
-          maxTime,
-          reason: `http_${response.status}`,
-        });
-        if (local) {
-          return local;
-        }
       }
 
       let message;
@@ -510,25 +756,6 @@ export async function requestKatagoRespond({
         maxTime,
         studentMoveResult,
       });
-
-      if (isWrongReveal) {
-        const local = tryWrongRevealLocalFallback({
-          allowedRegion,
-          stones,
-          boardSize,
-          stoneColors,
-          lastMove,
-          problem,
-          requestStart,
-          katagoElapsedMs,
-          maxVisits,
-          maxTime,
-          reason: "invalid_source",
-        });
-        if (local) {
-          return local;
-        }
-      }
 
       return {
         ok: false,
@@ -561,25 +788,6 @@ export async function requestKatagoRespond({
         rawCandidates,
         allowedRegion,
       });
-
-      if (isWrongReveal) {
-        const local = tryWrongRevealLocalFallback({
-          allowedRegion,
-          stones,
-          boardSize,
-          stoneColors,
-          lastMove,
-          problem,
-          requestStart,
-          katagoElapsedMs,
-          maxVisits,
-          maxTime,
-          reason: "empty_region",
-        });
-        if (local) {
-          return local;
-        }
-      }
 
       logKatagoRespondTiming({
         requestStart,
@@ -635,67 +843,20 @@ export async function requestKatagoRespond({
       regionCandidateCount,
     };
   } catch (error) {
-    if (timeoutId) {
-      clearTimeout(timeoutId);
-    }
-
-    const katagoElapsedMs = Date.now() - requestStart;
-    const timedOut = error?.name === "AbortError";
-
-    if (timedOut && isWrongReveal) {
-      const local = tryWrongRevealLocalFallback({
-        allowedRegion,
-        stones,
-        boardSize,
-        stoneColors,
-        lastMove,
-        problem,
-        requestStart,
-        katagoElapsedMs,
-        maxVisits,
-        maxTime,
-        reason: "timeout",
-      });
-      if (local) {
-        return local;
-      }
-    }
-
     console.error("[KatagoRespond] request failed", error);
     logKatagoRespondTiming({
       requestStart,
-      katagoElapsedMs,
-      totalElapsedMs: katagoElapsedMs,
+      katagoElapsedMs: Date.now() - requestStart,
+      totalElapsedMs: Date.now() - requestStart,
       maxVisits,
       maxTime,
       studentMoveResult,
     });
 
-    if (isWrongReveal) {
-      const local = tryWrongRevealLocalFallback({
-        allowedRegion,
-        stones,
-        boardSize,
-        stoneColors,
-        lastMove,
-        problem,
-        requestStart,
-        katagoElapsedMs,
-        maxVisits,
-        maxTime,
-        reason: timedOut ? "timeout_no_local" : "fetch_error",
-      });
-      if (local) {
-        return local;
-      }
-    }
-
     return {
       ok: false,
       needsServer: true,
-      message: timedOut
-        ? "AI 응수 시간 초과 — 전술 응수도 찾지 못했습니다"
-        : "AI 응수 서버 연결 필요",
+      message: "AI 응수 서버 연결 필요",
     };
   }
 }

@@ -33,15 +33,17 @@ const REASON_PRIORITY = {
   general: 0,
 };
 
-/** 오답 대응: 교육용 근처 응수 우선 */
-const WRONG_REVEAL_REASON_PRIORITY = {
-  forced_extend_atari: 6,
-  connect_white_group: 5,
+/** 오답 대응 — internal reason 키 기준 (정렬용) */
+const WRONG_REVEAL_INTERNAL_PRIORITY = {
+  extend_atari: 6,
+  connect_white: 5,
   increase_liberty: 4,
   escape_from_last_black: 3,
-  region_candidate: 2,
-  capture_black: 1,
+  near_last_black: 2,
+  katago_prior: 1,
+  capture_black: 0,
   general: 0,
+  sacrifice_play: -10,
 };
 
 const WRONG_REVEAL_REASON_LABEL = {
@@ -49,11 +51,15 @@ const WRONG_REVEAL_REASON_LABEL = {
   connect_white: "connect_white_group",
   increase_liberty: "increase_liberty",
   escape_from_last_black: "escape_from_last_black",
+  near_last_black: "near_last_black",
   katago_prior: "region_candidate",
   respond_to_black: "region_candidate",
   capture_black: "capture_black",
   general: "region_candidate",
+  sacrifice_play: "sacrifice_play",
 };
+
+const FORBIDDEN_WRONG_REVEAL_REASONS = new Set(["sacrifice_play"]);
 
 function manhattanDistance(a, b) {
   return Math.abs(a.x - b.x) + Math.abs(a.y - b.y);
@@ -151,6 +157,24 @@ function mapWrongRevealReason(internalReason) {
   return WRONG_REVEAL_REASON_LABEL[internalReason] ?? internalReason;
 }
 
+export function isForbiddenWrongRevealReason(selectedReason, style) {
+  if (style === "sacrifice") {
+    return false;
+  }
+  return FORBIDDEN_WRONG_REVEAL_REASONS.has(selectedReason);
+}
+
+function candidateHasSacrificePlay(scored) {
+  if (!scored) {
+    return false;
+  }
+  return (
+    scored.primaryReason === "sacrifice_play" ||
+    scored.selectedReason === "sacrifice_play" ||
+    scored.reasons?.includes("sacrifice_play")
+  );
+}
+
 function scoreCandidate({
   candidate,
   stones,
@@ -161,6 +185,7 @@ function scoreCandidate({
   responseMode = "default",
 }) {
   const isWrongReveal = responseMode === "wrong_reveal";
+  const allowSacrifice = style === "sacrifice";
   const weights = getStyleWeights(style);
   const point = { x: candidate.x, y: candidate.y };
   if (!isOnBoard(point, boardSize)) {
@@ -182,7 +207,7 @@ function scoreCandidate({
     boardSize,
   );
   if (whiteAtariLibsBefore.has(moveKey)) {
-    signals.extend_atari = isWrongReveal ? 800 : 520;
+    signals.extend_atari = isWrongReveal ? 1200 : 520;
     reasons.push("extend_atari");
   }
 
@@ -234,11 +259,19 @@ function scoreCandidate({
     const dist = manhattanDistance(point, lastBlackMove);
 
     if (isWrongReveal) {
-      if (dist >= 2) {
-        signals.escape_from_last_black = 90 + dist * 18;
+      if (dist >= 1 && dist <= 2) {
+        signals.near_last_black = 280 - dist * 40;
+        reasons.push("near_last_black");
+      } else if (dist === 3) {
+        signals.near_last_black = 60;
+        reasons.push("near_last_black");
+      } else if (dist > 4) {
+        signals.far_from_last_black = -220 - (dist - 4) * 45;
+      }
+
+      if (dist >= 3 && whiteAtariLibsBefore.size > 0) {
+        signals.escape_from_last_black = 40 + dist * 8;
         reasons.push("escape_from_last_black");
-      } else if (dist === 1 && style === "escape") {
-        signals.escape_from_last_black = -40;
       }
     } else if (style === "escape") {
       if (dist >= 2) {
@@ -255,7 +288,7 @@ function scoreCandidate({
     }
   }
 
-  if (style === "sacrifice") {
+  if (allowSacrifice && !isWrongReveal) {
     const riskySelfAtari =
       getAtariLibertyKeys(afterStones, stoneColors.white, boardSize).size > 0 &&
       capturedCount === 0;
@@ -271,10 +304,26 @@ function scoreCandidate({
     }
   }
 
-  const policyBonus = (candidate.policyPrior ?? 0) * (isWrongReveal ? 25 : 40);
+  if (allowSacrifice && isWrongReveal) {
+    const riskySelfAtari =
+      getAtariLibertyKeys(afterStones, stoneColors.white, boardSize).size > 0 &&
+      capturedCount === 0;
+    const sacrificeValue =
+      (riskySelfAtari ? 80 : 0) +
+      capturedCount * 70 +
+      (minGroupLibertiesForColor(stones, stoneColors.black, boardSize) -
+        minGroupLibertiesForColor(afterStones, stoneColors.black, boardSize)) *
+        25;
+    if (sacrificeValue >= 120 && capturedCount > 0) {
+      signals.sacrifice_play = sacrificeValue;
+      reasons.push("sacrifice_play");
+    }
+  }
+
+  const policyBonus = (candidate.policyPrior ?? 0) * (isWrongReveal ? 12 : 40);
   const orderBonus = Math.max(0, 28 - (candidate.order ?? 28));
   signals.katago_prior =
-    policyBonus + orderBonus + (isWrongReveal ? candidate.fromRegion ? 5 : 0 : 0);
+    policyBonus + orderBonus + (isWrongReveal && candidate.fromRegion ? 5 : 0);
   if (signals.katago_prior > 5 || !isWrongReveal) {
     reasons.push("katago_prior");
   }
@@ -285,17 +334,20 @@ function scoreCandidate({
 
   let tieScore = 0;
   for (const [signal, raw] of Object.entries(signals)) {
-    let weight = weights[signal] ?? 1;
-    if (isWrongReveal && signal === "sacrifice_play" && style !== "sacrifice") {
+    if (isWrongReveal && !allowSacrifice && signal === "sacrifice_play") {
       continue;
     }
+    let weight = weights[signal] ?? 1;
     if (isWrongReveal && signal === "capture_black" && style !== "capture") {
-      weight *= 0.2;
+      weight *= 0.15;
+    }
+    if (isWrongReveal && signal === "katago_prior") {
+      weight *= 0.35;
     }
     tieScore += raw * weight;
   }
 
-  const priorityTable = isWrongReveal ? WRONG_REVEAL_REASON_PRIORITY : REASON_PRIORITY;
+  const priorityTable = isWrongReveal ? WRONG_REVEAL_INTERNAL_PRIORITY : REASON_PRIORITY;
   const primaryReason = [...new Set(reasons)].sort(
     (a, b) => (priorityTable[b] ?? 0) - (priorityTable[a] ?? 0),
   )[0];
@@ -304,7 +356,7 @@ function scoreCandidate({
     ? mapWrongRevealReason(primaryReason)
     : primaryReason;
 
-  const priority = priorityTable[selectedReason] ?? priorityTable[primaryReason] ?? 0;
+  const priority = priorityTable[primaryReason] ?? 0;
   const totalScore = priority * 10000 + tieScore;
 
   return {
@@ -319,6 +371,22 @@ function scoreCandidate({
     aiResponseStyle: style,
     responseMode,
   };
+}
+
+function pickBestWrongRevealCandidate(scoredCandidates, style) {
+  const allowSacrifice = style === "sacrifice";
+  const eligible = scoredCandidates.filter((candidate) => {
+    if (!candidate) {
+      return false;
+    }
+    if (allowSacrifice) {
+      return true;
+    }
+    return !candidateHasSacrificePlay(candidate);
+  });
+
+  const sorted = eligible.sort((a, b) => b.totalScore - a.totalScore);
+  return sorted[0] ?? null;
 }
 
 /**
@@ -359,7 +427,25 @@ export function selectTacticalWhiteMove({
     .filter(Boolean)
     .sort((a, b) => b.totalScore - a.totalScore);
 
-  const selected = scoredCandidates[0] ?? null;
+  let selected =
+    responseMode === "wrong_reveal"
+      ? pickBestWrongRevealCandidate(scoredCandidates, style)
+      : scoredCandidates[0] ?? null;
+
+  if (
+    selected &&
+    responseMode === "wrong_reveal" &&
+    isForbiddenWrongRevealReason(selected.selectedReason, style)
+  ) {
+    console.warn("[TacticalResponse] forbidden sacrifice_play — re-picking", {
+      style,
+      rejected: selected.move,
+    });
+    selected = pickBestWrongRevealCandidate(
+      scoredCandidates.filter((c) => c !== selected),
+      style,
+    );
+  }
 
   return {
     style,
