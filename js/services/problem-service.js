@@ -1,4 +1,8 @@
-import { canManageGradeLevels, canManageProblems } from "../permissions/permission-service.js";
+import {
+  canManageGradeLevels,
+  canManageProblems,
+  normalizeRole,
+} from "../permissions/permission-service.js";
 import { getSupabaseAuthSession, isSupabaseAuthUser } from "./auth-service.js";
 
 export async function saveProblem({ user, problem, ProblemStore }) {
@@ -22,16 +26,37 @@ export async function saveProblem({ user, problem, ProblemStore }) {
       session.user?.user_metadata?.userType ??
       "",
   ).trim();
-  const appRole = normalizeRole(metadataRole);
+  let appRole = metadataRole || "unknown";
+  try {
+    appRole = normalizeRole(metadataRole) || appRole;
+  } catch (error) {
+    console.warn("[ProblemService] normalizeRole failed. fallback role applied.", {
+      roleRaw: metadataRole,
+      fallbackRole: appRole,
+      error:
+        error instanceof Error
+          ? {
+              message: error.message,
+              stack: error.stack,
+            }
+          : String(error),
+    });
+  }
   const accessToken = session.access_token ?? "";
-  console.log("[ProblemService] saveProblem auth context", {
-    userId: user?.id ?? null,
-    sessionUserId: session.user.id,
-    roleRaw: metadataRole,
-    role: appRole,
-    hasAccessToken: Boolean(accessToken),
-    accessTokenPreview: accessToken ? `${String(accessToken).slice(0, 14)}...` : null,
-  });
+  try {
+    console.log("[ProblemService] saveProblem auth context", {
+      userId: user?.id ?? null,
+      sessionUserId: session.user.id,
+      roleRaw: metadataRole,
+      role: appRole,
+      hasAccessToken: Boolean(accessToken),
+      accessTokenPreview: accessToken ? `${String(accessToken).slice(0, 14)}...` : null,
+    });
+  } catch (error) {
+    console.warn("[ProblemService] auth context logging failed. continue save.", {
+      error: error instanceof Error ? error.message : String(error),
+    });
+  }
 
   return ProblemStore.saveProblem(problem);
 }
