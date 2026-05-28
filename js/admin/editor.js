@@ -17,6 +17,7 @@ import {
   resolveAnswerSequenceConfig,
   applyFullAnswerSequenceToDraft,
   renumberSequenceMoves,
+  simulateFullAnswerSequence,
   toFullAnswerSequencePayload,
   validateFullAnswerSequence,
 } from "../solve/ai-response-solve/answer-sequence.js";
@@ -433,6 +434,15 @@ export function createAdminEditorController({
     );
   }
 
+  function buildAdminAiSequenceBoardState(draft = adminState.draft) {
+    const fullSequence = getAdminFullSequence(draft);
+    return simulateFullAnswerSequence(draft?.stones ?? [], fullSequence, {
+      boardSize: BOARD_SIZE,
+      stoneColors: { black: STONE.black, white: STONE.white },
+      enforceSimpleKo: false,
+    });
+  }
+
   function setAdminFullSequence(fullSequence) {
     if (!adminState.draft) {
       return;
@@ -660,8 +670,28 @@ export function createAdminEditorController({
       },
     });
 
+    const aiResponseDraft = isAiResponseDraft(adminState.draft);
+    const previewSequence = aiResponseDraft ? getAdminFullSequence(adminState.draft) : [];
+    const aiBoardState = aiResponseDraft
+      ? buildAdminAiSequenceBoardState(adminState.draft)
+      : null;
+    const markByPointKey = new Map();
     adminState.draft.stones.forEach((stone) => {
       const sanitized = sanitizeStone(stone, BOARD_SIZE, "admin:stone");
+      if (!sanitized) {
+        return;
+      }
+      if (sanitized.mark) {
+        markByPointKey.set(`${sanitized.x}:${sanitized.y}`, sanitized.mark);
+      }
+    });
+
+    const stonesToRender = aiResponseDraft
+      ? aiBoardState?.stones ?? []
+      : adminState.draft.stones;
+
+    stonesToRender.forEach((stone) => {
+      const sanitized = sanitizeStone(stone, BOARD_SIZE, "admin:stone-render");
       if (!sanitized) {
         return;
       }
@@ -671,14 +701,12 @@ export function createAdminEditorController({
         c: sanitized.color === STONE.black ? WGo.B : WGo.W,
       });
 
-      const markType = getWgoMarkType(sanitized.mark);
+      const retainedMark = markByPointKey.get(`${sanitized.x}:${sanitized.y}`);
+      const markType = getWgoMarkType(sanitized.mark ?? retainedMark);
       if (markType) {
         safeAdminBoardAdd(adminBoard, { x: sanitized.x, y: sanitized.y, type: markType });
       }
     });
-
-    const aiResponseDraft = isAiResponseDraft(adminState.draft);
-    const previewSequence = aiResponseDraft ? getAdminFullSequence(adminState.draft) : [];
 
     if (
       isBoardProblem(adminState.draft) &&
@@ -713,16 +741,15 @@ export function createAdminEditorController({
     }
 
     if (isBoardProblem(adminState.draft) && aiResponseDraft) {
+      const stoneAt = new Set((aiBoardState?.stones ?? []).map((s) => `${s.x}:${s.y}`));
       previewSequence.forEach((move) => {
         const point = sanitizeBoardPoint(move, BOARD_SIZE, "admin:sequenceMarker");
         if (!point) {
           return;
         }
-        safeAdminBoardAdd(adminBoard, {
-          x: point.x,
-          y: point.y,
-          c: move.color === "white" ? WGo.W : WGo.B,
-        });
+        if (!stoneAt.has(`${point.x}:${point.y}`)) {
+          return;
+        }
         safeAdminBoardAdd(adminBoard, {
           x: point.x,
           y: point.y,
@@ -809,19 +836,30 @@ export function createAdminEditorController({
       return;
     }
 
-    if (adminState.draft.stones.some((stone) => isSamePoint(stone, point))) {
-      setFeedback("정답 수순은 빈 곳에만 지정해 주세요.", "wrong");
-      return;
-    }
-
     const answerMoveCount = normalizeAnswerMoveCount(
       adminState.draft.answerMoveCount ?? adminState.draft.answer_move_count ?? 1,
     );
     const current = getAdminFullSequence();
+    const currentState = buildAdminAiSequenceBoardState(adminState.draft);
+    if (currentState.error) {
+      setFeedback(
+        `현재 입력된 ${currentState.error.ply}수에서 수순이 불법입니다. 먼저 수정해 주세요.`,
+        "wrong",
+      );
+      return;
+    }
+
+    if ((currentState.stones ?? []).some((stone) => isSamePoint(stone, point))) {
+      setFeedback("현재 수순 기준으로 이미 돌이 있는 자리입니다.", "wrong");
+      return;
+    }
 
     if (current.some((entry) => entry.x === point.x && entry.y === point.y)) {
-      setFeedback("이미 정답 수순에 포함된 자리입니다.", "wrong");
-      return;
+      const wasCaptured = !(currentState.stones ?? []).some((stone) => isSamePoint(stone, point));
+      if (!wasCaptured) {
+        setFeedback("이미 정답 수순에 포함된 자리입니다.", "wrong");
+        return;
+      }
     }
 
     if (current.length >= answerMoveCount) {
@@ -843,7 +881,30 @@ export function createAdminEditorController({
         ply,
       },
     ];
-    setAdminFullSequence(renumberSequenceMoves(next));
+    const nextRenumbered = renumberSequenceMoves(next);
+    const nextState = simulateFullAnswerSequence(adminState.draft.stones ?? [], nextRenumbered, {
+      boardSize: BOARD_SIZE,
+      stoneColors: { black: STONE.black, white: STONE.white },
+      enforceSimpleKo: false,
+    });
+    if (nextState.error) {
+      const reason = nextState.error.reason;
+      if (reason === "suicide") {
+        setFeedback(`${ply}수는 자살수라 둘 수 없습니다.`, "wrong");
+      } else if (reason === "occupied") {
+        setFeedback(`${ply}수는 이미 돌이 있는 자리입니다.`, "wrong");
+      } else {
+        setFeedback(`${ply}수는 바둑 룰상 둘 수 없습니다.`, "wrong");
+      }
+      console.warn("[AdminSequence] illegal sequence move", {
+        ply,
+        point,
+        reason,
+      });
+      return;
+    }
+
+    setAdminFullSequence(nextRenumbered);
     renderAdminBoard();
 
     if (next.length >= answerMoveCount) {

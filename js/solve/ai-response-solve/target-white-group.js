@@ -206,6 +206,40 @@ export function isMoveOnTargetAtariLiberty(moveKey, targetContext) {
   return Boolean(targetContext?.atariLibertyKeys?.has(moveKey));
 }
 
+/** 타깃 그룹(들)의 현재 활로 좌표 */
+export function getTargetLibertyPoints(targetContext, stones, boardSize) {
+  if (!targetContext?.groups?.length) {
+    return [];
+  }
+
+  const points = [];
+  const seen = new Set();
+
+  for (const group of targetContext.groups) {
+    const libertyKeys = getGroupLibertyKeys(stones, group, boardSize);
+    libertyKeys.forEach((key) => {
+      if (seen.has(key)) {
+        return;
+      }
+      seen.add(key);
+      const [x, y] = key.split(":").map(Number);
+      if (Number.isInteger(x) && Number.isInteger(y)) {
+        points.push({ x, y });
+      }
+    });
+  }
+
+  return points;
+}
+
+export function pointKeyToCoordLabel(key) {
+  const [x, y] = String(key).split(":").map(Number);
+  if (!Number.isInteger(x) || !Number.isInteger(y)) {
+    return key;
+  }
+  return `${x},${y}`;
+}
+
 /**
  * 관리자 저장 시 △ 표시 백돌 → target_white_group 동기화
  */

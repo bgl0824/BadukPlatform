@@ -2728,6 +2728,13 @@ function getProblemStoreErrorMessage(error, actionLabel) {
     return "Supabase problems 테이블에 grade_level 컬럼이 필요합니다. scripts/supabase-problems-grade-level.sql 을 실행해 주세요.";
   }
 
+  if (
+    message.includes("target_white_group") ||
+    message.includes("target_white_mark")
+  ) {
+    return "Supabase problems 테이블에 target_white_group/target_white_mark 컬럼이 필요합니다. scripts/supabase-problems-target-white-group.sql 을 실행해 주세요.";
+  }
+
   if (message.includes("exam_sets") || message.includes("exam_set_questions")) {
     return "Supabase exam_sets 테이블이 필요합니다. scripts/supabase-exam-sets.sql 을 실행해 주세요.";
   }
@@ -2745,6 +2752,10 @@ function getProblemStoreErrorMessage(error, actionLabel) {
 
   if (message.includes("Supabase Auth 로그인") || message.includes("로그인 세션")) {
     return `${message} (문제 저장·급수 배정은 Supabase Auth 계정이 필요합니다.)`;
+  }
+
+  if (message.includes("JWT") || message.includes("401") || message.includes("Unauthorized")) {
+    return "Supabase 인증(401)으로 저장이 거절되었습니다. 다시 로그인하고, admin/academy_owner/teacher 권한과 access token 상태를 확인해 주세요.";
   }
 
   if (message.includes("column")) {

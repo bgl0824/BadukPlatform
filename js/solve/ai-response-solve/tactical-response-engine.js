@@ -17,11 +17,14 @@ import {
   getStyleWeights,
   resolveAiResponseStyle,
 } from "./tactical-response-styles.js";
+import { formatCoordLabel } from "./answer-sequence.js";
 import {
   formatTargetWhiteGroupForLog,
+  getTargetLibertyPoints,
   isMoveAdjacentToTargetGroup,
   isMoveOnTargetAtariLiberty,
   measureTargetGroupAfterMove,
+  pointKeyToCoordLabel,
   resolveTargetWhiteGroup,
 } from "./target-white-group.js";
 
@@ -73,6 +76,13 @@ const WRONG_REVEAL_REASON_LABEL = {
 };
 
 const FORBIDDEN_WRONG_REVEAL_REASONS = new Set(["sacrifice_play"]);
+
+const TARGET_SURVIVAL_PRIMARY_REASONS = new Set([
+  "extend_atari",
+  "continuous_escape",
+  "future_liberty_gain",
+  "connect_target_group",
+]);
 
 function manhattanDistance(a, b) {
   return Math.abs(a.x - b.x) + Math.abs(a.y - b.y);
@@ -206,8 +216,10 @@ function scoreWrongRevealWithTarget({
   const reasons = [];
   let candidateFutureLiberties = targetContext.minLiberties;
 
+  const inTargetCrisis = targetContext.minLiberties <= 1;
+
   if (isMoveOnTargetAtariLiberty(moveKey, targetContext)) {
-    signals.extend_atari = 2500;
+    signals.extend_atari = inTargetCrisis ? 80000 : 2500;
     reasons.push("extend_atari");
   }
 
@@ -251,20 +263,15 @@ function scoreWrongRevealWithTarget({
       distToBlack >= 2);
   if (isEscapeLine) {
     signals.continuous_escape =
-      1100 +
-      targetGain * 120 +
-      ((targetAfter?.minLiberties ?? 0) >= 2 ? 100 : 0);
+      (inTargetCrisis ? 60000 : 1100) +
+      targetGain * (inTargetCrisis ? 500 : 120) +
+      ((targetAfter?.minLiberties ?? 0) >= 2 ? (inTargetCrisis ? 5000 : 100) : 0);
     reasons.push("continuous_escape");
   }
 
-  if (lastBlackMove) {
-    const dist = manhattanDistance(point, lastBlackMove);
-    if (dist >= 1 && dist <= 2 && (hadTargetNeighbor || targetGain >= 0)) {
-      signals.near_last_black = 220 - dist * 35;
-      reasons.push("near_last_black");
-    } else if (dist > 4) {
-      signals.far_from_last_black = -320 - (dist - 4) * 50;
-    }
+  if (inTargetCrisis && targetGain > 0 && !reasons.includes("continuous_escape")) {
+    signals.continuous_escape = 55000 + targetGain * 400;
+    reasons.push("continuous_escape");
   }
 
   const policyBonus = (candidate.policyPrior ?? 0) * 10;
@@ -546,6 +553,333 @@ function pickBestWrongRevealCandidate(scoredCandidates, style) {
   return sorted[0] ?? null;
 }
 
+function isTargetSurvivalCandidate(scored) {
+  if (!scored) {
+    return false;
+  }
+  return TARGET_SURVIVAL_PRIMARY_REASONS.has(scored.primaryReason);
+}
+
+function makeInjectedCandidate(point, tag) {
+  return {
+    x: point.x,
+    y: point.y,
+    move: formatCoordLabel(point),
+    order: -100,
+    visits: null,
+    policyPrior: null,
+    injectedTargetSurvival: true,
+    injectionTag: tag,
+  };
+}
+
+function mergeTargetSurvivalCandidates(regionCandidates, targetContext, stones, boardSize, stoneColors, problem) {
+  if (!targetContext) {
+    return [...(regionCandidates ?? [])];
+  }
+
+  const merged = [...(regionCandidates ?? [])];
+  const seen = new Set(merged.map((c) => `${c.x},${c.y}`));
+
+  const addPoint = (point, tag) => {
+    const key = `${point.x},${point.y}`;
+    if (seen.has(key) || getStoneAtPoint(stones, point)) {
+      return;
+    }
+    seen.add(key);
+    merged.unshift(makeInjectedCandidate(point, tag));
+  };
+
+  getTargetLibertyPoints(targetContext, stones, boardSize).forEach((point) => {
+    addPoint(point, "target_liberty");
+  });
+
+  const escapePoints = buildContinuousEscapePoints(
+    targetContext,
+    stones,
+    boardSize,
+    stoneColors,
+    problem,
+  );
+  escapePoints.forEach((point) => addPoint(point, "continuous_escape"));
+
+  return merged;
+}
+
+function buildContinuousEscapePoints(targetContext, stones, boardSize, stoneColors, problem) {
+  const points = [];
+  const seen = new Set();
+
+  for (const group of targetContext.groups) {
+    for (const stone of group) {
+      getNeighborPoints(stone, boardSize).forEach((neighbor) => {
+        if (getStoneAtPoint(stones, neighbor)) {
+          return;
+        }
+        const key = pointKey(neighbor);
+        if (seen.has(key)) {
+          return;
+        }
+        seen.add(key);
+
+        const afterStones = simulateWhiteMove(stones, neighbor, boardSize, stoneColors);
+        if (!afterStones) {
+          return;
+        }
+
+        const afterMetrics = measureTargetGroupAfterMove(
+          problem,
+          afterStones,
+          boardSize,
+          stoneColors,
+          targetContext,
+        );
+        const gain = afterMetrics?.libertyGain ?? 0;
+        const minAfter = afterMetrics?.minLiberties ?? 0;
+        if (gain > 0 || minAfter > targetContext.minLiberties) {
+          points.push(neighbor);
+        }
+      });
+    }
+  }
+
+  return points;
+}
+
+function getForcedLibertyPoints(targetContext, stones, boardSize) {
+  if (targetContext.minLiberties > 1) {
+    return [];
+  }
+
+  if (targetContext.atariLibertyKeys?.size > 0) {
+    return [...targetContext.atariLibertyKeys].map((key) => {
+      const [x, y] = key.split(":").map(Number);
+      return { x, y };
+    });
+  }
+
+  return getTargetLibertyPoints(targetContext, stones, boardSize);
+}
+
+function scoreForcedTargetLibertyMoves({
+  targetContext,
+  stones,
+  boardSize,
+  stoneColors,
+  lastBlackMove,
+  style,
+  problem,
+}) {
+  const liberties = getForcedLibertyPoints(targetContext, stones, boardSize);
+  const attempts = [];
+
+  for (const point of liberties) {
+    const candidate = makeInjectedCandidate(point, "forced_liberty");
+    const scored = scoreCandidate({
+      candidate,
+      stones,
+      boardSize,
+      stoneColors,
+      lastBlackMove,
+      style,
+      responseMode: "wrong_reveal",
+      problem,
+      targetContext,
+    });
+
+    if (!scored) {
+      attempts.push({
+        move: formatCoordLabel(point),
+        legal: false,
+        rejectReason: "illegal_placement",
+      });
+      continue;
+    }
+
+    attempts.push({
+      move: scored.move ?? formatCoordLabel(point),
+      legal: true,
+      primaryReason: scored.primaryReason,
+      selectedReason: scored.selectedReason,
+      totalScore: scored.totalScore,
+      scored,
+    });
+  }
+
+  return { liberties, attempts };
+}
+
+function tryPickForcedTargetLiberty({
+  targetContext,
+  stones,
+  boardSize,
+  stoneColors,
+  lastBlackMove,
+  style,
+  problem,
+}) {
+  if (!targetContext) {
+    return { picked: null, diagnostics: { forcedRejectReason: "no_target_context" } };
+  }
+
+  if (targetContext.minLiberties > 1) {
+    return {
+      picked: null,
+      diagnostics: {
+        forcedRejectReason: "target_not_in_crisis",
+        targetGroupLiberties: targetContext.minLiberties,
+      },
+    };
+  }
+
+  const { liberties, attempts } = scoreForcedTargetLibertyMoves({
+    targetContext,
+    stones,
+    boardSize,
+    stoneColors,
+    lastBlackMove,
+    style,
+    problem,
+  });
+
+  const legal = attempts.filter((entry) => entry.legal).map((entry) => entry.scored);
+  const forcedExtendMove =
+    liberties.length === 1 ? formatCoordLabel(liberties[0]) : liberties.map(formatCoordLabel);
+
+  if (liberties.length === 0) {
+    return {
+      picked: null,
+      diagnostics: {
+        forcedExtendMove: null,
+        forcedRejectReason: "no_target_liberties",
+        libertyAttempts: attempts,
+      },
+    };
+  }
+
+  if (legal.length === 0) {
+    return {
+      picked: null,
+      diagnostics: {
+        forcedExtendMove,
+        forcedRejectReason: "all_liberty_moves_illegal",
+        libertyAttempts: attempts,
+      },
+    };
+  }
+
+  if (liberties.length === 1) {
+    const forced = legal[0];
+    forced.primaryReason = "extend_atari";
+    forced.selectedReason = "forced_extend_atari";
+    forced.totalScore = 99999999;
+    return {
+      picked: forced,
+      diagnostics: {
+        forcedExtendMove,
+        forcedRejectReason: null,
+        forcedPickMode: "unique_liberty",
+        libertyAttempts: attempts,
+      },
+    };
+  }
+
+  const extendMoves = legal.filter((entry) => entry.reasons?.includes("extend_atari"));
+  const pool = extendMoves.length > 0 ? extendMoves : legal;
+  const best = pool.sort((a, b) => b.totalScore - a.totalScore)[0];
+  if (best?.reasons?.includes("extend_atari")) {
+    best.selectedReason = "forced_extend_atari";
+    best.totalScore = 99999998;
+  }
+  return {
+    picked: best,
+    diagnostics: {
+      forcedExtendMove,
+      forcedRejectReason: extendMoves.length === 0 ? "no_extend_atari_on_liberty" : null,
+      forcedPickMode: "crisis_best_liberty",
+      libertyAttempts: attempts,
+    },
+  };
+}
+
+function pickBestWrongRevealWithTarget(scoredCandidates, targetContext, style) {
+  const allowSacrifice = style === "sacrifice";
+  const eligible = scoredCandidates.filter((candidate) => {
+    if (!candidate) {
+      return false;
+    }
+    if (allowSacrifice) {
+      return true;
+    }
+    return !candidateHasSacrificePlay(candidate);
+  });
+
+  const survival = eligible.filter(isTargetSurvivalCandidate);
+  const inCrisis = Boolean(targetContext && targetContext.minLiberties <= 1);
+
+  if (targetContext && survival.length > 0) {
+    return {
+      selected: survival.sort((a, b) => b.totalScore - a.totalScore)[0],
+      pickMode: inCrisis ? "target_survival_crisis" : "target_survival",
+      nearLastBlackRejectedBecause: "target_survival_available",
+    };
+  }
+
+  if (targetContext) {
+    const withoutNearBlack = eligible.filter(
+      (candidate) => candidate.primaryReason !== "near_last_black",
+    );
+    if (withoutNearBlack.length > 0) {
+      return {
+        selected: withoutNearBlack.sort((a, b) => b.totalScore - a.totalScore)[0],
+        pickMode: "no_near_last_black",
+        nearLastBlackRejectedBecause: "no_target_survival_scored",
+      };
+    }
+  }
+
+  return {
+    selected: pickBestWrongRevealCandidate(scoredCandidates, style),
+    pickMode: "default",
+    nearLastBlackRejectedBecause: null,
+  };
+}
+
+function logTargetSurvivalSelection({
+  targetContext,
+  stones,
+  boardSize,
+  stoneColors,
+  problem,
+  selected,
+  pickDiagnostics,
+  continuousEscapeCandidates,
+}) {
+  const targetLiberties = targetContext
+    ? getTargetLibertyPoints(targetContext, stones, boardSize).map(formatCoordLabel)
+    : [];
+
+  console.log("[KatagoRespond] tactical target selection", {
+    targetWhiteGroup: formatTargetWhiteGroupForLog(targetContext),
+    targetGroupLiberties: targetContext?.minLiberties ?? null,
+    targetLiberties,
+    targetLibertyKeys: targetContext
+      ? [...(targetContext.atariLibertyKeys ?? [])].map(pointKeyToCoordLabel)
+      : [],
+    forcedExtendMove: pickDiagnostics?.forcedExtendMove ?? null,
+    forcedRejectReason: pickDiagnostics?.forcedRejectReason ?? null,
+    forcedPickMode: pickDiagnostics?.forcedPickMode ?? null,
+    libertyAttempts: pickDiagnostics?.libertyAttempts ?? null,
+    continuousEscapeCandidates: continuousEscapeCandidates.map(formatCoordLabel),
+    candidateFutureLiberties: selected?.candidateFutureLiberties ?? null,
+    selectedReason: selected?.selectedReason ?? null,
+    selectedMove:
+      selected?.move ?? (selected ? { x: selected.x, y: selected.y } : null),
+    pickMode: pickDiagnostics?.pickMode ?? null,
+    nearLastBlackRejectedBecause: pickDiagnostics?.nearLastBlackRejectedBecause ?? null,
+  });
+}
+
 /**
  * @param {{
  *   regionCandidates: object[],
@@ -573,7 +907,29 @@ export function selectTacticalWhiteMove({
       ? resolveTargetWhiteGroup(problem, stones, boardSize, stoneColors)
       : null;
 
-  const scoredCandidates = regionCandidates
+  const continuousEscapeCandidates = targetContext
+    ? buildContinuousEscapePoints(
+        targetContext,
+        stones,
+        boardSize,
+        stoneColors,
+        problem,
+      )
+    : [];
+
+  const mergedCandidates =
+    responseMode === "wrong_reveal" && targetContext
+      ? mergeTargetSurvivalCandidates(
+          regionCandidates,
+          targetContext,
+          stones,
+          boardSize,
+          stoneColors,
+          problem,
+        )
+      : [...(regionCandidates ?? [])];
+
+  const scoredCandidates = mergedCandidates
     .map((candidate) =>
       scoreCandidate({
         candidate,
@@ -590,10 +946,37 @@ export function selectTacticalWhiteMove({
     .filter(Boolean)
     .sort((a, b) => b.totalScore - a.totalScore);
 
-  let selected =
-    responseMode === "wrong_reveal"
-      ? pickBestWrongRevealCandidate(scoredCandidates, style)
-      : scoredCandidates[0] ?? null;
+  let pickDiagnostics = {};
+  let selected = scoredCandidates[0] ?? null;
+
+  if (responseMode === "wrong_reveal" && targetContext) {
+    const forced = tryPickForcedTargetLiberty({
+      targetContext,
+      stones,
+      boardSize,
+      stoneColors,
+      lastBlackMove,
+      style,
+      problem,
+    });
+
+    pickDiagnostics = { ...forced.diagnostics };
+
+    if (forced.picked) {
+      selected = forced.picked;
+      pickDiagnostics.pickMode = forced.diagnostics.forcedPickMode ?? "forced_liberty";
+    } else {
+      const picked = pickBestWrongRevealWithTarget(
+        scoredCandidates,
+        targetContext,
+        style,
+      );
+      selected = picked.selected;
+      pickDiagnostics = { ...pickDiagnostics, ...picked };
+    }
+  } else if (responseMode === "wrong_reveal") {
+    selected = pickBestWrongRevealCandidate(scoredCandidates, style);
+  }
 
   if (
     selected &&
@@ -608,17 +991,19 @@ export function selectTacticalWhiteMove({
       scoredCandidates.filter((c) => c !== selected),
       style,
     );
+    pickDiagnostics.sacrificeRepick = true;
   }
 
   if (responseMode === "wrong_reveal") {
-    console.log("[KatagoRespond] tactical target selection", {
-      targetWhiteGroup: formatTargetWhiteGroupForLog(targetContext),
-      targetGroupLiberties: targetContext?.minLiberties ?? null,
-      candidateFutureLiberties: selected?.candidateFutureLiberties ?? null,
-      selectedReason: selected?.selectedReason ?? null,
-      selectedMove:
-        selected?.move ??
-        (selected ? { x: selected.x, y: selected.y } : null),
+    logTargetSurvivalSelection({
+      targetContext,
+      stones,
+      boardSize,
+      stoneColors,
+      problem,
+      selected,
+      pickDiagnostics,
+      continuousEscapeCandidates,
     });
   }
 

@@ -6,6 +6,33 @@ export async function saveProblem({ user, problem, ProblemStore }) {
     throw new Error("permission denied: manage problems");
   }
 
+  if (!isSupabaseAuthUser(user)) {
+    throw new Error(
+      "Supabase Auth 로그인이 필요합니다. 로컬 계정으로는 문제를 저장할 수 없습니다.",
+    );
+  }
+
+  const session = await getSupabaseAuthSession();
+  if (!session?.user) {
+    throw new Error("Supabase 로그인 세션이 없습니다. 다시 로그인한 뒤 시도해 주세요.");
+  }
+
+  const metadataRole = String(
+    session.user?.user_metadata?.role ??
+      session.user?.user_metadata?.userType ??
+      "",
+  ).trim();
+  const appRole = normalizeRole(metadataRole);
+  const accessToken = session.access_token ?? "";
+  console.log("[ProblemService] saveProblem auth context", {
+    userId: user?.id ?? null,
+    sessionUserId: session.user.id,
+    roleRaw: metadataRole,
+    role: appRole,
+    hasAccessToken: Boolean(accessToken),
+    accessTokenPreview: accessToken ? `${String(accessToken).slice(0, 14)}...` : null,
+  });
+
   return ProblemStore.saveProblem(problem);
 }
 

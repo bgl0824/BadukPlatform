@@ -2,6 +2,8 @@ import {
   isValidBoardPoint,
   sanitizeBoardPoint,
 } from "../../game/board-point-validation.js";
+import { evaluatePlacement, PLACEMENT_STATUS } from "../../game/placement-validation.js";
+import { removeCapturedStonesAfterMove } from "../../game/capture.js";
 import { parseGtpCoordinate } from "../ai-response-ux/coordinates.js";
 import { getExpectedBlackAnswerCount, normalizeAnswerMoveCount } from "./constants.js";
 
@@ -60,6 +62,10 @@ export function toBlackAnswerSequencePayload(blackAnswers) {
 
 const COLOR_BLACK = "black";
 const COLOR_WHITE = "white";
+const DEFAULT_STONE_COLORS = {
+  black: COLOR_BLACK,
+  white: COLOR_WHITE,
+};
 
 /**
  * @typedef {{ color: "black"|"white", x: number, y: number, label: string, ply: number }} SequenceMove
@@ -344,12 +350,129 @@ export function validateFullAnswerSequence(problem, boardSize, occupiedKeys) {
       return `정답 수순 ${index + 1}착 좌표가 올바르지 않습니다.`;
     }
 
-    const key = `${entry.x}:${entry.y}`;
-    if (occupiedKeys.has(key)) {
-      return `정답 수순 ${index + 1}착이 기존 돌과 겹칩니다.`;
+  }
+
+  const simulation = simulateFullAnswerSequence(problem?.stones ?? [], fullSequence, {
+    boardSize,
+    stoneColors: DEFAULT_STONE_COLORS,
+    enforceSimpleKo: false,
+  });
+
+  if (simulation.error) {
+    const errorPly = simulation.error.ply ?? 0;
+    const reason = simulation.error.reason;
+    if (reason === "occupied") {
+      return `정답 수순 ${errorPly}착에 이미 돌이 있습니다. (포획 반영 기준)`;
     }
-    occupiedKeys.add(key);
+    if (reason === "suicide") {
+      return `정답 수순 ${errorPly}착은 자살수라 둘 수 없습니다.`;
+    }
+    if (reason === "ko") {
+      return `정답 수순 ${errorPly}착은 단순 패 금지에 걸립니다.`;
+    }
+    return `정답 수순 ${errorPly}착이 바둑 룰상 성립하지 않습니다.`;
   }
 
   return "";
+}
+
+function normalizeSimStones(initialStones, boardSize) {
+  return (initialStones ?? [])
+    .map((stone) => sanitizeBoardPoint(stone, boardSize, "sequence_sim_initial"))
+    .filter(Boolean)
+    .map((point) => {
+      const original = (initialStones ?? []).find((s) => s.x === point.x && s.y === point.y);
+      const color = String(original?.color ?? "").toLowerCase() === COLOR_WHITE
+        ? COLOR_WHITE
+        : COLOR_BLACK;
+      return { ...point, color };
+    });
+}
+
+function boardHash(stones) {
+  return [...stones]
+    .map((stone) => `${stone.color[0]}:${stone.x}:${stone.y}`)
+    .sort()
+    .join("|");
+}
+
+/**
+ * 정답 수순을 실제 착수/포획 규칙으로 시뮬레이션
+ */
+export function simulateFullAnswerSequence(
+  initialStones,
+  fullSequence,
+  { boardSize = 19, stoneColors = DEFAULT_STONE_COLORS, enforceSimpleKo = false } = {},
+) {
+  let currentStones = normalizeSimStones(initialStones, boardSize);
+  const history = [];
+  const hashes = [boardHash(currentStones)];
+
+  for (let index = 0; index < (fullSequence ?? []).length; index += 1) {
+    const entry = fullSequence[index];
+    const move = {
+      x: Number(entry.x),
+      y: Number(entry.y),
+      color: entry.color === COLOR_WHITE ? stoneColors.white : stoneColors.black,
+    };
+
+    if (!isValidBoardPoint(move, boardSize)) {
+      return {
+        stones: currentStones,
+        history,
+        error: { ply: index + 1, reason: "invalid_point", move },
+      };
+    }
+
+    const evaluation = evaluatePlacement(currentStones, move, { boardSize, stoneColors });
+    if (evaluation.status !== PLACEMENT_STATUS.legal) {
+      return {
+        stones: currentStones,
+        history,
+        error: {
+          ply: index + 1,
+          reason: evaluation.reason ?? evaluation.status,
+          move,
+          evaluation,
+        },
+      };
+    }
+
+    const afterCapture = removeCapturedStonesAfterMove(
+      [...currentStones, move],
+      move,
+      { boardSize, stoneColors },
+    );
+
+    const nextStones = afterCapture.stones;
+
+    if (enforceSimpleKo && hashes.length >= 2) {
+      const nextHash = boardHash(nextStones);
+      const previousOpponentTurnHash = hashes[hashes.length - 2];
+      if (nextHash === previousOpponentTurnHash) {
+        return {
+          stones: currentStones,
+          history,
+          error: { ply: index + 1, reason: "ko", move },
+        };
+      }
+      hashes.push(nextHash);
+    } else {
+      hashes.push(boardHash(nextStones));
+    }
+
+    history.push({
+      ply: index + 1,
+      move,
+      capturedCount: afterCapture.capturedCount ?? 0,
+      stones: nextStones,
+    });
+    currentStones = nextStones;
+  }
+
+  return {
+    stones: currentStones,
+    history,
+    error: null,
+  };
 }

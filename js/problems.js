@@ -262,6 +262,13 @@ async function saveProblem(problem) {
     displayOrder,
   };
   const row = toSupabaseRow(preparedProblem);
+  console.log("[ProblemStore] save payload", {
+    id: row.id,
+    problem_mode: row.problem_mode ?? null,
+    full_answer_sequence: row.full_answer_sequence ?? null,
+    target_white_group: row.target_white_group ?? null,
+    target_white_mark: row.target_white_mark ?? null,
+  });
   const { data, error } = await client
     .from(SUPABASE_PROBLEMS_TABLE)
     .upsert(row, { onConflict: "id" })
@@ -269,6 +276,21 @@ async function saveProblem(problem) {
     .single();
 
   if (error) {
+    console.error("[ProblemStore] saveProblem Supabase error", {
+      status: error.status ?? null,
+      code: error.code ?? null,
+      message: error.message ?? null,
+      details: error.details ?? null,
+      hint: error.hint ?? null,
+      body: {
+        code: error.code ?? null,
+        message: error.message ?? null,
+        details: error.details ?? null,
+        hint: error.hint ?? null,
+        status: error.status ?? null,
+      },
+      rowKeys: Object.keys(row),
+    });
     throw error;
   }
 
@@ -692,6 +714,13 @@ function toSupabaseRow(problem) {
 
   if (Array.isArray(problem.fullAnswerSequence) && problem.fullAnswerSequence.length > 0) {
     row.full_answer_sequence = problem.fullAnswerSequence;
+  }
+
+  const targetGroup =
+    problem.targetWhiteGroup ??
+    problem.target_white_group;
+  if (Array.isArray(targetGroup) && targetGroup.length > 0) {
+    row.target_white_group = targetGroup;
   }
 
   if (Array.isArray(problem.targetWhiteGroup) && problem.targetWhiteGroup.length > 0) {
