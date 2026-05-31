@@ -119,6 +119,8 @@ for (const needle of [
   "export function selectWrongRevealKatagoFirstMove",
   "export const WRONG_REVEAL_KATAGO_TOP_N = 5",
   "[KatagoRespond] wrong reveal katago-first selection",
+  "[KatagoRespond] wrong reveal selection trace",
+  "katago_global_top_hard_clamp",
 ]) {
   if (!tacticalEngine.includes(needle)) {
     throw new Error(`tactical-response-engine.js missing ${needle}`);

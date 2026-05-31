@@ -1064,6 +1064,132 @@ function findRawKatagoRank(rawCandidates, selected) {
   return index >= 0 ? index + 1 : null;
 }
 
+function buildScoredCandidateMap(scoredCandidates) {
+  const scoredByKey = new Map();
+  for (const scored of scoredCandidates ?? []) {
+    scoredByKey.set(candidatePointKey(scored), scored);
+  }
+  return scoredByKey;
+}
+
+function buildRegionCandidateKeys(katagoRegionCandidates) {
+  return new Set((katagoRegionCandidates ?? []).map((candidate) => candidatePointKey(candidate)));
+}
+
+function tryPickScoredKatagoCandidate(rawEntry, regionKeys, scoredByKey) {
+  if (!rawEntry) {
+    return null;
+  }
+  const key = candidatePointKey(rawEntry);
+  if (!regionKeys.has(key)) {
+    return null;
+  }
+  return scoredByKey.get(key) ?? null;
+}
+
+function buildTopNInRegionTrace(rawCandidates, regionKeys, scoredByKey, topN) {
+  return rawCandidates.slice(0, topN).map((candidate, index) => {
+    const key = candidatePointKey(candidate);
+    const scored = scoredByKey.get(key);
+    return {
+      rank: index + 1,
+      move: candidate.move ?? null,
+      inRegion: regionKeys.has(key),
+      scoreable: Boolean(scored),
+      katagoFirstRankingScore: scored
+        ? katagoFirstRankingScore(rawCandidates, scored, topN)
+        : null,
+      tieScore: scored?.tieScore ?? null,
+      selectedReason: scored?.selectedReason ?? null,
+    };
+  });
+}
+
+function resolveStrictKatagoPick({
+  rawCandidates,
+  regionKeys,
+  scoredByKey,
+  topN = WRONG_REVEAL_KATAGO_TOP_N,
+}) {
+  const katagoTopEntry = rawCandidates[0] ?? null;
+  const katagoTopInRegion = katagoTopEntry
+    ? regionKeys.has(candidatePointKey(katagoTopEntry))
+    : false;
+  const katagoTopScored = tryPickScoredKatagoCandidate(
+    katagoTopEntry,
+    regionKeys,
+    scoredByKey,
+  );
+
+  if (katagoTopScored) {
+    return {
+      selected: katagoTopScored,
+      pickMode: "katago_global_top",
+      rawRank: 1,
+      katagoTopInRegion: true,
+      katagoTopScoreable: true,
+    };
+  }
+
+  for (let index = 1; index < Math.min(topN, rawCandidates.length); index += 1) {
+    const scored = tryPickScoredKatagoCandidate(
+      rawCandidates[index],
+      regionKeys,
+      scoredByKey,
+    );
+    if (scored) {
+      return {
+        selected: scored,
+        pickMode: "katago_top_n_in_region",
+        rawRank: index + 1,
+        katagoTopInRegion,
+        katagoTopScoreable: false,
+      };
+    }
+  }
+
+  return {
+    selected: null,
+    pickMode: katagoTopInRegion ? "katago_top_unscoreable" : "no_top_n_in_region",
+    rawRank: null,
+    katagoTopInRegion,
+    katagoTopScoreable: false,
+  };
+}
+
+function maybeApplyTopNTacticalBoost({
+  selected,
+  pickMode,
+  rawCandidates,
+  boostPool,
+  katagoTopScored,
+}) {
+  if (katagoTopScored || !selected || boostPool.length === 0) {
+    return { selected, pickMode, tacticalBoostApplied: false };
+  }
+
+  const bestBoost = [...boostPool].sort(
+    (a, b) =>
+      katagoFirstRankingScore(rawCandidates, b) -
+      katagoFirstRankingScore(rawCandidates, a),
+  )[0];
+
+  if (
+    bestBoost &&
+    !isSameCandidatePoint(bestBoost, selected) &&
+    katagoFirstRankingScore(rawCandidates, bestBoost) >
+      katagoFirstRankingScore(rawCandidates, selected) + 80
+  ) {
+    return {
+      selected: bestBoost,
+      pickMode: "katago_top_n_tactical_boost",
+      tacticalBoostApplied: true,
+    };
+  }
+
+  return { selected, pickMode, tacticalBoostApplied: false };
+}
+
 /**
  * wrong reveal: KataGo inRegion 후보 우선, 전술엔진은 Top N 내 점수 보정만.
  * @param {{
@@ -1090,17 +1216,11 @@ export function selectWrongRevealKatagoFirstMove({
   const katagoRegionCandidates = (regionCandidates ?? []).filter(
     (candidate) => !candidate.injectedTargetSurvival,
   );
-  const topNKeys = new Set(
-    rawCandidates.slice(0, WRONG_REVEAL_KATAGO_TOP_N).map((candidate) =>
-      candidatePointKey(candidate),
-    ),
-  );
+  const regionKeys = buildRegionCandidateKeys(katagoRegionCandidates);
   const katagoTopMove = rawCandidates[0]?.move ?? null;
-  const katagoFirstInRegionEntry = rawCandidates.find((candidate) =>
-    katagoRegionCandidates.some((regionEntry) =>
-      isSameCandidatePoint(regionEntry, candidate),
-    ),
-  );
+  const katagoTopInRegion = rawCandidates[0]
+    ? regionKeys.has(candidatePointKey(rawCandidates[0]))
+    : false;
 
   if (katagoRegionCandidates.length === 0) {
     return {
@@ -1120,6 +1240,8 @@ export function selectWrongRevealKatagoFirstMove({
         tacticalReason: null,
         overrideAllowed: false,
         pickMode: "no_region_candidates",
+        katagoTopInRegion,
+        decisionTrace: { prePickCandidates: [] },
       },
     };
   }
@@ -1139,52 +1261,43 @@ export function selectWrongRevealKatagoFirstMove({
       }),
     )
     .filter(Boolean);
-
-  const boostPool = scoredCandidates.filter((candidate) =>
-    topNKeys.has(candidatePointKey(candidate)),
+  const scoredByKey = buildScoredCandidateMap(scoredCandidates);
+  const prePickCandidates = buildTopNInRegionTrace(
+    rawCandidates,
+    regionKeys,
+    scoredByKey,
+    WRONG_REVEAL_KATAGO_TOP_N,
   );
 
-  const defaultScored =
-    katagoFirstInRegionEntry &&
-    scoredCandidates.find((candidate) =>
-      isSameCandidatePoint(candidate, katagoFirstInRegionEntry),
-    );
+  const katagoTopScored = tryPickScoredKatagoCandidate(
+    rawCandidates[0],
+    regionKeys,
+    scoredByKey,
+  );
+  const strictPick = resolveStrictKatagoPick({
+    rawCandidates,
+    regionKeys,
+    scoredByKey,
+  });
 
-  let selected = defaultScored ?? scoredCandidates[0] ?? null;
-  let pickMode = defaultScored ? "katago_first_in_region" : "region_fallback";
-  let overrideAllowed = false;
+  let selected = strictPick.selected;
+  let pickMode = strictPick.pickMode;
 
-  if (defaultScored && boostPool.length > 0) {
-    const bestBoost = [...boostPool].sort(
-      (a, b) =>
-        katagoFirstRankingScore(rawCandidates, b) -
-        katagoFirstRankingScore(rawCandidates, a),
-    )[0];
+  const boostPool = scoredCandidates.filter((candidate) =>
+    findRawKatagoRank(rawCandidates, candidate) != null &&
+    findRawKatagoRank(rawCandidates, candidate) <= WRONG_REVEAL_KATAGO_TOP_N,
+  );
 
-    if (
-      bestBoost &&
-      !isSameCandidatePoint(bestBoost, defaultScored) &&
-      katagoFirstRankingScore(rawCandidates, bestBoost) >
-        katagoFirstRankingScore(rawCandidates, defaultScored) + 80
-    ) {
-      selected = bestBoost;
-      pickMode = "katago_top_n_tactical_boost";
-    }
-  }
-
-  if (
-    selected?.selectedReason === "forced_extend_atari" &&
-    !topNKeys.has(candidatePointKey(selected))
-  ) {
-    selected = defaultScored ?? selected;
-    pickMode = "forced_extend_rejected_not_in_top_n";
-    overrideAllowed = false;
-  }
-
-  if (selected && !topNKeys.has(candidatePointKey(selected)) && defaultScored) {
-    selected = defaultScored;
-    pickMode = "reverted_outside_top_n";
-    overrideAllowed = false;
+  if (!katagoTopScored) {
+    const boosted = maybeApplyTopNTacticalBoost({
+      selected,
+      pickMode,
+      rawCandidates,
+      boostPool,
+      katagoTopScored,
+    });
+    selected = boosted.selected;
+    pickMode = boosted.pickMode;
   }
 
   if (
@@ -1196,14 +1309,39 @@ export function selectWrongRevealKatagoFirstMove({
         (candidate) =>
           candidate !== selected &&
           !isForbiddenWrongRevealReason(candidate.selectedReason, style),
-      ) ?? defaultScored;
+      ) ?? katagoTopScored ?? strictPick.selected;
     selected = alternate ?? selected;
     pickMode = "forbidden_reason_repick";
   }
 
+  const selectedKatagoRankBeforeClamp = findRawKatagoRank(rawCandidates, selected);
+  if (
+    selectedKatagoRankBeforeClamp == null ||
+    selectedKatagoRankBeforeClamp > WRONG_REVEAL_KATAGO_TOP_N
+  ) {
+    selected = katagoTopScored ?? strictPick.selected ?? null;
+    pickMode =
+      selected === katagoTopScored
+        ? "katago_global_top_hard_clamp"
+        : strictPick.selected
+          ? `${strictPick.pickMode}_hard_clamp`
+          : "no_allowed_katago_candidate";
+  }
+
   const selectedKatagoRank = findRawKatagoRank(rawCandidates, selected);
   const moveSelectionSource = resolveWrongRevealMoveSelectionSource(selectedKatagoRank);
-  overrideAllowed = moveSelectionSource === "tactical_override";
+  const overrideAllowed = moveSelectionSource === "tactical_override";
+
+  const decisionTrace = {
+    katagoTopInRegion,
+    katagoTopScoreable: Boolean(katagoTopScored),
+    prePickCandidates,
+    strictPickMode: strictPick.pickMode,
+    strictPickRank: strictPick.rawRank,
+    selectedKatagoRankBeforeClamp,
+    finalSelectedKatagoRank: selectedKatagoRank,
+    topNLimit: WRONG_REVEAL_KATAGO_TOP_N,
+  };
 
   const selectionMeta = {
     katagoTopMove,
@@ -1215,9 +1353,12 @@ export function selectWrongRevealKatagoFirstMove({
     overrideAllowed,
     pickMode,
     katagoTopN: WRONG_REVEAL_KATAGO_TOP_N,
+    katagoTopInRegion,
+    decisionTrace,
   };
 
-  console.log("[KatagoRespond] wrong reveal katago-first selection", selectionMeta);
+  console.info("[KatagoRespond] wrong reveal katago-first selection", selectionMeta);
+  console.info("[KatagoRespond] wrong reveal selection trace", decisionTrace);
 
   return {
     style,

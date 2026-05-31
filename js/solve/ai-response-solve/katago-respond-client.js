@@ -139,6 +139,8 @@ function buildKatagoCandidateSelectionBreakdown({
     overrideAllowed: selectionMeta?.overrideAllowed ?? false,
     katagoTopN: selectionMeta?.katagoTopN ?? WRONG_REVEAL_KATAGO_TOP_N,
     pickMode: selectionMeta?.pickMode ?? null,
+    katagoTopInRegion: selectionMeta?.katagoTopInRegion ?? null,
+    decisionTrace: selectionMeta?.decisionTrace ?? null,
   };
 }
 
