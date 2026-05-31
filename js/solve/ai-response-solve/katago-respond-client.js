@@ -140,6 +140,10 @@ function buildKatagoCandidateSelectionBreakdown({
     katagoTopN: selectionMeta?.katagoTopN ?? WRONG_REVEAL_KATAGO_TOP_N,
     pickMode: selectionMeta?.pickMode ?? null,
     katagoTopInRegion: selectionMeta?.katagoTopInRegion ?? null,
+    katagoTopScoreable: selectionMeta?.katagoTopScoreable ?? null,
+    strictPickMode:
+      selectionMeta?.strictPickMode ?? selectionMeta?.decisionTrace?.strictPickMode ?? null,
+    scoreableCheck: selectionMeta?.scoreableCheck ?? selectionMeta?.decisionTrace?.scoreableCheck ?? null,
     decisionTrace: selectionMeta?.decisionTrace ?? null,
   };
 }
@@ -150,15 +154,20 @@ function logKatagoCandidateSelectionBreakdown({
   selectedReason,
   selectionMeta = null,
 }) {
-  console.info(
-    "[KatagoRespond] katago candidate selection",
-    buildKatagoCandidateSelectionBreakdown({
-      rawCandidates,
-      selected,
-      selectedReason,
-      selectionMeta,
-    }),
-  );
+  const breakdown = buildKatagoCandidateSelectionBreakdown({
+    rawCandidates,
+    selected,
+    selectedReason,
+    selectionMeta,
+  });
+  console.warn("[KatagoRespond] katago candidate selection", breakdown);
+  if (breakdown.scoreableCheck) {
+    console.warn("[KatagoRespond] katago top scoreable check", {
+      katagoTopInRegion: breakdown.katagoTopInRegion,
+      katagoTopScoreable: selectionMeta?.katagoTopScoreable ?? null,
+      scoreableCheck: breakdown.scoreableCheck,
+    });
+  }
 }
 
 function readConfiguredWrongLimit(configKey) {

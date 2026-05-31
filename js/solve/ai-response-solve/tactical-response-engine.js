@@ -1054,6 +1054,111 @@ function katagoFirstRankingScore(rawCandidates, scoredCandidate, topN = WRONG_RE
   return orderBonus + tacticalNudge;
 }
 
+function buildBoardStateHash(stones) {
+  return [...(stones ?? [])]
+    .sort((a, b) => a.y - b.y || a.x - b.x || String(a.color).localeCompare(String(b.color)))
+    .map((stone) => `${stone.x},${stone.y},${stone.color}`)
+    .join("|");
+}
+
+/**
+ * wrong reveal: KataGo 후보가 scoreCandidate에서 탈락한 이유 진단
+ */
+export function diagnoseWrongRevealCandidateScoreable({
+  candidate,
+  stones,
+  boardSize,
+  stoneColors,
+  regionKeys = null,
+}) {
+  if (!candidate) {
+    return null;
+  }
+
+  const point = {
+    x: candidate.x,
+    y: candidate.y,
+  };
+  const move = candidate.move ?? formatCoordLabel(point);
+  const onBoard = isOnBoard(point, boardSize);
+  const occupiedStone = onBoard ? getStoneAtPoint(stones, point) : null;
+  const occupied = Boolean(occupiedStone);
+  const violatesRegion = regionKeys ? !regionKeys.has(candidatePointKey(candidate)) : false;
+
+  let placementStatus = null;
+  let placementReason = null;
+  let legal = false;
+  let suicide = false;
+
+  if (!onBoard) {
+    placementStatus = "off_board";
+    placementReason = "off_board";
+  } else if (occupied) {
+    placementStatus = PLACEMENT_STATUS.occupied;
+    placementReason = "occupied";
+  } else {
+    const evaluation = evaluatePlacement(
+      stones,
+      { ...point, color: stoneColors.white },
+      { boardSize, stoneColors },
+    );
+    placementStatus = evaluation.status;
+    placementReason = evaluation.reason ?? evaluation.status;
+    legal = evaluation.status === PLACEMENT_STATUS.legal;
+    suicide = evaluation.reason === "suicide";
+  }
+
+  return {
+    move,
+    x: point.x,
+    y: point.y,
+    legal,
+    occupied,
+    occupiedBy: occupiedStone?.color ?? null,
+    suicide,
+    onBoard,
+    violatesRegion,
+    violatesTargetRule: false,
+    placementStatus,
+    placementReason,
+    boardStateHash: buildBoardStateHash(stones),
+    stoneCount: stones?.length ?? 0,
+  };
+}
+
+function formatScoreableCheckForLog(scoreableCheck) {
+  if (!scoreableCheck) {
+    return null;
+  }
+
+  return {
+    move: scoreableCheck.move ?? null,
+    legal: scoreableCheck.legal ?? false,
+    occupied: scoreableCheck.occupied ?? false,
+    occupiedBy: scoreableCheck.occupiedBy ?? null,
+    suicide: scoreableCheck.suicide ?? false,
+    onBoard: scoreableCheck.onBoard ?? false,
+    placementStatus: scoreableCheck.placementStatus ?? null,
+    placementReason: scoreableCheck.placementReason ?? null,
+    boardStateHash: scoreableCheck.boardStateHash ?? null,
+    stoneCount: scoreableCheck.stoneCount ?? 0,
+  };
+}
+
+function logKatagoTopScoreableCheck({
+  katagoTopInRegion,
+  katagoTopScored,
+  scoreableCheck,
+}) {
+  const payload = {
+    katagoTopInRegion,
+    katagoTopScoreable: Boolean(katagoTopScored),
+    scoreableCheck: formatScoreableCheckForLog(scoreableCheck),
+  };
+  console.warn("[KatagoRespond] katago top scoreable check", payload);
+  return payload;
+}
+
 function findRawKatagoRank(rawCandidates, selected) {
   if (!selected) {
     return null;
@@ -1087,15 +1192,23 @@ function tryPickScoredKatagoCandidate(rawEntry, regionKeys, scoredByKey) {
   return scoredByKey.get(key) ?? null;
 }
 
-function buildTopNInRegionTrace(rawCandidates, regionKeys, scoredByKey, topN) {
+function buildTopNInRegionTrace(
+  rawCandidates,
+  regionKeys,
+  scoredByKey,
+  topN,
+  scoreableDiagnostics = {},
+) {
   return rawCandidates.slice(0, topN).map((candidate, index) => {
     const key = candidatePointKey(candidate);
     const scored = scoredByKey.get(key);
+    const rank = index + 1;
     return {
-      rank: index + 1,
+      rank,
       move: candidate.move ?? null,
       inRegion: regionKeys.has(key),
       scoreable: Boolean(scored),
+      scoreableCheck: scored ? null : scoreableDiagnostics[rank] ?? null,
       katagoFirstRankingScore: scored
         ? katagoFirstRankingScore(rawCandidates, scored, topN)
         : null,
@@ -1223,6 +1336,21 @@ export function selectWrongRevealKatagoFirstMove({
     : false;
 
   if (katagoRegionCandidates.length === 0) {
+    const katagoTopScoreableCheck = rawCandidates[0]
+      ? diagnoseWrongRevealCandidateScoreable({
+          candidate: rawCandidates[0],
+          stones,
+          boardSize,
+          stoneColors,
+          regionKeys,
+        })
+      : null;
+    const scoreableCheckLog = logKatagoTopScoreableCheck({
+      katagoTopInRegion,
+      katagoTopScored: false,
+      scoreableCheck: katagoTopScoreableCheck,
+    });
+
     return {
       style,
       aiResponseStyle: style,
@@ -1241,7 +1369,13 @@ export function selectWrongRevealKatagoFirstMove({
         overrideAllowed: false,
         pickMode: "no_region_candidates",
         katagoTopInRegion,
-        decisionTrace: { prePickCandidates: [] },
+        katagoTopScoreable: false,
+        scoreableCheck: scoreableCheckLog.scoreableCheck,
+        decisionTrace: {
+          prePickCandidates: [],
+          strictPickMode: "no_region_candidates",
+          scoreableCheck: scoreableCheckLog.scoreableCheck,
+        },
       },
     };
   }
@@ -1262,11 +1396,44 @@ export function selectWrongRevealKatagoFirstMove({
     )
     .filter(Boolean);
   const scoredByKey = buildScoredCandidateMap(scoredCandidates);
+
+  const scoreableDiagnostics = {};
+  for (
+    let index = 0;
+    index < Math.min(WRONG_REVEAL_KATAGO_TOP_N, rawCandidates.length);
+    index += 1
+  ) {
+    const candidate = rawCandidates[index];
+    const rank = index + 1;
+    const key = candidatePointKey(candidate);
+    if (!regionKeys.has(key) || scoredByKey.has(key)) {
+      continue;
+    }
+    scoreableDiagnostics[rank] = diagnoseWrongRevealCandidateScoreable({
+      candidate,
+      stones,
+      boardSize,
+      stoneColors,
+      regionKeys,
+    });
+  }
+
+  const katagoTopScoreableCheck = rawCandidates[0]
+    ? diagnoseWrongRevealCandidateScoreable({
+        candidate: rawCandidates[0],
+        stones,
+        boardSize,
+        stoneColors,
+        regionKeys,
+      })
+    : null;
+
   const prePickCandidates = buildTopNInRegionTrace(
     rawCandidates,
     regionKeys,
     scoredByKey,
     WRONG_REVEAL_KATAGO_TOP_N,
+    scoreableDiagnostics,
   );
 
   const katagoTopScored = tryPickScoredKatagoCandidate(
@@ -1274,6 +1441,13 @@ export function selectWrongRevealKatagoFirstMove({
     regionKeys,
     scoredByKey,
   );
+
+  const scoreableCheckLog = logKatagoTopScoreableCheck({
+    katagoTopInRegion,
+    katagoTopScored,
+    scoreableCheck: katagoTopScoreableCheck,
+  });
+
   const strictPick = resolveStrictKatagoPick({
     rawCandidates,
     regionKeys,
@@ -1335,6 +1509,7 @@ export function selectWrongRevealKatagoFirstMove({
   const decisionTrace = {
     katagoTopInRegion,
     katagoTopScoreable: Boolean(katagoTopScored),
+    scoreableCheck: scoreableCheckLog.scoreableCheck,
     prePickCandidates,
     strictPickMode: strictPick.pickMode,
     strictPickRank: strictPick.rawRank,
@@ -1354,11 +1529,14 @@ export function selectWrongRevealKatagoFirstMove({
     pickMode,
     katagoTopN: WRONG_REVEAL_KATAGO_TOP_N,
     katagoTopInRegion,
+    katagoTopScoreable: Boolean(katagoTopScored),
+    scoreableCheck: scoreableCheckLog.scoreableCheck,
+    strictPickMode: strictPick.pickMode,
     decisionTrace,
   };
 
-  console.info("[KatagoRespond] wrong reveal katago-first selection", selectionMeta);
-  console.info("[KatagoRespond] wrong reveal selection trace", decisionTrace);
+  console.warn("[KatagoRespond] wrong reveal katago-first selection", selectionMeta);
+  console.warn("[KatagoRespond] wrong reveal selection trace", decisionTrace);
 
   return {
     style,

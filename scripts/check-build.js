@@ -108,6 +108,7 @@ for (const needle of [
   "SELECTED_SOURCE_KATAGO_TACTICAL_BOOST",
   "selectWrongRevealKatagoFirstMove",
   "[KatagoRespond] katago candidate selection",
+  'console.warn("[KatagoRespond] katago candidate selection"',
   "replace window expired before KataGo finished",
 ]) {
   if (!katagoClient.includes(needle)) {
@@ -120,7 +121,10 @@ for (const needle of [
   "export const WRONG_REVEAL_KATAGO_TOP_N = 5",
   "[KatagoRespond] wrong reveal katago-first selection",
   "[KatagoRespond] wrong reveal selection trace",
-  "katago_global_top_hard_clamp",
+  "export function diagnoseWrongRevealCandidateScoreable",
+  "formatScoreableCheckForLog",
+  "logKatagoTopScoreableCheck",
+  'console.warn("[KatagoRespond] katago top scoreable check"',
 ]) {
   if (!tacticalEngine.includes(needle)) {
     throw new Error(`tactical-response-engine.js missing ${needle}`);
