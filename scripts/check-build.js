@@ -83,6 +83,7 @@ for (const marker of authMarkers) {
 
 const runtimeConfig = readProjectFile("js/runtime-config.js");
 const katagoClient = readProjectFile("js/solve/ai-response-solve/katago-respond-client.js");
+const tacticalEngine = readProjectFile("js/solve/ai-response-solve/tactical-response-engine.js");
 const katagoCore = readProjectFile("api/lib/katago-respond-core.js");
 
 for (const needle of [
@@ -104,12 +105,23 @@ for (const needle of [
   "[KatagoRespond] client module loaded",
   "wrongRevealResolveTrace",
   "SELECTED_SOURCE_KATAGO",
-  "SELECTED_SOURCE_TACTICAL_OVERRIDE",
+  "SELECTED_SOURCE_KATAGO_TACTICAL_BOOST",
+  "selectWrongRevealKatagoFirstMove",
   "[KatagoRespond] katago candidate selection",
   "replace window expired before KataGo finished",
 ]) {
   if (!katagoClient.includes(needle)) {
     throw new Error(`katago-respond-client.js missing ${needle}`);
+  }
+}
+
+for (const needle of [
+  "export function selectWrongRevealKatagoFirstMove",
+  "export const WRONG_REVEAL_KATAGO_TOP_N = 5",
+  "[KatagoRespond] wrong reveal katago-first selection",
+]) {
+  if (!tacticalEngine.includes(needle)) {
+    throw new Error(`tactical-response-engine.js missing ${needle}`);
   }
 }
 

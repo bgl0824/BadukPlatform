@@ -5,6 +5,8 @@ import {
   isForbiddenWrongRevealReason,
   resolveAiResponseStyle,
   selectTacticalWhiteMove,
+  selectWrongRevealKatagoFirstMove,
+  WRONG_REVEAL_KATAGO_TOP_N,
 } from "./tactical-response-engine.js";
 import {
   computeAllowedRegion,
@@ -48,6 +50,7 @@ export const KATAGO_SELECTION_LOG_TAG = "katago-candidate-selection-v1";
 
 /** wrong-reveal 최종 응수 출처 (로그·디버그용) */
 export const SELECTED_SOURCE_KATAGO = "katago";
+export const SELECTED_SOURCE_KATAGO_TACTICAL_BOOST = "katago_tactical_boost";
 export const SELECTED_SOURCE_TACTICAL_OVERRIDE = "tactical_override";
 export const SELECTED_SOURCE_LOCAL_TACTICAL = "local_tactical";
 
@@ -108,12 +111,21 @@ function buildKatagoCandidateSelectionBreakdown({
   rawCandidates,
   selected,
   selectedReason,
+  selectionMeta = null,
 }) {
   const top5 = (rawCandidates ?? []).slice(0, 5);
-  const katagoTopMove = top5[0]?.move ?? null;
-  const selectedMove = selected?.move ?? null;
-  const selectedSource = resolveKatagoMoveSelectionSource(rawCandidates, selected);
-  const selectedKatagoRank = findKatagoRankOfSelected(rawCandidates, selected);
+  const katagoTopMove = selectionMeta?.katagoTopMove ?? top5[0]?.move ?? null;
+  const selectedMove =
+    selectionMeta?.selectedMove ?? selected?.move ?? null;
+  const selectedSource =
+    selectionMeta?.selectedSource ??
+    resolveKatagoMoveSelectionSource(rawCandidates, selected);
+  const selectedKatagoRank =
+    selectionMeta?.selectedKatagoRank ??
+    findKatagoRankOfSelected(rawCandidates, selected);
+  const matchesKatagoTop =
+    selectionMeta?.matchesKatagoTop ??
+    selectedSource === SELECTED_SOURCE_KATAGO;
 
   return {
     katagoCandidates: top5.map((candidate) => formatKatagoCandidateLine(candidate)),
@@ -122,7 +134,11 @@ function buildKatagoCandidateSelectionBreakdown({
     selectedReason,
     selectedSource,
     selectedKatagoRank,
-    matchesKatagoTop: selectedSource === SELECTED_SOURCE_KATAGO,
+    matchesKatagoTop,
+    tacticalReason: selectionMeta?.tacticalReason ?? selectedReason ?? null,
+    overrideAllowed: selectionMeta?.overrideAllowed ?? false,
+    katagoTopN: selectionMeta?.katagoTopN ?? WRONG_REVEAL_KATAGO_TOP_N,
+    pickMode: selectionMeta?.pickMode ?? null,
   };
 }
 
@@ -130,6 +146,7 @@ function logKatagoCandidateSelectionBreakdown({
   rawCandidates,
   selected,
   selectedReason,
+  selectionMeta = null,
 }) {
   console.info(
     "[KatagoRespond] katago candidate selection",
@@ -137,6 +154,7 @@ function logKatagoCandidateSelectionBreakdown({
       rawCandidates,
       selected,
       selectedReason,
+      selectionMeta,
     }),
   );
 }
@@ -388,7 +406,20 @@ function buildTacticalSelection({
   lastMove,
   problem,
   studentMoveResult,
+  rawCandidates = [],
 }) {
+  if (studentMoveResult === "wrong") {
+    return selectWrongRevealKatagoFirstMove({
+      rawCandidates,
+      regionCandidates,
+      stones,
+      boardSize,
+      stoneColors,
+      lastBlackMove: lastMove,
+      problem,
+    });
+  }
+
   return selectTacticalWhiteMove({
     regionCandidates,
     stones,
@@ -488,12 +519,14 @@ function finalizeKatagoSelection({
     lastMove,
     problem,
     studentMoveResult,
+    rawCandidates,
   });
 
   logKatagoCandidateSelectionBreakdown({
     rawCandidates,
     selected: education.selected,
     selectedReason: education.selectedReason,
+    selectionMeta: education.selectionMeta ?? null,
   });
 
   const selected = education.selected;
@@ -569,7 +602,9 @@ function finalizeKatagoSelection({
   }
 
   const totalElapsedMs = Date.now() - requestStart;
-  const moveSelectionSource = resolveKatagoMoveSelectionSource(rawCandidates, selected);
+  const moveSelectionSource =
+    education.selectionMeta?.selectedSource ??
+    resolveKatagoMoveSelectionSource(rawCandidates, selected);
   logKatagoRespondTiming({
     requestStart,
     katagoElapsedMs,
@@ -595,6 +630,7 @@ function finalizeKatagoSelection({
     selectedCandidate: selected,
     selectedReason: education.selectedReason,
     aiResponseStyle: style,
+    selectionMeta: education.selectionMeta ?? null,
     requestStart: new Date(requestStart).toISOString(),
     katagoElapsedMs,
     totalElapsedMs,
@@ -602,8 +638,12 @@ function finalizeKatagoSelection({
   };
   logKatagoRespondSuccess("tactical selection", {
     selectedSource: moveSelectionSource,
-    selectedKatagoRank: findKatagoRankOfSelected(rawCandidates, selected),
-    katagoTopMove: rawCandidates?.[0]?.move ?? null,
+    selectedKatagoRank:
+      education.selectionMeta?.selectedKatagoRank ??
+      findKatagoRankOfSelected(rawCandidates, selected),
+    katagoTopMove: education.selectionMeta?.katagoTopMove ?? rawCandidates?.[0]?.move ?? null,
+    tacticalReason: education.selectionMeta?.tacticalReason ?? success.selectedReason,
+    overrideAllowed: education.selectionMeta?.overrideAllowed ?? false,
     selectedReason: success.selectedReason,
     move: success.move,
     studentMoveResult,
@@ -859,6 +899,7 @@ async function requestKatagoRespondWrong({
         raced.result.selectedCandidate ??
         { point: raced.result.point, move: raced.result.move },
       selectedReason: raced.result.selectedReason,
+      selectionMeta: raced.result.selectionMeta ?? null,
     });
     raced.result.selectedSource = selectionBreakdown.selectedSource;
     logKatagoCandidateSelectionBreakdown({
@@ -897,6 +938,7 @@ async function requestKatagoRespondWrong({
         lateKatago.selectedCandidate ??
         { point: lateKatago.point, move: lateKatago.move },
       selectedReason: lateKatago.selectedReason,
+      selectionMeta: lateKatago.selectionMeta ?? null,
     });
     lateKatago.selectedSource = selectionBreakdown.selectedSource;
     logKatagoCandidateSelectionBreakdown({

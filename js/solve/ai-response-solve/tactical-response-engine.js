@@ -1018,5 +1018,218 @@ export function selectTacticalWhiteMove({
   };
 }
 
+/** wrong reveal: KataGo inRegion 후보만 사용, 전술은 Top N 내 가산점 */
+export const WRONG_REVEAL_KATAGO_TOP_N = 5;
+
+function isSameCandidatePoint(a, b) {
+  if (!a || !b) {
+    return false;
+  }
+  return a.x === b.x && a.y === b.y;
+}
+
+function candidatePointKey(candidate) {
+  return `${candidate.x},${candidate.y}`;
+}
+
+function resolveWrongRevealMoveSelectionSource(rawRank) {
+  if (rawRank === 1) {
+    return "katago";
+  }
+  if (rawRank != null && rawRank > 1 && rawRank <= WRONG_REVEAL_KATAGO_TOP_N) {
+    return "katago_tactical_boost";
+  }
+  return "tactical_override";
+}
+
+function katagoFirstRankingScore(rawCandidates, scoredCandidate, topN = WRONG_REVEAL_KATAGO_TOP_N) {
+  const rawIndex = (rawCandidates ?? []).findIndex((entry) =>
+    isSameCandidatePoint(entry, scoredCandidate),
+  );
+  if (rawIndex < 0) {
+    return Number.NEGATIVE_INFINITY;
+  }
+  const orderBonus = Math.max(0, topN - rawIndex) * 1000;
+  const tacticalNudge = Math.min(scoredCandidate.tieScore ?? 0, 150);
+  return orderBonus + tacticalNudge;
+}
+
+function findRawKatagoRank(rawCandidates, selected) {
+  if (!selected) {
+    return null;
+  }
+  const index = (rawCandidates ?? []).findIndex((candidate) =>
+    isSameCandidatePoint(candidate, selected),
+  );
+  return index >= 0 ? index + 1 : null;
+}
+
+/**
+ * wrong reveal: KataGo inRegion 후보 우선, 전술엔진은 Top N 내 점수 보정만.
+ * @param {{
+ *   rawCandidates: object[],
+ *   regionCandidates: object[],
+ *   stones: object[],
+ *   boardSize: number,
+ *   stoneColors: { black: string, white: string },
+ *   lastBlackMove: object,
+ *   problem: object,
+ * }} params
+ */
+export function selectWrongRevealKatagoFirstMove({
+  rawCandidates = [],
+  regionCandidates = [],
+  stones,
+  boardSize,
+  stoneColors,
+  lastBlackMove,
+  problem,
+}) {
+  const style = resolveAiResponseStyle(problem);
+  const targetContext = resolveTargetWhiteGroup(problem, stones, boardSize, stoneColors);
+  const katagoRegionCandidates = (regionCandidates ?? []).filter(
+    (candidate) => !candidate.injectedTargetSurvival,
+  );
+  const topNKeys = new Set(
+    rawCandidates.slice(0, WRONG_REVEAL_KATAGO_TOP_N).map((candidate) =>
+      candidatePointKey(candidate),
+    ),
+  );
+  const katagoTopMove = rawCandidates[0]?.move ?? null;
+  const katagoFirstInRegionEntry = rawCandidates.find((candidate) =>
+    katagoRegionCandidates.some((regionEntry) =>
+      isSameCandidatePoint(regionEntry, candidate),
+    ),
+  );
+
+  if (katagoRegionCandidates.length === 0) {
+    return {
+      style,
+      aiResponseStyle: style,
+      responseMode: "wrong_reveal_katago_first",
+      targetContext,
+      scoredCandidates: [],
+      selected: null,
+      selectedReason: null,
+      selectionMeta: {
+        katagoTopMove,
+        selectedMove: null,
+        selectedSource: "tactical_override",
+        selectedKatagoRank: null,
+        matchesKatagoTop: false,
+        tacticalReason: null,
+        overrideAllowed: false,
+        pickMode: "no_region_candidates",
+      },
+    };
+  }
+
+  const scoredCandidates = katagoRegionCandidates
+    .map((candidate) =>
+      scoreCandidate({
+        candidate,
+        stones,
+        boardSize,
+        stoneColors,
+        lastBlackMove,
+        style,
+        responseMode: "wrong_reveal",
+        problem,
+        targetContext,
+      }),
+    )
+    .filter(Boolean);
+
+  const boostPool = scoredCandidates.filter((candidate) =>
+    topNKeys.has(candidatePointKey(candidate)),
+  );
+
+  const defaultScored =
+    katagoFirstInRegionEntry &&
+    scoredCandidates.find((candidate) =>
+      isSameCandidatePoint(candidate, katagoFirstInRegionEntry),
+    );
+
+  let selected = defaultScored ?? scoredCandidates[0] ?? null;
+  let pickMode = defaultScored ? "katago_first_in_region" : "region_fallback";
+  let overrideAllowed = false;
+
+  if (defaultScored && boostPool.length > 0) {
+    const bestBoost = [...boostPool].sort(
+      (a, b) =>
+        katagoFirstRankingScore(rawCandidates, b) -
+        katagoFirstRankingScore(rawCandidates, a),
+    )[0];
+
+    if (
+      bestBoost &&
+      !isSameCandidatePoint(bestBoost, defaultScored) &&
+      katagoFirstRankingScore(rawCandidates, bestBoost) >
+        katagoFirstRankingScore(rawCandidates, defaultScored) + 80
+    ) {
+      selected = bestBoost;
+      pickMode = "katago_top_n_tactical_boost";
+    }
+  }
+
+  if (
+    selected?.selectedReason === "forced_extend_atari" &&
+    !topNKeys.has(candidatePointKey(selected))
+  ) {
+    selected = defaultScored ?? selected;
+    pickMode = "forced_extend_rejected_not_in_top_n";
+    overrideAllowed = false;
+  }
+
+  if (selected && !topNKeys.has(candidatePointKey(selected)) && defaultScored) {
+    selected = defaultScored;
+    pickMode = "reverted_outside_top_n";
+    overrideAllowed = false;
+  }
+
+  if (
+    selected &&
+    isForbiddenWrongRevealReason(selected.selectedReason, style)
+  ) {
+    const alternate =
+      boostPool.find(
+        (candidate) =>
+          candidate !== selected &&
+          !isForbiddenWrongRevealReason(candidate.selectedReason, style),
+      ) ?? defaultScored;
+    selected = alternate ?? selected;
+    pickMode = "forbidden_reason_repick";
+  }
+
+  const selectedKatagoRank = findRawKatagoRank(rawCandidates, selected);
+  const moveSelectionSource = resolveWrongRevealMoveSelectionSource(selectedKatagoRank);
+  overrideAllowed = moveSelectionSource === "tactical_override";
+
+  const selectionMeta = {
+    katagoTopMove,
+    selectedMove: selected?.move ?? null,
+    selectedSource: moveSelectionSource,
+    selectedKatagoRank,
+    matchesKatagoTop: selectedKatagoRank === 1,
+    tacticalReason: selected?.selectedReason ?? null,
+    overrideAllowed,
+    pickMode,
+    katagoTopN: WRONG_REVEAL_KATAGO_TOP_N,
+  };
+
+  console.log("[KatagoRespond] wrong reveal katago-first selection", selectionMeta);
+
+  return {
+    style,
+    aiResponseStyle: style,
+    responseMode: "wrong_reveal_katago_first",
+    targetContext,
+    scoredCandidates,
+    selected,
+    selectedReason: selected?.selectedReason ?? null,
+    selectionMeta,
+  };
+}
+
 /** @deprecated alias */
 export const selectEducationalWhiteMove = selectTacticalWhiteMove;
