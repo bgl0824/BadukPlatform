@@ -20,6 +20,10 @@ import {
   selectWrongRevealLocalFallback,
   TACTICAL_FALLBACK_SOURCE,
 } from "./wrong-response-fallback.js";
+import {
+  logWrongRevealSelection,
+  rejectForbiddenAuthorWhiteSelection,
+} from "./wrong-reveal-guard.js";
 
 function toMoveEntry(move) {
   if (!move) {
@@ -194,6 +198,7 @@ function buildTacticalSelection({
   lastMove,
   problem,
   studentMoveResult,
+  session = null,
 }) {
   return selectTacticalWhiteMove({
     regionCandidates,
@@ -203,6 +208,7 @@ function buildTacticalSelection({
     lastBlackMove: lastMove,
     problem,
     studentMoveResult,
+    session,
   });
 }
 
@@ -219,6 +225,7 @@ function tryWrongRevealLocalFallback({
   maxVisits,
   maxTime,
   reason,
+  session = null,
 }) {
   const fallback = selectWrongRevealLocalFallback({
     region: allowedRegion,
@@ -228,10 +235,21 @@ function tryWrongRevealLocalFallback({
     lastBlackMove: lastMove,
     problem,
     regionCandidates,
+    session,
   });
 
   if (!fallback.ok) {
     return null;
+  }
+
+  if (session) {
+    logWrongRevealSelection({
+      selected: { point: fallback.point, move: fallback.move },
+      selectedReason: fallback.selectedReason,
+      source: TACTICAL_FALLBACK_SOURCE,
+      session,
+      extra: { path: "tryWrongRevealLocalFallback", reason },
+    });
   }
 
   const totalElapsedMs = Date.now() - requestStart;
@@ -283,6 +301,7 @@ function finalizeKatagoSelection({
   katagoElapsedMs,
   maxVisits,
   maxTime,
+  session = null,
 }) {
   const education = buildTacticalSelection({
     regionCandidates,
@@ -292,15 +311,55 @@ function finalizeKatagoSelection({
     lastMove,
     problem,
     studentMoveResult,
+    session,
   });
+
+  const source = KATAGO_SOURCE;
 
   console.log("[KatagoRespond] aiResponseStyle", education.aiResponseStyle ?? education.style);
   console.log("[KatagoRespond] scoredCandidates", education.scoredCandidates);
-  console.log("[KatagoRespond] selectedMove", education.selected ?? null);
+  console.log("[KatagoRespond] selectedMove", education.selected?.move ?? education.selected ?? null);
   console.log("[KatagoRespond] selectedReason", education.selectedReason);
+  console.log("[KatagoRespond] source", source);
 
-  const selected = education.selected;
+  if (studentMoveResult === "wrong" && session) {
+    logWrongRevealSelection({
+      selected: education.selected,
+      selectedReason: education.selectedReason,
+      source,
+      session,
+      forbiddenPoints: education.forbiddenAuthorWhites,
+      removedCandidates: education.authorSequenceRemoved,
+      extra: { path: "finalizeKatagoSelection" },
+    });
+  }
+
+  let selected = education.selected;
   const style = education.aiResponseStyle ?? education.style ?? resolveAiResponseStyle(problem);
+
+  if (studentMoveResult === "wrong" && session && selected) {
+    const rejection = rejectForbiddenAuthorWhiteSelection(selected, session);
+    if (rejection.rejected) {
+      console.warn("[KatagoRespond] finalize rejected author_sequence white — tactical fallback", {
+        rejectedMove: rejection.rejectedMove,
+      });
+      return tryWrongRevealLocalFallback({
+        allowedRegion,
+        stones,
+        boardSize,
+        stoneColors,
+        lastMove,
+        problem,
+        regionCandidates,
+        requestStart,
+        katagoElapsedMs,
+        maxVisits,
+        maxTime,
+        reason: "author_sequence_white_rejected",
+        session,
+      });
+    }
+  }
 
   if (
     selected?.point &&
@@ -324,6 +383,7 @@ function finalizeKatagoSelection({
       maxVisits,
       maxTime,
       reason: "forbidden_sacrifice_play",
+      session,
     });
   }
 
@@ -342,6 +402,7 @@ function finalizeKatagoSelection({
         maxVisits,
         maxTime,
         reason: "no_tactical_pick",
+        session,
       });
     }
     return null;
@@ -396,15 +457,28 @@ function formatWrongRevealFallbackResult({
   maxVisits,
   maxTime,
   reason,
+  session = null,
 }) {
   const totalElapsedMs = Date.now() - requestStart;
   console.warn("[KatagoRespond] wrong-reveal using local tactical", {
     reason,
     katagoElapsedMs,
+    selectedMove: fallback.move,
     selectedReason: fallback.selectedReason,
-    move: fallback.move,
+    source: TACTICAL_FALLBACK_SOURCE,
     totalElapsedMs,
   });
+
+  if (session) {
+    logWrongRevealSelection({
+      selected: { point: fallback.point, move: fallback.move },
+      selectedReason: fallback.selectedReason,
+      source: TACTICAL_FALLBACK_SOURCE,
+      session,
+      extra: { path: "formatWrongRevealFallbackResult", reason },
+    });
+  }
+
   logKatagoRespondTiming({
     requestStart,
     katagoElapsedMs,
@@ -456,6 +530,7 @@ async function processKatagoRespondResponse({
   katagoElapsedMs,
   maxVisits,
   maxTime,
+  session = null,
 }) {
   if (!response.ok) {
     logKatagoRespondFailure("upstream HTTP error", {
@@ -506,6 +581,7 @@ async function processKatagoRespondResponse({
     katagoElapsedMs,
     maxVisits,
     maxTime,
+    session,
   });
 
   return finalized ? { ok: true, result: finalized } : { ok: false, emptyRegion: true };
@@ -527,6 +603,7 @@ async function requestKatagoRespondWrong({
   maxVisits,
   maxTime,
   replaceMs,
+  session = null,
 }) {
   const immediateFallback = selectWrongRevealLocalFallback({
     region: allowedRegion,
@@ -536,6 +613,7 @@ async function requestKatagoRespondWrong({
     lastBlackMove: lastMove,
     problem,
     regionCandidates: [],
+    session,
   });
 
   const controller = new AbortController();
@@ -566,6 +644,7 @@ async function requestKatagoRespondWrong({
         katagoElapsedMs,
         maxVisits,
         maxTime,
+        session,
       });
 
       if (processed.ok && processed.result) {
@@ -596,6 +675,7 @@ async function requestKatagoRespondWrong({
         maxVisits,
         maxTime,
         reason: "replace_window_expired",
+        session,
       });
     }
   } else if (raced.result?.ok) {
@@ -612,6 +692,7 @@ async function requestKatagoRespondWrong({
       maxVisits,
       maxTime,
       reason: raced.kind === "katago" ? "katago_rejected" : "no_katago",
+      session,
     });
   }
 
@@ -646,6 +727,7 @@ async function requestKatagoRespondWrong({
  *   stoneColors: { black: string, white: string },
  *   studentMoveResult: "correct" | "wrong",
  *   currentPly: number,
+ *   session?: object,
  * }} params
  */
 export async function requestKatagoRespond({
@@ -658,6 +740,7 @@ export async function requestKatagoRespond({
   stoneColors,
   studentMoveResult,
   currentPly,
+  session = null,
 }) {
   if (!isKatagoRespondApiEnabled()) {
     return { ok: false, disabled: true, needsServer: true };
@@ -733,6 +816,7 @@ export async function requestKatagoRespond({
       maxVisits,
       maxTime,
       replaceMs,
+      session,
     });
   }
 

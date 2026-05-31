@@ -1,6 +1,6 @@
 import { isBoardProblem, isOxProblem } from "./problem-type.js";
-import { pointKey } from "./rules.js";
 import { getProblemCorrectSequence } from "./sequence.js";
+import { isAcceptedUserMove } from "./answer-moves.js";
 
 export function isCorrectUserMove(move, problem, solvedAnswerKeys = new Set()) {
   if (!isBoardProblem(problem)) {
@@ -9,12 +9,10 @@ export function isCorrectUserMove(move, problem, solvedAnswerKeys = new Set()) {
 
   const sequence = getProblemCorrectSequence(problem);
   if (sequence.length > 0) {
-    return sequence.some((answer) => {
-      return isCorrectMove(move, answer) && !solvedAnswerKeys.has(pointKey(answer));
-    });
+    return isAcceptedUserMove(move, problem, solvedAnswerKeys);
   }
 
-  return problem.correctMove ? isCorrectMove(move, problem.correctMove) : false;
+  return isAcceptedUserMove(move, problem, solvedAnswerKeys);
 }
 
 export function isCorrectOxAnswer(oxAnswer, problem) {
@@ -24,6 +22,9 @@ export function isCorrectOxAnswer(oxAnswer, problem) {
 
   return Boolean(oxAnswer) === Boolean(problem.oxAnswer);
 }
+
 export function isCorrectMove(move, answer) {
   return move.x === answer.x && move.y === answer.y;
 }
+
+export { classifyUserMove, ANSWER_QUALITY } from "./answer-moves.js";

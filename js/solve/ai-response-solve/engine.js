@@ -1,7 +1,9 @@
 import { isValidBoardPoint } from "../../game/board-point-validation.js";
+import { ANSWER_QUALITY } from "../../game/validation.js";
+import { classifyBlackAnswerMove } from "../../game/answer-moves.js";
 import { AI_RESPONSE_SOLVE_MESSAGES } from "./constants.js";
 import { getExpectedAuthorWhite } from "./answer-sequence.js";
-import { isCorrectBlackMove } from "./black-sequence.js";
+import { logWrongRevealSelection } from "./wrong-reveal-guard.js";
 import { logAiResponseSolveContext, shouldUseAiResponseSolve } from "../../game/problem-mode.js";
 import {
   advanceAfterAuthorWhiteOnCorrect,
@@ -127,7 +129,9 @@ export function createAiResponseSolveEngine({
 
     const expected = getExpectedBlackAnswer(session);
     const userMove = { ...point, color: stoneColors.black };
-    const isCorrect = isCorrectBlackMove(point, expected);
+    const answerQuality = classifyBlackAnswerMove(point, problem, expected, boardSize);
+    const isAccepted =
+      answerQuality === ANSWER_QUALITY.best || answerQuality === ANSWER_QUALITY.alternative;
 
     boardController.addStone(userMove);
     removeCapturedStonesAfterMove(userMove);
@@ -136,7 +140,7 @@ export function createAiResponseSolveEngine({
 
     markProblemInProgress?.(problem);
 
-    if (!isCorrect) {
+    if (!isAccepted) {
       recordWrongMove(problem, userMove);
       await revealWrongWithWhite(problem, session, userMove);
       return;
@@ -145,8 +149,8 @@ export function createAiResponseSolveEngine({
     if (isLastBlackAnswer(session)) {
       session.phase = "completed";
       logAiResponseSessionSnapshot(appState, "last black correct — before completeProblem");
-      console.log("[AI_RESPONSE] last black correct — complete");
-      completeProblem(problem);
+      console.log("[AI_RESPONSE] last black correct — complete", { answerQuality });
+      completeProblem(problem, { answerQuality });
       clearSession();
       return;
     }
@@ -156,7 +160,12 @@ export function createAiResponseSolveEngine({
       return;
     }
     updateTurnUi();
-    setFeedback("흑 정답입니다. 이어서 다음 수를 두세요.", "correct");
+    setFeedback(
+      answerQuality === ANSWER_QUALITY.alternative
+        ? "좋은 수입니다. 이어서 다음 수를 두세요."
+        : "흑 정답입니다. 이어서 다음 수를 두세요.",
+      "correct",
+    );
   }
 
   async function revealWrongWithWhite(problem, session, lastBlackMove) {
@@ -290,13 +299,27 @@ export function createAiResponseSolveEngine({
       stoneColors,
       studentMoveResult: "wrong",
       currentPly: session.currentPly,
+      session,
+    });
+
+    logWrongRevealSelection({
+      selected: result?.point ? { point: result.point, move: result.move } : null,
+      selectedReason: result.selectedReason,
+      source: result.source ?? "unknown",
+      session,
+      extra: {
+        path: "playKatagoWhiteOnWrong",
+        ok: result.ok,
+        usedLocalFallback: result.usedLocalFallback,
+      },
     });
 
     console.log("[AI_RESPONSE] KataGo white (wrong route)", {
       ok: result.ok,
-      source: result.source,
+      selectedMove: result.move ?? null,
+      selectedReason: result.selectedReason ?? null,
+      source: result.source ?? null,
       point: result.point,
-      selectedReason: result.selectedReason,
       usedLocalFallback: result.usedLocalFallback,
       katagoElapsedMs: result.katagoElapsedMs,
       totalElapsedMs: result.totalElapsedMs,

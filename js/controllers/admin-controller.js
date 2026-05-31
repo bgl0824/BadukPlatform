@@ -410,7 +410,11 @@ export function createAdminController({
 
       stones: [],
 
-      correctMove: { x: 0, y: 0 },
+      bestMoves: [],
+
+      alternativeMoves: [],
+
+      correctMove: null,
 
       correctSequence: [],
 

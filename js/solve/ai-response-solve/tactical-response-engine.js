@@ -15,18 +15,26 @@ import {
 } from "../../game/rules.js";
 import {
   getStyleWeights,
+  isCapturePriorityStyle,
   resolveAiResponseStyle,
 } from "./tactical-response-styles.js";
 import { formatCoordLabel } from "./answer-sequence.js";
 import {
-  formatTargetWhiteGroupForLog,
+  buildTargetWhiteGroupDiagnosticLog,
+  findSelectedMoveLibertySource,
   getTargetLibertyPoints,
   isMoveAdjacentToTargetGroup,
   isMoveOnTargetAtariLiberty,
   measureTargetGroupAfterMove,
   pointKeyToCoordLabel,
   resolveTargetWhiteGroup,
+  TARGET_WHITE_GROUP_POLICY,
 } from "./target-white-group.js";
+import {
+  filterForbiddenAuthorWhiteCandidates,
+  getForbiddenAuthorWhitePoints,
+  isForbiddenAuthorWhitePoint,
+} from "./wrong-reveal-guard.js";
 
 export { resolveAiResponseStyle } from "./tactical-response-styles.js";
 
@@ -59,6 +67,23 @@ const WRONG_REVEAL_INTERNAL_PRIORITY = {
   sacrifice_play: -10,
 };
 
+/** capture/snapback 오답 — 흑 포획 우선 */
+const WRONG_REVEAL_CAPTURE_PRIORITY = {
+  capture_black: 10,
+  near_wrong_black_capture: 8,
+  katago_prior: 1,
+  general: 0,
+  extend_atari: -5,
+  continuous_escape: -5,
+  future_liberty_gain: -5,
+  connect_target_group: -5,
+  near_last_black: 0,
+  connect_white: 0,
+  increase_liberty: 0,
+  escape_from_last_black: 0,
+  sacrifice_play: -10,
+};
+
 const WRONG_REVEAL_REASON_LABEL = {
   extend_atari: "forced_extend_atari",
   continuous_escape: "continuous_escape",
@@ -70,7 +95,7 @@ const WRONG_REVEAL_REASON_LABEL = {
   near_last_black: "near_last_black",
   katago_prior: "region_candidate",
   respond_to_black: "region_candidate",
-  capture_black: "capture_black",
+  capture_black: "capture_black_group",
   general: "region_candidate",
   sacrifice_play: "sacrifice_play",
 };
@@ -161,6 +186,202 @@ function countCaptures(beforeStones, afterStones, capturedColor) {
   return Math.max(0, before - after);
 }
 
+function describeCapturableBlackGroups(stones, boardSize, stoneColors) {
+  return getGroupsForColor(stones, stoneColors.black, boardSize).map((group, index) => {
+    const libertyKeys = getGroupLibertyKeys(stones, group, boardSize);
+    const liberties = [...libertyKeys].map((key) => pointKeyToCoordLabel(key));
+    return {
+      groupIndex: index,
+      stones: group.map((stone) => formatCoordLabel(stone)).join(", "),
+      stoneCount: group.length,
+      libertyCount: libertyKeys.size,
+      liberties: liberties.join(", "),
+      capturableInOneMove: libertyKeys.size === 1,
+      capturePoint: libertyKeys.size === 1 ? liberties[0] ?? null : null,
+    };
+  });
+}
+
+function mergeCaptureCandidates(regionCandidates, stones, boardSize, stoneColors, lastBlackMove) {
+  const merged = [...(regionCandidates ?? [])];
+  const seen = new Set(merged.map((candidate) => `${candidate.x},${candidate.y}`));
+
+  const addPoint = (point, tag) => {
+    if (getStoneAtPoint(stones, point)) {
+      return;
+    }
+    const key = `${point.x},${point.y}`;
+    if (seen.has(key)) {
+      return;
+    }
+    const afterStones = simulateWhiteMove(stones, point, boardSize, stoneColors);
+    if (!afterStones) {
+      return;
+    }
+    seen.add(key);
+    merged.unshift({
+      x: point.x,
+      y: point.y,
+      move: formatCoordLabel(point),
+      order: -90,
+      visits: null,
+      policyPrior: null,
+      injectedCapture: true,
+      injectionTag: tag,
+    });
+  };
+
+  for (const group of getGroupsForColor(stones, stoneColors.black, boardSize)) {
+    const libertyKeys = getGroupLibertyKeys(stones, group, boardSize);
+    if (libertyKeys.size !== 1) {
+      continue;
+    }
+    const [key] = [...libertyKeys];
+    const [x, y] = key.split(":").map(Number);
+    addPoint({ x, y }, "black_atari_liberty");
+  }
+
+  if (lastBlackMove) {
+    const probePoints = [
+      lastBlackMove,
+      ...getNeighborPoints(lastBlackMove, boardSize),
+    ];
+    probePoints.forEach((point) => {
+      if (!isOnBoard(point, boardSize)) {
+        return;
+      }
+      const afterStones = simulateWhiteMove(stones, point, boardSize, stoneColors);
+      if (!afterStones) {
+        return;
+      }
+      const capturedCount = countCaptures(stones, afterStones, stoneColors.black);
+      if (capturedCount > 0) {
+        addPoint(point, "near_wrong_black_capture");
+      }
+    });
+  }
+
+  return merged;
+}
+
+function scoreWrongRevealWithCapture({
+  candidate,
+  stones,
+  afterStones,
+  point,
+  boardSize,
+  stoneColors,
+  lastBlackMove,
+  style,
+  weights,
+}) {
+  const signals = {};
+  const reasons = [];
+  const capturedCount = countCaptures(stones, afterStones, stoneColors.black);
+
+  if (capturedCount > 0) {
+    signals.capture_black = 90000 + capturedCount * 8000;
+    reasons.push("capture_black");
+  } else if (putsEnemyInAtari(afterStones, point, boardSize, stoneColors)) {
+    signals.capture_black = 42000;
+    reasons.push("capture_black");
+  }
+
+  if (lastBlackMove && capturedCount > 0) {
+    const dist = manhattanDistance(point, lastBlackMove);
+    if (dist <= 2) {
+      signals.near_wrong_black_capture = 6000 + capturedCount * 600 - dist * 200;
+      reasons.push("near_wrong_black_capture");
+    }
+  }
+
+  const blackLibertyDrop =
+    minGroupLibertiesForColor(stones, stoneColors.black, boardSize) -
+    minGroupLibertiesForColor(afterStones, stoneColors.black, boardSize);
+  if (blackLibertyDrop > 0 && capturedCount === 0) {
+    signals.decrease_black_liberty = 800 + blackLibertyDrop * 120;
+    reasons.push("capture_black");
+  }
+
+  const policyBonus = (candidate.policyPrior ?? 0) * 8;
+  const orderBonus = Math.max(0, 16 - (candidate.order ?? 16));
+  signals.katago_prior = policyBonus + orderBonus;
+  if (signals.katago_prior > 4) {
+    reasons.push("katago_prior");
+  }
+
+  if (reasons.length === 0) {
+    reasons.push("general");
+  }
+
+  let tieScore = 0;
+  for (const [signal, raw] of Object.entries(signals)) {
+    let weight = weights[signal] ?? 1;
+    if (signal === "katago_prior") {
+      weight *= 0.25;
+    }
+    tieScore += raw * weight;
+  }
+
+  const priorityTable = WRONG_REVEAL_CAPTURE_PRIORITY;
+  const primaryReason = [...new Set(reasons)].sort(
+    (a, b) => (priorityTable[b] ?? 0) - (priorityTable[a] ?? 0),
+  )[0];
+  const selectedReason = mapWrongRevealReason(primaryReason, { style, capturedCount });
+  const priority = priorityTable[primaryReason] ?? 0;
+
+  return {
+    ...candidate,
+    point,
+    reasons: [...new Set(reasons)],
+    signals,
+    primaryReason,
+    selectedReason,
+    tieScore,
+    totalScore: priority * 10000 + tieScore,
+    aiResponseStyle: style,
+    responseMode: "wrong_reveal",
+    capturedCountAfterMove: capturedCount,
+  };
+}
+
+function pickBestCaptureWrongReveal(scoredCandidates, style) {
+  const withCapture = scoredCandidates.filter((candidate) => (candidate.capturedCountAfterMove ?? 0) > 0);
+  const pool =
+    withCapture.length > 0
+      ? withCapture
+      : scoredCandidates.filter((candidate) => candidate.primaryReason === "capture_black");
+
+  const sorted = pool.sort((left, right) => {
+    const captureDiff =
+      (right.capturedCountAfterMove ?? 0) - (left.capturedCountAfterMove ?? 0);
+    if (captureDiff !== 0) {
+      return captureDiff;
+    }
+    return right.totalScore - left.totalScore;
+  });
+
+  return sorted[0] ?? pickBestWrongRevealCandidate(scoredCandidates, style);
+}
+
+function buildCaptureSelectionDiagnostics(scoredCandidates, stones, boardSize, stoneColors) {
+  const capturableBlackGroups = describeCapturableBlackGroups(stones, boardSize, stoneColors);
+  const captureCandidates = scoredCandidates
+    .filter((candidate) => (candidate.capturedCountAfterMove ?? 0) > 0)
+    .map((candidate) => ({
+      move: candidate.move ?? formatCoordLabel(candidate.point ?? candidate),
+      capturedCountAfterMove: candidate.capturedCountAfterMove ?? 0,
+      selectedReason: candidate.selectedReason,
+      totalScore: candidate.totalScore,
+    }))
+    .sort((left, right) => right.capturedCountAfterMove - left.capturedCountAfterMove);
+
+  return {
+    capturableBlackGroups,
+    captureCandidates,
+  };
+}
+
 function putsEnemyInAtari(stones, point, boardSize, stoneColors) {
   for (const neighbor of getNeighborPoints(point, boardSize)) {
     const neighborStone = getStoneAtPoint(stones, neighbor);
@@ -176,12 +397,15 @@ function putsEnemyInAtari(stones, point, boardSize, stoneColors) {
   return false;
 }
 
-function mapWrongRevealReason(internalReason) {
+function mapWrongRevealReason(internalReason, { style = "default", capturedCount = 0 } = {}) {
+  if (internalReason === "capture_black" && capturedCount > 0) {
+    return style === "snapback" ? "snapback_capture" : "capture_black_group";
+  }
   return WRONG_REVEAL_REASON_LABEL[internalReason] ?? internalReason;
 }
 
 export function isForbiddenWrongRevealReason(selectedReason, style) {
-  if (style === "sacrifice") {
+  if (style === "sacrifice" || style === "snapback") {
     return false;
   }
   return FORBIDDEN_WRONG_REVEAL_REASONS.has(selectedReason);
@@ -300,7 +524,10 @@ function scoreWrongRevealWithTarget({
       (WRONG_REVEAL_INTERNAL_PRIORITY[a] ?? 0),
   )[0];
 
-  const selectedReason = mapWrongRevealReason(primaryReason);
+  const selectedReason = mapWrongRevealReason(primaryReason, {
+    style,
+    capturedCount: 0,
+  });
   const priority = WRONG_REVEAL_INTERNAL_PRIORITY[primaryReason] ?? 0;
 
   return {
@@ -316,6 +543,7 @@ function scoreWrongRevealWithTarget({
     responseMode: "wrong_reveal",
     candidateFutureLiberties,
     targetGroupLibertiesBefore: targetContext.minLiberties,
+    capturedCountAfterMove: 0,
   };
 }
 
@@ -344,6 +572,20 @@ function scoreCandidate({
   }
 
   const moveKey = pointKey(point);
+
+  if (isWrongReveal && isCapturePriorityStyle(style)) {
+    return scoreWrongRevealWithCapture({
+      candidate,
+      stones,
+      afterStones,
+      point,
+      boardSize,
+      stoneColors,
+      lastBlackMove,
+      style,
+      weights,
+    });
+  }
 
   if (isWrongReveal && targetContext) {
     return scoreWrongRevealWithTarget({
@@ -502,7 +744,7 @@ function scoreCandidate({
       continue;
     }
     let weight = weights[signal] ?? 1;
-    if (isWrongReveal && signal === "capture_black" && style !== "capture") {
+    if (isWrongReveal && signal === "capture_black" && !isCapturePriorityStyle(style)) {
       weight *= 0.15;
     }
     if (isWrongReveal && signal === "katago_prior") {
@@ -517,7 +759,7 @@ function scoreCandidate({
   )[0];
 
   const selectedReason = isWrongReveal
-    ? mapWrongRevealReason(primaryReason)
+    ? mapWrongRevealReason(primaryReason, { style, capturedCount })
     : primaryReason;
 
   const priority = priorityTable[primaryReason] ?? 0;
@@ -534,6 +776,7 @@ function scoreCandidate({
     totalScore,
     aiResponseStyle: style,
     responseMode,
+    capturedCountAfterMove: capturedCount,
   };
 }
 
@@ -854,27 +1097,58 @@ function logTargetSurvivalSelection({
   selected,
   pickDiagnostics,
   continuousEscapeCandidates,
+  forbiddenAuthorWhites = [],
+  authorSequenceRemoved = [],
+  capturePriority = false,
+  captureDiagnostics = null,
+  aiResponseStyle = null,
 }) {
   const targetLiberties = targetContext
     ? getTargetLibertyPoints(targetContext, stones, boardSize).map(formatCoordLabel)
     : [];
 
+  const selectedPoint = selected?.point ?? (selected?.x != null ? selected : null);
+  const selectedMoveLabel =
+    selected?.move ??
+    (selectedPoint ? formatCoordLabel(selectedPoint) : null);
+  const selectedLibertySource = selectedPoint
+    ? findSelectedMoveLibertySource(selectedPoint, targetContext, stones, boardSize)
+    : null;
+
+  const targetDiagnostic = buildTargetWhiteGroupDiagnosticLog(
+    targetContext,
+    stones,
+    boardSize,
+  );
+
   console.log("[KatagoRespond] tactical target selection", {
-    targetWhiteGroup: formatTargetWhiteGroupForLog(targetContext),
+    policy: TARGET_WHITE_GROUP_POLICY,
+    aiResponseStyle: aiResponseStyle ?? null,
+    capturePriority,
+    targetWhiteGroup: targetDiagnostic,
+    targetWhiteGroupStones: targetDiagnostic.targetWhiteGroupStones ?? null,
+    targetLiberties: targetDiagnostic.targetLiberties ?? targetLiberties.join(", "),
+    targetLibertiesList: targetDiagnostic.targetLibertiesList ?? targetLiberties,
     targetGroupLiberties: targetContext?.minLiberties ?? null,
-    targetLiberties,
     targetLibertyKeys: targetContext
       ? [...(targetContext.atariLibertyKeys ?? [])].map(pointKeyToCoordLabel)
       : [],
+    capturableBlackGroups: captureDiagnostics?.capturableBlackGroups ?? null,
+    captureCandidates: captureDiagnostics?.captureCandidates ?? null,
+    selectedMove: selectedMoveLabel,
+    selectedReason: selected?.selectedReason ?? null,
+    capturedCountAfterMove: selected?.capturedCountAfterMove ?? 0,
+    selectedLibertySource,
+    forbiddenAuthorWhites: forbiddenAuthorWhites.map(
+      (entry) => entry.label ?? formatCoordLabel(entry),
+    ),
+    authorSequenceCandidatesRemoved: authorSequenceRemoved,
     forcedExtendMove: pickDiagnostics?.forcedExtendMove ?? null,
     forcedRejectReason: pickDiagnostics?.forcedRejectReason ?? null,
     forcedPickMode: pickDiagnostics?.forcedPickMode ?? null,
     libertyAttempts: pickDiagnostics?.libertyAttempts ?? null,
     continuousEscapeCandidates: continuousEscapeCandidates.map(formatCoordLabel),
     candidateFutureLiberties: selected?.candidateFutureLiberties ?? null,
-    selectedReason: selected?.selectedReason ?? null,
-    selectedMove:
-      selected?.move ?? (selected ? { x: selected.x, y: selected.y } : null),
     pickMode: pickDiagnostics?.pickMode ?? null,
     nearLastBlackRejectedBecause: pickDiagnostics?.nearLastBlackRejectedBecause ?? null,
   });
@@ -889,6 +1163,7 @@ function logTargetSurvivalSelection({
  *   lastBlackMove: object,
  *   problem: object,
  *   studentMoveResult?: "correct"|"wrong",
+ *   session?: object,
  * }} params
  */
 export function selectTacticalWhiteMove({
@@ -899,13 +1174,20 @@ export function selectTacticalWhiteMove({
   lastBlackMove,
   problem,
   studentMoveResult,
+  session = null,
 }) {
   const style = resolveAiResponseStyle(problem);
+  const capturePriority =
+    studentMoveResult === "wrong" && isCapturePriorityStyle(style);
   const responseMode = studentMoveResult === "wrong" ? "wrong_reveal" : "default";
   const targetContext =
-    responseMode === "wrong_reveal"
+    responseMode === "wrong_reveal" && !capturePriority
       ? resolveTargetWhiteGroup(problem, stones, boardSize, stoneColors)
       : null;
+  const useTargetSurvival = responseMode === "wrong_reveal" && Boolean(targetContext);
+
+  const forbiddenAuthorWhites =
+    responseMode === "wrong_reveal" ? getForbiddenAuthorWhitePoints(session) : [];
 
   const continuousEscapeCandidates = targetContext
     ? buildContinuousEscapePoints(
@@ -917,19 +1199,57 @@ export function selectTacticalWhiteMove({
       )
     : [];
 
-  const mergedCandidates =
-    responseMode === "wrong_reveal" && targetContext
-      ? mergeTargetSurvivalCandidates(
-          regionCandidates,
-          targetContext,
-          stones,
-          boardSize,
-          stoneColors,
-          problem,
-        )
-      : [...(regionCandidates ?? [])];
+  let mergedCandidates = [...(regionCandidates ?? [])];
+  if (useTargetSurvival) {
+    mergedCandidates = mergeTargetSurvivalCandidates(
+      regionCandidates,
+      targetContext,
+      stones,
+      boardSize,
+      stoneColors,
+      problem,
+    );
+  } else if (capturePriority) {
+    mergedCandidates = mergeCaptureCandidates(
+      regionCandidates,
+      stones,
+      boardSize,
+      stoneColors,
+      lastBlackMove,
+    );
+    console.log("[KatagoRespond] capture-priority wrong-reveal", {
+      problemId: problem?.id,
+      aiResponseStyle: style,
+      category: problem?.category,
+      capturableBlackGroups: describeCapturableBlackGroups(stones, boardSize, stoneColors),
+    });
+  }
 
-  const scoredCandidates = mergedCandidates
+  let authorSequenceFiltered = { candidates: mergedCandidates, removed: [] };
+  if (responseMode === "wrong_reveal" && session) {
+    authorSequenceFiltered = filterForbiddenAuthorWhiteCandidates(mergedCandidates, session);
+    if (authorSequenceFiltered.removed.length > 0) {
+      console.log("[KatagoRespond] removed author_sequence white from wrong-reveal candidates", {
+        forbiddenAuthorWhites: forbiddenAuthorWhites.map(
+          (entry) => entry.label ?? formatCoordLabel(entry),
+        ),
+        removed: authorSequenceFiltered.removed,
+        targetWhiteGroup: buildTargetWhiteGroupDiagnosticLog(targetContext, stones, boardSize),
+      });
+    }
+  }
+
+  if (responseMode === "wrong_reveal" && useTargetSurvival && targetContext) {
+    console.log("[TargetWhiteGroup] resolved for wrong-reveal", {
+      problemId: problem?.id,
+      ...buildTargetWhiteGroupDiagnosticLog(targetContext, stones, boardSize),
+    });
+  }
+
+  const scoringTargetContext = useTargetSurvival ? targetContext : null;
+  const candidatesForScoring = authorSequenceFiltered.candidates;
+
+  const scoredCandidates = candidatesForScoring
     .map((candidate) =>
       scoreCandidate({
         candidate,
@@ -940,16 +1260,29 @@ export function selectTacticalWhiteMove({
         style,
         responseMode,
         problem,
-        targetContext,
+        targetContext: scoringTargetContext,
       }),
     )
     .filter(Boolean)
     .sort((a, b) => b.totalScore - a.totalScore);
 
+  const captureDiagnostics = capturePriority
+    ? buildCaptureSelectionDiagnostics(scoredCandidates, stones, boardSize, stoneColors)
+    : null;
+
   let pickDiagnostics = {};
   let selected = scoredCandidates[0] ?? null;
 
-  if (responseMode === "wrong_reveal" && targetContext) {
+  if (responseMode === "wrong_reveal" && capturePriority) {
+    selected = pickBestCaptureWrongReveal(scoredCandidates, style);
+    pickDiagnostics.pickMode = "capture_priority";
+    if (selected) {
+      selected.selectedReason = mapWrongRevealReason(selected.primaryReason, {
+        style,
+        capturedCount: selected.capturedCountAfterMove ?? 0,
+      });
+    }
+  } else if (useTargetSurvival && targetContext) {
     const forced = tryPickForcedTargetLiberty({
       targetContext,
       stones,
@@ -963,19 +1296,47 @@ export function selectTacticalWhiteMove({
     pickDiagnostics = { ...forced.diagnostics };
 
     if (forced.picked) {
-      selected = forced.picked;
-      pickDiagnostics.pickMode = forced.diagnostics.forcedPickMode ?? "forced_liberty";
+      if (session && isForbiddenAuthorWhitePoint(forced.picked, session)) {
+        console.warn("[KatagoRespond] forced target liberty equals author_sequence white — skip forced pick", {
+          move: forced.picked.move ?? formatCoordLabel(forced.picked),
+          forbiddenAuthorWhites: forbiddenAuthorWhites.map(
+            (entry) => entry.label ?? formatCoordLabel(entry),
+          ),
+        });
+        pickDiagnostics.forcedRejectReason = "forced_liberty_is_author_sequence_white";
+        const picked = pickBestWrongRevealWithTarget(scoredCandidates, targetContext, style);
+        selected = picked.selected;
+        pickDiagnostics = { ...pickDiagnostics, ...picked };
+      } else {
+        selected = forced.picked;
+        pickDiagnostics.pickMode = forced.diagnostics.forcedPickMode ?? "forced_liberty";
+      }
     } else {
-      const picked = pickBestWrongRevealWithTarget(
-        scoredCandidates,
-        targetContext,
-        style,
-      );
+      const picked = pickBestWrongRevealWithTarget(scoredCandidates, targetContext, style);
       selected = picked.selected;
       pickDiagnostics = { ...pickDiagnostics, ...picked };
     }
   } else if (responseMode === "wrong_reveal") {
     selected = pickBestWrongRevealCandidate(scoredCandidates, style);
+  }
+
+  if (
+    selected &&
+    responseMode === "wrong_reveal" &&
+    session &&
+    isForbiddenAuthorWhitePoint(selected, session)
+  ) {
+    console.warn("[KatagoRespond] selected move matches author_sequence white — pick next candidate", {
+      rejected: selected.move ?? formatCoordLabel(selected),
+      forbiddenAuthorWhites: forbiddenAuthorWhites.map(
+        (entry) => entry.label ?? formatCoordLabel(entry),
+      ),
+    });
+    selected =
+      scoredCandidates.find(
+        (candidate) =>
+          candidate !== selected && !isForbiddenAuthorWhitePoint(candidate, session),
+      ) ?? null;
   }
 
   if (
@@ -1004,6 +1365,11 @@ export function selectTacticalWhiteMove({
       selected,
       pickDiagnostics,
       continuousEscapeCandidates,
+      forbiddenAuthorWhites,
+      authorSequenceRemoved: authorSequenceFiltered.removed,
+      capturePriority,
+      captureDiagnostics,
+      aiResponseStyle: style,
     });
   }
 
@@ -1012,9 +1378,13 @@ export function selectTacticalWhiteMove({
     aiResponseStyle: style,
     responseMode,
     targetContext,
+    capturePriority,
+    captureDiagnostics,
     scoredCandidates,
     selected,
     selectedReason: selected?.selectedReason ?? null,
+    forbiddenAuthorWhites,
+    authorSequenceRemoved: authorSequenceFiltered.removed,
   };
 }
 

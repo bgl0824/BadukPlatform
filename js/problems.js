@@ -683,6 +683,16 @@ function toSupabaseRow(problem) {
     ox_answer: problem.type === "ox" ? Boolean(problem.oxAnswer) : null,
     stones: problem.stones ?? [],
     correct_move: problem.correctMove ?? null,
+    best_moves:
+      Array.isArray(problem.bestMoves) && problem.bestMoves.length > 0
+        ? problem.bestMoves.map((move) => ({ x: move.x, y: move.y }))
+        : problem.correctMove
+          ? [{ x: problem.correctMove.x, y: problem.correctMove.y }]
+          : [],
+    alternative_moves:
+      Array.isArray(problem.alternativeMoves) && problem.alternativeMoves.length > 0
+        ? problem.alternativeMoves.map((move) => ({ x: move.x, y: move.y }))
+        : [],
     correct_sequence: problem.correctSequence ?? null,
     display_order: Math.floor(displayOrder),
     grade_level: normalizeGradeLevelForStorage(problem.gradeLevel),
@@ -765,6 +775,28 @@ function fromSupabaseRow(row) {
     problem.correctSequence = row.correct_sequence;
   }
 
+  if (Array.isArray(row.best_moves) && row.best_moves.length > 0) {
+    problem.bestMoves = row.best_moves
+      .filter((entry) => entry && Number.isInteger(entry.x) && Number.isInteger(entry.y))
+      .map((entry) => ({ x: entry.x, y: entry.y }));
+  } else if (problem.correctMove) {
+    problem.bestMoves = [{ x: problem.correctMove.x, y: problem.correctMove.y }];
+  } else {
+    problem.bestMoves = [];
+  }
+
+  if (Array.isArray(row.alternative_moves)) {
+    problem.alternativeMoves = row.alternative_moves
+      .filter((entry) => entry && Number.isInteger(entry.x) && Number.isInteger(entry.y))
+      .map((entry) => ({ x: entry.x, y: entry.y }));
+  } else {
+    problem.alternativeMoves = [];
+  }
+
+  if (problem.bestMoves.length > 0) {
+    problem.correctMove = { x: problem.bestMoves[0].x, y: problem.bestMoves[0].y };
+  }
+
   const displayOrder = Number(row.display_order);
   if (Number.isFinite(displayOrder) && displayOrder > 0) {
     problem.displayOrder = displayOrder;
@@ -829,6 +861,12 @@ function cloneProblem(problem) {
     levelGroup: normalizeProblemLevelGroup(problem.levelGroup),
     type: problem.type === "ox" ? "ox" : "board",
     correctMove: problem.correctMove ? { ...problem.correctMove } : null,
+    bestMoves: Array.isArray(problem.bestMoves)
+      ? problem.bestMoves.map((move) => ({ ...move }))
+      : [],
+    alternativeMoves: Array.isArray(problem.alternativeMoves)
+      ? problem.alternativeMoves.map((move) => ({ ...move }))
+      : [],
     correctSequence: Array.isArray(problem.correctSequence)
       ? problem.correctSequence.map((move) => ({ ...move }))
       : undefined,

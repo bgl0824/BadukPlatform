@@ -204,6 +204,7 @@ export function applyFullAnswerSequenceToDraft(problem, sequenceEntries, boardSi
     problem.blackAnswerSequence = [];
     problem.black_answer_sequence = [];
     delete problem.correctMove;
+    problem.bestMoves = [];
     return renumbered;
   }
 
@@ -215,6 +216,7 @@ export function applyFullAnswerSequenceToDraft(problem, sequenceEntries, boardSi
 
   if (blackAnswers[0]) {
     problem.correctMove = { x: blackAnswers[0].x, y: blackAnswers[0].y };
+    problem.bestMoves = [{ x: blackAnswers[0].x, y: blackAnswers[0].y }];
   }
 
   return renumbered;

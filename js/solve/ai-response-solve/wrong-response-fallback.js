@@ -131,6 +131,7 @@ export function selectWrongRevealLocalFallback({
   lastBlackMove,
   problem,
   regionCandidates = [],
+  session = null,
 }) {
   const nearBlack = filterLegalCandidates(
     buildNearLastBlackCandidates(lastBlackMove, stones, boardSize),
@@ -165,6 +166,7 @@ export function selectWrongRevealLocalFallback({
     lastBlackMove,
     problem,
     studentMoveResult: "wrong",
+    session,
   });
 
   const selected = education.selected;

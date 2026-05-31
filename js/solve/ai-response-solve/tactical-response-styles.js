@@ -7,6 +7,7 @@ export const AI_RESPONSE_STYLES = [
   "default",
   "escape",
   "capture",
+  "snapback",
   "connect",
   "liberty_fight",
   "sacrifice",
@@ -16,11 +17,12 @@ export const AI_RESPONSE_STYLES = [
 
 export const AI_RESPONSE_STYLE_LABELS = {
   default: "기본 (영역 내 후보 + 전술)",
-  escape: "도망·단수 연장·연결",
-  capture: "잡기·단수치기",
+  escape: "도망·백돌 살리기 (target_white_group)",
+  capture: "흑 잡기·단수치기",
+  snapback: "환격·먹여치기 (흑 포획 응수)",
   connect: "연결 우선",
   liberty_fight: "수상전 (활로 싸움)",
-  sacrifice: "희생·먹여치기·환격",
+  sacrifice: "희생·교환",
 };
 
 /**
@@ -32,9 +34,9 @@ export const CATEGORY_STYLE_HINTS = {
   촉촉수: "escape",
   축: "escape",
   장문: "escape",
-  환격: "sacrifice",
+  환격: "snapback",
   수상전: "liberty_fight",
-  먹여치기: "sacrifice",
+  먹여치기: "snapback",
 };
 
 /**
@@ -43,6 +45,16 @@ export const CATEGORY_STYLE_HINTS = {
  */
 export function isAiResponseStyle(value) {
   return AI_RESPONSE_STYLES.includes(value);
+}
+
+/** 오답 응수: 흑 포획 우선 (target white survival 미사용) */
+export function isCapturePriorityStyle(style) {
+  return style === "capture" || style === "snapback";
+}
+
+/** 오답 응수: target_white_group 생존 우선 */
+export function isTargetSurvivalStyle(style) {
+  return style === "escape" || style === "default" || style === "connect" || style === "liberty_fight";
 }
 
 /**
@@ -58,6 +70,13 @@ export function resolveAiResponseStyle(problem) {
   );
 
   if (explicit) {
+    if (
+      explicit === "sacrifice" &&
+      (String(problem?.category ?? "").trim() === "환격" ||
+        String(problem?.category ?? "").trim() === "먹여치기")
+    ) {
+      return "snapback";
+    }
     return explicit;
   }
 
@@ -118,16 +137,34 @@ export const STYLE_SIGNAL_WEIGHTS = {
     self_atari_penalty: 1.2,
   },
   capture: {
-    extend_atari: 1.3,
-    increase_liberty: 0.7,
-    connect_white: 0.8,
+    extend_atari: 0.2,
+    continuous_escape: 0.2,
+    future_liberty_gain: 0.3,
+    connect_target_group: 0.2,
+    increase_liberty: 0.5,
+    connect_white: 0.6,
     respond_to_black: 1,
-    capture_black: 2.5,
-    decrease_black_liberty: 2.2,
-    escape_from_last_black: 0.3,
-    sacrifice_play: 0.5,
-    katago_prior: 0.6,
+    capture_black: 3,
+    decrease_black_liberty: 2.5,
+    escape_from_last_black: 0.2,
+    sacrifice_play: 0.3,
+    katago_prior: 0.5,
     self_atari_penalty: 0.8,
+  },
+  snapback: {
+    extend_atari: 0.1,
+    continuous_escape: 0.1,
+    future_liberty_gain: 0.2,
+    connect_target_group: 0.1,
+    increase_liberty: 0.4,
+    connect_white: 0.5,
+    respond_to_black: 1,
+    capture_black: 3.2,
+    decrease_black_liberty: 2.8,
+    escape_from_last_black: 0.15,
+    sacrifice_play: 0.4,
+    katago_prior: 0.45,
+    self_atari_penalty: 0.7,
   },
   connect: {
     extend_atari: 1.4,

@@ -25,6 +25,13 @@ import {
   AI_RESPONSE_STYLES,
   AI_RESPONSE_STYLE_LABELS,
 } from "../solve/ai-response-solve/tactical-response-styles.js";
+import {
+  formatAnswerMoveLabel,
+  formatAnswerMovesSummary,
+  normalizeProblemAnswerMoves,
+  syncProblemAnswerFields,
+  validateProblemAnswerMoves,
+} from "../game/answer-moves.js";
 import { syncTargetWhiteGroupOnProblem } from "../solve/ai-response-solve/target-white-group.js";
 import { LEVEL_GROUPS, normalizeLevelGroup } from "../services/level-group-service.js";
 import {
@@ -66,6 +73,12 @@ export function createAdminEditorController({
     if (!draft) {
       closeAdminEditor();
       return;
+    }
+
+    normalizeProblemAnswerMoves(draft, BOARD_SIZE);
+
+    if (isAiResponseDraft(draft)) {
+      syncTargetWhiteGroupOnProblem(draft, BOARD_SIZE);
     }
 
     const problemType = adminState.draft.type === PROBLEM_TYPE.ox ? PROBLEM_TYPE.ox : PROBLEM_TYPE.board;
@@ -117,8 +130,12 @@ export function createAdminEditorController({
         <p class="creator-placement-hint">좌클릭=흑 · 우클릭=백 · 같은 돌 다시 클릭=제거</p>
         <div class="admin-board-answer-meta${isOx ? " is-hidden" : ""}">
           <p class="admin-answer-status">
-            현재 정답:
-            <strong id="admin-answer-label">${formatBoardAnswerLabel(draft)}</strong>
+            최선정답:
+            <strong id="admin-best-answer-label">${formatBestAnswerLabel(draft)}</strong>
+          </p>
+          <p class="admin-answer-status">
+            허용정답:
+            <strong id="admin-alternative-answer-label">${formatAlternativeAnswerLabel(draft)}</strong>
           </p>
           <p class="admin-answer-status">
             활로 정답 수순:
@@ -130,7 +147,7 @@ export function createAdminEditorController({
               <select id="admin-ai-response-style">${renderAiResponseStyleOptions(draft)}</select>
             </label>
             <p class="admin-field-hint">비우면 카테고리명으로만 보조 추론(단수치기→capture 등). 사활·맥 문제는 스타일을 직접 지정하세요.</p>
-            <p class="admin-field-hint">오답 백 응수 타깃: 백돌에 △(세모) 표시 → 저장 시 <code>target_white_group</code>으로 동기화됩니다.</p>
+            <p class="admin-field-hint">오답 백 응수 타깃: 백돌에 △ 1개만 찍어도 <strong>연결된 백그룹 전체</strong>가 타깃입니다. 서로 떨어진 그룹은 △를 각각 찍으세요. 저장 시 <code>target_white_group</code>에 그룹 전체 좌표가 저장됩니다.</p>
             <p class="panel-label">정답 수순 (${formatFullAnswerSequenceSummary(draft)})</p>
             <button
               type="button"
@@ -153,7 +170,8 @@ export function createAdminEditorController({
         <div class="tool-grid">
           <button class="admin-board-tool is-active" data-admin-tool="black" type="button">흑돌</button>
           <button class="admin-board-tool" data-admin-tool="white" type="button">백돌</button>
-          <button class="admin-board-tool admin-board-tool--board-only${isOx ? " is-hidden" : ""}" data-admin-tool="answer" type="button">정답 수정</button>
+          <button class="admin-board-tool admin-board-tool--board-only${isOx ? " is-hidden" : ""}" data-admin-tool="best-answer" type="button">최선정답</button>
+          <button class="admin-board-tool admin-board-tool--board-only${isOx ? " is-hidden" : ""}" data-admin-tool="alternative-answer" type="button">허용정답</button>
           <button class="admin-board-tool admin-board-tool--board-only${isOx ? " is-hidden" : ""}" data-admin-tool="sequence" type="button">활로 정답 추가</button>
           <button class="admin-board-tool admin-board-tool--board-only${isOx ? " is-hidden" : ""}" data-admin-tool="clear-sequence" type="button">수순 초기화</button>
         </div>
@@ -190,7 +208,7 @@ export function createAdminEditorController({
           </button>
         </div>
       </section>
-      <p class="admin-board-help${isOx ? " is-hidden" : ""}">활로: 활로 정답 추가. AI 응수형: 「정답 수순 입력」 후 보드 클릭. 일반: 정답 수정.</p>
+      <p class="admin-board-help${isOx ? " is-hidden" : ""}">활로: 활로 정답 추가. AI 응수형: 「정답 수순 입력」 후 보드 클릭. 일반: 최선정답(△)·허용정답(□).</p>
       <p id="admin-editor-status" class="admin-editor-status" aria-live="polite">문제 정보를 입력한 뒤 저장을 눌러 주세요.</p>
       <div class="admin-editor-actions">
         <button id="admin-cancel" class="secondary-button" type="button">취소</button>
@@ -267,16 +285,41 @@ export function createAdminEditorController({
     });
   }
 
-  function formatBoardAnswerLabel(problem) {
+  function ensureAdminAnswerMoveLists() {
+    if (!adminState.draft) {
+      return;
+    }
+    if (!Array.isArray(adminState.draft.bestMoves)) {
+      adminState.draft.bestMoves = [];
+    }
+    if (!Array.isArray(adminState.draft.alternativeMoves)) {
+      adminState.draft.alternativeMoves = [];
+    }
+    normalizeProblemAnswerMoves(adminState.draft, BOARD_SIZE);
+  }
+
+  function formatBestAnswerLabel(problem) {
     if (isOxProblem(problem)) {
       return problem.oxAnswer ? "O (둘 수 있음)" : "X (둘 수 없음)";
     }
 
-    if (!problem.correctMove) {
-      return "미지정";
+    normalizeProblemAnswerMoves(problem, BOARD_SIZE);
+    const summary = formatAnswerMovesSummary(problem.bestMoves, BOARD_SIZE);
+    return summary || "미지정";
+  }
+
+  function formatAlternativeAnswerLabel(problem) {
+    if (isOxProblem(problem)) {
+      return "—";
     }
 
-    return `(${problem.correctMove.x}, ${problem.correctMove.y})`;
+    normalizeProblemAnswerMoves(problem, BOARD_SIZE);
+    const summary = formatAnswerMovesSummary(problem.alternativeMoves, BOARD_SIZE);
+    return summary || "없음";
+  }
+
+  function formatBoardAnswerLabel(problem) {
+    return `${formatBestAnswerLabel(problem)} / 허용: ${formatAlternativeAnswerLabel(problem)}`;
   }
 
   function updateAdminTypeUi() {
@@ -468,9 +511,13 @@ export function createAdminEditorController({
   }
 
   function refreshAdminSequenceUi() {
-    const answerLabel = elements.adminEditor.querySelector("#admin-answer-label");
-    if (answerLabel && adminState.draft) {
-      answerLabel.textContent = formatBoardAnswerLabel(adminState.draft);
+    const bestLabel = elements.adminEditor.querySelector("#admin-best-answer-label");
+    if (bestLabel && adminState.draft) {
+      bestLabel.textContent = formatBestAnswerLabel(adminState.draft);
+    }
+    const alternativeLabel = elements.adminEditor.querySelector("#admin-alternative-answer-label");
+    if (alternativeLabel && adminState.draft) {
+      alternativeLabel.textContent = formatAlternativeAnswerLabel(adminState.draft);
     }
     const sequenceLabel = elements.adminEditor.querySelector("#admin-sequence-label");
     if (sequenceLabel && adminState.draft) {
@@ -710,21 +757,21 @@ export function createAdminEditorController({
 
     if (
       isBoardProblem(adminState.draft) &&
-      adminState.draft.correctMove &&
       !(aiResponseDraft && previewSequence.length > 0)
     ) {
-      const correctPoint = sanitizeBoardPoint(
-        adminState.draft.correctMove,
-        BOARD_SIZE,
-        "admin:correctMove",
-      );
-      if (correctPoint) {
-        safeAdminBoardAdd(adminBoard, {
-          x: correctPoint.x,
-          y: correctPoint.y,
-          type: "TR",
-        });
-      }
+      normalizeProblemAnswerMoves(adminState.draft, BOARD_SIZE);
+      (adminState.draft.bestMoves ?? []).forEach((move) => {
+        const point = sanitizeBoardPoint(move, BOARD_SIZE, "admin:bestMove");
+        if (point) {
+          safeAdminBoardAdd(adminBoard, { x: point.x, y: point.y, type: "TR" });
+        }
+      });
+      (adminState.draft.alternativeMoves ?? []).forEach((move) => {
+        const point = sanitizeBoardPoint(move, BOARD_SIZE, "admin:alternativeMove");
+        if (point) {
+          safeAdminBoardAdd(adminBoard, { x: point.x, y: point.y, type: "SQ" });
+        }
+      });
     }
 
     if (
@@ -789,7 +836,7 @@ export function createAdminEditorController({
       return;
     }
 
-    if (adminState.activeTool === "answer") {
+    if (adminState.activeTool === "best-answer" || adminState.activeTool === "alternative-answer") {
       if (button === "secondary") {
         return;
       }
@@ -802,9 +849,33 @@ export function createAdminEditorController({
         setFeedback("정답 위치는 돌이 없는 곳에 지정해 주세요.", "wrong");
         return;
       }
-      adminState.draft.correctMove = point;
+
+      ensureAdminAnswerMoveLists();
+      const isBestTool = adminState.activeTool === "best-answer";
+      const targetList = isBestTool ? adminState.draft.bestMoves : adminState.draft.alternativeMoves;
+      const otherList = isBestTool ? adminState.draft.alternativeMoves : adminState.draft.bestMoves;
+      const existingIndex = targetList.findIndex((move) => isSamePoint(move, point));
+
+      if (existingIndex >= 0) {
+        targetList.splice(existingIndex, 1);
+        setFeedback(
+          `${isBestTool ? "최선" : "허용"}정답 ${formatAnswerMoveLabel(point, BOARD_SIZE)} 을(를) 제거했습니다.`,
+        );
+      } else {
+        const otherIndex = otherList.findIndex((move) => isSamePoint(move, point));
+        if (otherIndex >= 0) {
+          otherList.splice(otherIndex, 1);
+        }
+        targetList.push({ ...point });
+        setFeedback(
+          `${isBestTool ? "최선" : "허용"}정답 ${formatAnswerMoveLabel(point, BOARD_SIZE)} 을(를) 추가했습니다.`,
+          "correct",
+        );
+      }
+
+      syncProblemAnswerFields(adminState.draft, BOARD_SIZE);
       renderAdminBoard();
-      setFeedback(`정답 좌표를 (${point.x}, ${point.y})로 수정했습니다.`, "correct");
+      updateAdminAnswerLabel();
       return;
     }
 
@@ -952,8 +1023,16 @@ export function createAdminEditorController({
     }
 
     if (adminState.draft.correctMove && isSamePoint(adminState.draft.correctMove, point)) {
-      adminState.draft.correctMove = { x: 0, y: 0 };
+      adminState.draft.correctMove = null;
     }
+    ensureAdminAnswerMoveLists();
+    adminState.draft.bestMoves = adminState.draft.bestMoves.filter(
+      (move) => !isSamePoint(move, point),
+    );
+    adminState.draft.alternativeMoves = adminState.draft.alternativeMoves.filter(
+      (move) => !isSamePoint(move, point),
+    );
+    syncProblemAnswerFields(adminState.draft, BOARD_SIZE);
 
     renderAdminBoard();
   }
@@ -1014,10 +1093,14 @@ export function createAdminEditorController({
 
     try {
       if (isAiResponseDraft(savedProblemDraft)) {
-        const synced = syncTargetWhiteGroupOnProblem(savedProblemDraft);
-        console.log("[Admin] target_white_group synced from marks", {
+        const synced = syncTargetWhiteGroupOnProblem(savedProblemDraft, BOARD_SIZE);
+        console.log("[Admin] target_white_group synced from △ marks (connected groups expanded)", {
           problemId: savedProblemDraft.id,
-          count: synced.length,
+          policy: synced.policy,
+          markedSeeds: synced.markedSeeds,
+          stoneCount: synced.entries.length,
+          targetWhiteGroupStones: synced.entries.map((entry) => formatCoordLabel(entry)).join(", "),
+          expandedGroups: synced.expandedGroups,
         });
       }
 
@@ -1141,6 +1224,7 @@ export function createAdminEditorController({
         getAdminFullSequence(),
         BOARD_SIZE,
       );
+      syncProblemAnswerFields(adminState.draft, BOARD_SIZE);
       return;
     }
 
@@ -1153,10 +1237,14 @@ export function createAdminEditorController({
     if (adminState.draft.category !== "활로") {
       delete adminState.draft.correctSequence;
     } else if (!Array.isArray(adminState.draft.correctSequence)) {
-      adminState.draft.correctSequence = adminState.draft.correctMove
-        ? [{ ...adminState.draft.correctMove }]
-        : [];
+      adminState.draft.correctSequence = adminState.draft.bestMoves?.length
+        ? adminState.draft.bestMoves.map((move) => ({ ...move }))
+        : adminState.draft.correctMove
+          ? [{ ...adminState.draft.correctMove }]
+          : [];
     }
+
+    syncProblemAnswerFields(adminState.draft, BOARD_SIZE);
   }
 
   function validateAdminDraft(problem) {
@@ -1180,12 +1268,9 @@ export function createAdminEditorController({
       return validateFullAnswerSequence(problem, BOARD_SIZE, occupied) || "";
     }
 
-    if (!problem.correctMove) {
-      return "정답 위치를 지정해 주세요.";
-    }
-
-    if (occupied.has(`${problem.correctMove.x}:${problem.correctMove.y}`)) {
-      return "정답 위치는 기존 돌과 겹칠 수 없습니다.";
+    const answerError = validateProblemAnswerMoves(problem, occupied, BOARD_SIZE);
+    if (answerError) {
+      return answerError;
     }
 
     return "";
