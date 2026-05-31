@@ -138,6 +138,7 @@ alter table public.problems enable row level security;
 
 학생은 **흑만**, 백은 **KataGo API** (`POST /api/katago/respond`). admin은 `answer_move_count`(1/3/5/7)와 `black_answer_sequence` 설정.
 
+- **안정 기준점 (2026-06-01):** [`docs/ai-response-stable-baseline.md`](docs/ai-response-stable-baseline.md) — 태그 `v0.9.0-ai-response-stable`, 브랜치 `stable-ai-response-20260601`
 - 설계 문서: [`docs/ai-response-solve-design.md`](docs/ai-response-solve-design.md)
 - SQL: `scripts/supabase-problems-ai-response-solve.sql`
 - 플래그: `katagoRespondApiEnabled` (기본 false, **true일 때만** 실 API 호출), `aiResponseSolveEnabled` (기본 true)
