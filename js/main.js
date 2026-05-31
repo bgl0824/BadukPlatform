@@ -34,7 +34,6 @@ import {
   isActuallyLastProblemInStudyPath,
 } from "./services/study-solve-path-service.js";
 import { AI_RESPONSE_UX_MESSAGES } from "./solve/ai-response-ux/config.js";
-import { applyTargetMarkerVisibility } from "./solve/ai-response-solve/problem-goal.js";
 import { isOxProblem } from "./game/problem-type.js";
 import { createAiResponseUxController } from "./solve/ai-response-ux/controller.js";
 import { advanceCorrectSequence, getProblemCorrectSequence } from "./game/sequence.js";
@@ -2748,14 +2747,6 @@ function getProblemStoreErrorMessage(error, actionLabel) {
     return "Supabase problems 테이블에 target_white_group/target_white_mark 컬럼이 필요합니다. scripts/supabase-problems-target-white-group.sql 을 실행해 주세요.";
   }
 
-  if (
-    message.includes("problem_goal") ||
-    message.includes("target_black_group") ||
-    message.includes("show_target_marker")
-  ) {
-    return "Supabase problems 테이블에 problem_goal/target_black_group/show_target_marker 컬럼이 필요합니다. scripts/supabase-problems-problem-goal.sql 을 실행해 주세요.";
-  }
-
   if (message.includes("exam_sets") || message.includes("exam_set_questions")) {
     return "Supabase exam_sets 테이블이 필요합니다. scripts/supabase-exam-sets.sql 을 실행해 주세요.";
   }
@@ -2793,12 +2784,7 @@ function cloneBoardStones(stones = []) {
 }
 
 function captureInitialBoardState(problem) {
-  const visibleStones = applyTargetMarkerVisibility(
-    problem?.stones ?? [],
-    problem,
-    BOARD_SIZE,
-  );
-  appState.initialBoardStones = cloneBoardStones(visibleStones);
+  appState.initialBoardStones = cloneBoardStones(problem?.stones ?? []);
   return appState.initialBoardStones;
 }
 

@@ -1,12 +1,7 @@
 /**
- * AI 백 응수 전술 스타일 — problem_goal에서 파생, category(분류)와 분리.
+ * AI 백 응수 전술 스타일 — category(분류)와 분리.
+ * 관리자에서 problem.ai_response_style 로 지정 (확장용).
  */
-
-import {
-  deriveAiResponseStyleFromGoal,
-  getWrongRevealStrategy,
-  resolveProblemGoal,
-} from "./problem-goal.js";
 
 export const AI_RESPONSE_STYLES = [
   "default",
@@ -52,22 +47,9 @@ export function isAiResponseStyle(value) {
   return AI_RESPONSE_STYLES.includes(value);
 }
 
-/** 오답 응수: 흑/백 타깃 포획·압박 우선 (target survival 미사용) */
+/** 오답 응수: 흑 포획 우선 (target white survival 미사용) */
 export function isCapturePriorityStyle(style) {
   return style === "capture" || style === "snapback";
-}
-
-/**
- * problem_goal 기준 오답 응수가 포획·압박 경로인지
- * @param {object} problem
- */
-export function isWrongRevealCaptureGoal(problem) {
-  const goal = resolveProblemGoal(problem);
-  if (goal) {
-    return getWrongRevealStrategy(goal) === "target_capture";
-  }
-  const style = resolveAiResponseStyle(problem, { skipGoal: true });
-  return isCapturePriorityStyle(style);
 }
 
 /** 오답 응수: target_white_group 생존 우선 */
@@ -77,17 +59,9 @@ export function isTargetSurvivalStyle(style) {
 
 /**
  * @param {object} problem
- * @param {{ skipGoal?: boolean }} [options]
  * @returns {AiResponseStyle}
  */
-export function resolveAiResponseStyle(problem, options = {}) {
-  if (!options.skipGoal) {
-    const goal = resolveProblemGoal(problem);
-    if (goal) {
-      return deriveAiResponseStyleFromGoal(goal, problem?.category);
-    }
-  }
-
+export function resolveAiResponseStyle(problem) {
   const explicit = normalizeStyleField(
     problem?.ai_response_style ??
       problem?.aiResponseStyle ??
