@@ -361,17 +361,104 @@ function getRegionMargin() {
   return DEFAULT_REGION_MARGIN;
 }
 
-function normalizeApiCandidates(data, boardSize) {
+function parseKatagoMove(move, boardSize) {
+  if (typeof move === "string") {
+    return parseGtpCoordinate(move, boardSize);
+  }
+  if (Number.isInteger(move?.x) && Number.isInteger(move?.y)) {
+    return { x: move.x, y: move.y };
+  }
+  return null;
+}
+
+function isSameBoardPoint(a, b) {
+  return Boolean(a && b && a.x === b.x && a.y === b.y);
+}
+
+function resolveKatagoCandidatePoint(entry, boardSize) {
+  const pointFromMove = entry?.move ? parseKatagoMove(entry.move, boardSize) : null;
+  const pointFromApi =
+    Number.isInteger(entry?.x) && Number.isInteger(entry?.y)
+      ? { x: entry.x, y: entry.y }
+      : null;
+  const coordMismatch = Boolean(
+    pointFromMove &&
+      pointFromApi &&
+      !isSameBoardPoint(pointFromMove, pointFromApi),
+  );
+  const point = pointFromMove ?? pointFromApi;
+
+  return {
+    point,
+    pointFromMove,
+    pointFromApi,
+    coordMismatch,
+  };
+}
+
+function auditKatagoCandidateCoords({
+  candidate,
+  boardSize,
+  katagoBoardXSize = null,
+  katagoBoardYSize = null,
+}) {
+  if (!candidate) {
+    return null;
+  }
+
+  const move = candidate.move ?? null;
+  const parsedCoords = move ? parseKatagoMove(move, boardSize) : null;
+  const parsedCoordsBoard19 = move ? parseKatagoMove(move, 19) : null;
+  const apiCoords =
+    Number.isInteger(candidate.x) && Number.isInteger(candidate.y)
+      ? { x: candidate.x, y: candidate.y }
+      : null;
+
+  return {
+    boardSize,
+    katagoBoardXSize,
+    katagoBoardYSize,
+    move,
+    parsedCoords,
+    parsedX: parsedCoords?.x ?? null,
+    parsedY: parsedCoords?.y ?? null,
+    parsedCoordsBoard19,
+    apiCoords,
+    coordsToMove: parsedCoords ? formatCoordLabel(parsedCoords) : null,
+    coordsToMoveFromApi: apiCoords ? formatCoordLabel(apiCoords) : null,
+    coordMismatch: Boolean(
+      parsedCoords &&
+        apiCoords &&
+        !isSameBoardPoint(parsedCoords, apiCoords),
+    ),
+  };
+}
+
+function normalizeApiCandidates(data, boardSize, katagoBoardXSize = null, katagoBoardYSize = null) {
   const fromApi = Array.isArray(data?.candidates) ? data.candidates : [];
+  const coordAudits = [];
   const normalized = fromApi
     .map((entry, index) => {
-      const point =
-        Number.isInteger(entry?.x) && Number.isInteger(entry?.y)
-          ? { x: entry.x, y: entry.y }
-          : parseKatagoMove(entry?.move, boardSize);
+      const resolved = resolveKatagoCandidatePoint(entry, boardSize);
+      const point = resolved.point;
 
       if (!point) {
         return null;
+      }
+
+      if (index < 5) {
+        coordAudits.push({
+          rank: index + 1,
+          ...auditKatagoCandidateCoords({
+            candidate: { move: entry.move, x: entry.x, y: entry.y },
+            boardSize,
+            katagoBoardXSize,
+            katagoBoardYSize,
+          }),
+          usedPoint: point,
+          usedCoordsToMove: formatCoordLabel(point),
+          coordMismatch: resolved.coordMismatch,
+        });
       }
 
       return {
@@ -383,18 +470,45 @@ function normalizeApiCandidates(data, boardSize) {
         winrate: entry.winrate ?? null,
         policyPrior: entry.policyPrior ?? entry.policy ?? null,
         fromPolicy: entry.fromPolicy === true,
+        apiCoords: resolved.pointFromApi,
+        coordMismatch: resolved.coordMismatch,
       };
     })
     .filter(Boolean);
 
   if (normalized.length > 0) {
+    console.warn("[KatagoRespond] katago candidate coord audit", {
+      clientBoardSize: boardSize,
+      katagoBoardXSize,
+      katagoBoardYSize,
+      topCandidate: coordAudits[0] ?? null,
+      top5: coordAudits,
+    });
     return normalized.sort((a, b) => a.order - b.order);
   }
 
-  const single = parseKatagoMove(data?.move, boardSize);
+  const singleResolved = resolveKatagoCandidatePoint(
+    { move: data?.move, x: data?.x, y: data?.y },
+    boardSize,
+  );
+  const single = singleResolved.point ?? parseKatagoMove(data?.move, boardSize);
   if (!single) {
     return [];
   }
+
+  console.warn("[KatagoRespond] katago candidate coord audit", {
+    clientBoardSize: boardSize,
+    katagoBoardXSize,
+    katagoBoardYSize,
+    topCandidate: auditKatagoCandidateCoords({
+      candidate: { move: data?.move, x: data?.x, y: data?.y },
+      boardSize,
+      katagoBoardXSize,
+      katagoBoardYSize,
+    }),
+    usedPoint: single,
+    usedCoordsToMove: formatCoordLabel(single),
+  });
 
   return [
     {
@@ -418,6 +532,8 @@ function buildTacticalSelection({
   problem,
   studentMoveResult,
   rawCandidates = [],
+  katagoBoardXSize = null,
+  katagoBoardYSize = null,
 }) {
   if (studentMoveResult === "wrong") {
     return selectWrongRevealKatagoFirstMove({
@@ -428,6 +544,8 @@ function buildTacticalSelection({
       stoneColors,
       lastBlackMove: lastMove,
       problem,
+      katagoBoardXSize,
+      katagoBoardYSize,
     });
   }
 
@@ -521,6 +639,8 @@ function finalizeKatagoSelection({
   katagoElapsedMs,
   maxVisits,
   maxTime,
+  katagoBoardXSize = null,
+  katagoBoardYSize = null,
 }) {
   const education = buildTacticalSelection({
     regionCandidates,
@@ -531,6 +651,8 @@ function finalizeKatagoSelection({
     problem,
     studentMoveResult,
     rawCandidates,
+    katagoBoardXSize,
+    katagoBoardYSize,
   });
 
   logKatagoCandidateSelectionBreakdown({
@@ -765,7 +887,14 @@ async function processKatagoRespondResponse({
     return { ok: false, invalidSource: true };
   }
 
-  const rawCandidates = normalizeApiCandidates(data, boardSize);
+  const rawCandidates = normalizeApiCandidates(
+    data,
+    boardSize,
+    data?.katagoBoardXSize ?? data?.boardSize ?? null,
+    data?.katagoBoardYSize ?? data?.boardSize ?? null,
+  );
+  const katagoBoardXSize = data?.katagoBoardXSize ?? data?.boardSize ?? null;
+  const katagoBoardYSize = data?.katagoBoardYSize ?? data?.boardSize ?? null;
   const totalCandidates = data?.totalCandidates ?? rawCandidates.length;
   const regionCandidates = filterCandidatesInRegion(
     rawCandidates,
@@ -801,6 +930,8 @@ async function processKatagoRespondResponse({
     katagoElapsedMs,
     maxVisits,
     maxTime,
+    katagoBoardXSize,
+    katagoBoardYSize,
   });
 
   return finalized ? { ok: true, result: finalized } : { ok: false, emptyRegion: true };
@@ -1061,8 +1192,9 @@ export async function requestKatagoRespond({
   };
 
   const requestStart = Date.now();
-  console.log("[KatagoRespond] requestStart", {
+  console.warn("[KatagoRespond] requestStart", {
     at: new Date(requestStart).toISOString(),
+    boardSize,
     studentMoveResult,
     maxVisits,
     maxTime,
@@ -1178,7 +1310,14 @@ export async function requestKatagoRespond({
       console.log("[KatagoRespond] server katagoElapsedMs", data.katagoElapsedMs);
     }
 
-    const rawCandidates = normalizeApiCandidates(data, boardSize);
+    const rawCandidates = normalizeApiCandidates(
+      data,
+      boardSize,
+      data?.katagoBoardXSize ?? data?.boardSize ?? null,
+      data?.katagoBoardYSize ?? data?.boardSize ?? null,
+    );
+    const katagoBoardXSize = data?.katagoBoardXSize ?? data?.boardSize ?? null;
+    const katagoBoardYSize = data?.katagoBoardYSize ?? data?.boardSize ?? null;
     const totalCandidates = data?.totalCandidates ?? rawCandidates.length;
     const regionCandidates = filterCandidatesInRegion(
       rawCandidates,
@@ -1235,6 +1374,8 @@ export async function requestKatagoRespond({
       katagoElapsedMs,
       maxVisits,
       maxTime,
+      katagoBoardXSize,
+      katagoBoardYSize,
     });
 
     if (finalized) {
@@ -1269,14 +1410,4 @@ export async function requestKatagoRespond({
       message: "AI 응수 서버 연결 필요",
     };
   }
-}
-
-function parseKatagoMove(move, boardSize) {
-  if (typeof move === "string") {
-    return parseGtpCoordinate(move, boardSize);
-  }
-  if (Number.isInteger(move?.x) && Number.isInteger(move?.y)) {
-    return { x: move.x, y: move.y };
-  }
-  return null;
 }

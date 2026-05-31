@@ -469,6 +469,9 @@ async function requestKatagoAnalysis(frontendPayload) {
 
   console.log("[katago-respond-core] POST", endpoint.toString());
   console.log("[katago-respond-core] upstream", {
+    boardSize,
+    boardXSize: katagoPayload.boardXSize,
+    boardYSize: katagoPayload.boardYSize,
     maxVisits: katagoPayload.maxVisits,
     maxTime: katagoPayload.overrideSettings?.maxTime,
     includePolicy: katagoPayload.includePolicy,
@@ -563,6 +566,9 @@ async function produceKatagoRespond(frontendPayload) {
     source: "katago",
     candidates,
     totalCandidates: candidates.length,
+    boardSize,
+    katagoBoardXSize: boardSize,
+    katagoBoardYSize: boardSize,
     requestStart: new Date(requestStart).toISOString(),
     katagoElapsedMs,
     totalElapsedMs,

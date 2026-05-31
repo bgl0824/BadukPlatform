@@ -109,6 +109,8 @@ for (const needle of [
   "selectWrongRevealKatagoFirstMove",
   "[KatagoRespond] katago candidate selection",
   'console.warn("[KatagoRespond] katago candidate selection"',
+  "resolveKatagoCandidatePoint",
+  "katago candidate coord audit",
   "replace window expired before KataGo finished",
 ]) {
   if (!katagoClient.includes(needle)) {
@@ -122,6 +124,8 @@ for (const needle of [
   "[KatagoRespond] wrong reveal katago-first selection",
   "[KatagoRespond] wrong reveal selection trace",
   "export function diagnoseWrongRevealCandidateScoreable",
+  "parsedX",
+  "coordMismatch",
   "formatScoreableCheckForLog",
   "logKatagoTopScoreableCheck",
   'console.warn("[KatagoRespond] katago top scoreable check"',
@@ -134,6 +138,7 @@ for (const needle of [
 for (const needle of [
   "const WRONG_REVEAL_MAX_VISITS = 24",
   "const WRONG_REVEAL_MAX_TIME = 0.45",
+  "katagoBoardXSize: boardSize",
 ]) {
   if (!katagoCore.includes(needle)) {
     throw new Error(`katago-respond-core.js missing ${needle}`);

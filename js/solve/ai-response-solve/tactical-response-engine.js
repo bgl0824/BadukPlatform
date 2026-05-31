@@ -18,6 +18,7 @@ import {
   resolveAiResponseStyle,
 } from "./tactical-response-styles.js";
 import { formatCoordLabel } from "./answer-sequence.js";
+import { parseGtpCoordinate } from "../ai-response-ux/coordinates.js";
 import {
   formatTargetWhiteGroupForLog,
   getTargetLibertyPoints,
@@ -1070,16 +1071,33 @@ export function diagnoseWrongRevealCandidateScoreable({
   boardSize,
   stoneColors,
   regionKeys = null,
+  katagoBoardXSize = null,
+  katagoBoardYSize = null,
 }) {
   if (!candidate) {
     return null;
   }
 
-  const point = {
-    x: candidate.x,
-    y: candidate.y,
-  };
-  const move = candidate.move ?? formatCoordLabel(point);
+  const move =
+    candidate.move ??
+    (Number.isInteger(candidate.x) && Number.isInteger(candidate.y)
+      ? formatCoordLabel({ x: candidate.x, y: candidate.y })
+      : null);
+  const parsedCoords = move ? parseGtpCoordinate(move, boardSize) : null;
+  const parsedCoordsBoard19 = move ? parseGtpCoordinate(move, 19) : null;
+  const apiCoords =
+    Number.isInteger(candidate.x) && Number.isInteger(candidate.y)
+      ? { x: candidate.x, y: candidate.y }
+      : null;
+  const point = parsedCoords ?? apiCoords ?? { x: candidate.x, y: candidate.y };
+  const coordsToMove = parsedCoords ? formatCoordLabel(parsedCoords) : null;
+  const coordsToMoveFromApi = apiCoords ? formatCoordLabel(apiCoords) : null;
+  const coordMismatch = Boolean(
+    parsedCoords &&
+      apiCoords &&
+      (parsedCoords.x !== apiCoords.x || parsedCoords.y !== apiCoords.y),
+  );
+
   const onBoard = isOnBoard(point, boardSize);
   const occupiedStone = onBoard ? getStoneAtPoint(stones, point) : null;
   const occupied = Boolean(occupiedStone);
@@ -1109,9 +1127,18 @@ export function diagnoseWrongRevealCandidateScoreable({
   }
 
   return {
+    boardSize,
+    katagoBoardXSize: katagoBoardXSize ?? null,
+    katagoBoardYSize: katagoBoardYSize ?? null,
     move,
-    x: point.x,
-    y: point.y,
+    parsedCoords,
+    parsedX: parsedCoords?.x ?? null,
+    parsedY: parsedCoords?.y ?? null,
+    parsedCoordsBoard19,
+    apiCoords,
+    coordsToMove,
+    coordsToMoveFromApi,
+    coordMismatch,
     legal,
     occupied,
     occupiedBy: occupiedStone?.color ?? null,
@@ -1132,7 +1159,16 @@ function formatScoreableCheckForLog(scoreableCheck) {
   }
 
   return {
+    boardSize: scoreableCheck.boardSize ?? null,
+    katagoBoardXSize: scoreableCheck.katagoBoardXSize ?? null,
+    katagoBoardYSize: scoreableCheck.katagoBoardYSize ?? null,
     move: scoreableCheck.move ?? null,
+    parsedCoords: scoreableCheck.parsedCoords ?? null,
+    parsedX: scoreableCheck.parsedX ?? null,
+    parsedY: scoreableCheck.parsedY ?? null,
+    coordsToMove: scoreableCheck.coordsToMove ?? null,
+    coordsToMoveFromApi: scoreableCheck.coordsToMoveFromApi ?? null,
+    coordMismatch: scoreableCheck.coordMismatch ?? false,
     legal: scoreableCheck.legal ?? false,
     occupied: scoreableCheck.occupied ?? false,
     occupiedBy: scoreableCheck.occupiedBy ?? null,
@@ -1323,6 +1359,8 @@ export function selectWrongRevealKatagoFirstMove({
   stoneColors,
   lastBlackMove,
   problem,
+  katagoBoardXSize = null,
+  katagoBoardYSize = null,
 }) {
   const style = resolveAiResponseStyle(problem);
   const targetContext = resolveTargetWhiteGroup(problem, stones, boardSize, stoneColors);
@@ -1343,6 +1381,8 @@ export function selectWrongRevealKatagoFirstMove({
           boardSize,
           stoneColors,
           regionKeys,
+          katagoBoardXSize,
+          katagoBoardYSize,
         })
       : null;
     const scoreableCheckLog = logKatagoTopScoreableCheck({
@@ -1415,6 +1455,8 @@ export function selectWrongRevealKatagoFirstMove({
       boardSize,
       stoneColors,
       regionKeys,
+      katagoBoardXSize,
+      katagoBoardYSize,
     });
   }
 
@@ -1425,6 +1467,8 @@ export function selectWrongRevealKatagoFirstMove({
         boardSize,
         stoneColors,
         regionKeys,
+        katagoBoardXSize,
+        katagoBoardYSize,
       })
     : null;
 
