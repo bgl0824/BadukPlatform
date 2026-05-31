@@ -67,6 +67,7 @@ import {
 import { formatCategoryProblemLabel } from "./services/category-problem-number.js";
 import { createProblemReorderController } from "./admin/problem-reorder-manager.js";
 import { createGradeAssignmentManager } from "./admin/grade-assignment-manager.js";
+import { createAiResponseQaBatchController } from "./admin/ai-response-qa-batch-controller.js";
 import { createExamSetManager } from "./admin/exam-set-manager.js";
 import { createExamCatalogController } from "./controllers/exam-catalog-controller.js";
 import { examSetService } from "./services/exam-set-service.js";
@@ -590,6 +591,22 @@ const {
 });
 adminEditorActions = { renderAdminEditor, closeAdminEditor };
 
+const {
+  bindAiResponseQaBatchEvents,
+  updateAiResponseQaBatchUi,
+} = createAiResponseQaBatchController({
+  elements,
+  adminState,
+  appState,
+  problems,
+  boardSize: BOARD_SIZE,
+  stoneColors: STONE,
+  getActiveLevelGroup,
+  requireAdminMode: requireAdminModeForGrades,
+  setFeedback,
+  escapeHtml,
+});
+
 const platformAdminView = createPlatformAdminView({
   elements,
   escapeHtml,
@@ -820,6 +837,7 @@ function runApplicationBootstrap() {
     boot.run("bindAdminEvents", () => bindAdminEvents());
     boot.run("bindProblemReorderEvents", () => problemReorder.bindProblemReorderEvents());
     boot.run("bindGradeAssignmentEvents", () => bindGradeAssignmentEvents());
+    boot.run("bindAiResponseQaBatchEvents", () => bindAiResponseQaBatchEvents());
     boot.run("bindExamSetEvents", () => bindExamSetEvents());
     boot.run("bindExamSetCardEvents", () => bindExamSetCardEvents());
     boot.run("bindExamCatalogEvents", () => examCatalog.bindExamCatalogEvents());
@@ -1036,6 +1054,7 @@ function syncProblemLibraryChrome() {
   updatePrintUiVisibility();
   updateAdminVisibility();
   updateAdminProblemListControlsVisibility();
+  updateAiResponseQaBatchUi?.();
   if (adminState.listPanel === "grades") {
     renderGradeAssignmentPanel();
   }
@@ -2036,6 +2055,7 @@ function renderProblemList() {
 
   updatePrintUiVisibility();
   updateAdminProblemListControlsVisibility();
+  updateAiResponseQaBatchUi?.();
   updateProblemSortModeUi?.();
   elements.problemListScreen?.classList.toggle("is-grade-assignment-mode", gradeMode);
   elements.problemListScreen?.classList.toggle("is-exam-set-picker-mode", examSetMode);

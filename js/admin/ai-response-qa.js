@@ -21,18 +21,96 @@ import {
 } from "../solve/ai-response-solve/problem-region.js";
 import { resolveWhiteResponse } from "../solve/ai-response-solve/resolve-white-response.js";
 import {
+  buildWrongRevealResolveContext,
+  logQaWrongRevealParity,
+  rememberQaParitySample,
+} from "./ai-response-qa-parity.js";
+import {
+  getTargetLibertyPoints,
   isMoveAdjacentToTargetGroup,
   isMoveOnTargetAtariLiberty,
-  getTargetLibertyPoints,
+  measureTargetGroupAfterMove,
   resolveTargetWhiteGroup,
   syncTargetWhiteGroupOnProblem,
 } from "../solve/ai-response-solve/target-white-group.js";
 import { TACTICAL_FALLBACK_SOURCE } from "../solve/ai-response-solve/wrong-response-fallback.js";
+import { buildQaBoardPreviewDataUrl } from "./ai-response-qa-board-preview.js";
+import {
+  formatAiResponseStyleLabel,
+  formatResponseTypeLabel,
+  formatSelectedReasonLabel,
+} from "./ai-response-qa-labels.js";
+import { resolveAiResponseStyle } from "../solve/ai-response-solve/tactical-response-styles.js";
+import {
+  evaluateResponseQuality,
+} from "./ai-response-qa-quality.js";
+import {
+  bindQaManualMarkEvents,
+  buildQaCaseKey,
+  filterCasesByManualMark,
+  isCaseManuallyMarked,
+  renderQaInspectionCaseCard,
+} from "./ai-response-qa-inspection.js";
 
 const QA_ANSWER_MOVE_COUNTS = [3, 5, 7];
 const MIN_WRONG_CANDIDATES = 5;
 const MAX_WRONG_CANDIDATES = 15;
 const QA_LOG_PREFIX = "[AI_QA]";
+
+const manualMarksByScope = new Map();
+
+function getScopeManualMarks(scopeId) {
+  const key = String(scopeId ?? "single");
+  if (!manualMarksByScope.has(key)) {
+    manualMarksByScope.set(key, new Set());
+  }
+  return manualMarksByScope.get(key);
+}
+
+function countManualMarksForCases(manualMarks, cases) {
+  return cases.filter((row) => isCaseManuallyMarked(manualMarks, row.caseKey)).length;
+}
+
+/** QA 전용 — target-white-group.js 비 export helper */
+function getGroupLibertyKeysForQa(stones, group, boardSize) {
+  const liberties = new Set();
+  group.forEach((stone) => {
+    getNeighborPoints(stone, boardSize).forEach((neighbor) => {
+      if (!getStoneAtPoint(stones, neighbor)) {
+        liberties.add(pointKey(neighbor));
+      }
+    });
+  });
+  return liberties;
+}
+
+function findSelectedMoveLibertySource(point, targetContext, stones, boardSize) {
+  if (!point || !targetContext?.groups?.length) {
+    return null;
+  }
+
+  const moveKey = pointKey(point);
+
+  for (let index = 0; index < targetContext.groups.length; index += 1) {
+    const group = targetContext.groups[index];
+    const libertyKeys = getGroupLibertyKeysForQa(stones, group, boardSize);
+    if (!libertyKeys.has(moveKey)) {
+      continue;
+    }
+
+    return {
+      groupIndex: index,
+      groupLibertyCount: libertyKeys.size,
+      isSoleLiberty: libertyKeys.size === 1,
+      matchedAs: libertyKeys.size === 1 ? "sole_liberty_of_group" : "one_of_liberties",
+    };
+  }
+
+  return {
+    groupIndex: null,
+    matchedAs: "not_on_any_target_group_liberty",
+  };
+}
 
 const REVIEW_ISSUE_LABELS = {
   no_response: "AI 응수 없음",
@@ -43,6 +121,13 @@ const REVIEW_ISSUE_LABELS = {
   used_fallback: "fallback 사용",
   author_white_match: "정답 수순 백 수와 동일",
 };
+
+function attachCaseKeys(results, problemId) {
+  return results.map((row) => ({
+    ...row,
+    caseKey: buildQaCaseKey(problemId, row),
+  }));
+}
 
 /**
  * @param {object} problem
@@ -92,7 +177,7 @@ export function validateAiResponseQaProblem(problem, boardSize) {
 
 function getQaTimeoutMs() {
   const replaceMs = Number(window.BadukConfig?.katagoWrongReplaceMs);
-  const base = Number.isFinite(replaceMs) && replaceMs > 0 ? replaceMs : 700;
+  const base = Number.isFinite(replaceMs) && replaceMs > 0 ? replaceMs : 1100;
   return Math.max(5000, base * 4);
 }
 
@@ -116,6 +201,128 @@ function isLegalEmptyPoint(stones, point, color, boardSize, stoneColors) {
   const move = { x: point.x, y: point.y, color };
   const evaluation = evaluatePlacement(stones, move, { boardSize, stoneColors });
   return evaluation.status === PLACEMENT_STATUS.legal;
+}
+
+function applyWhiteMove(stones, point, boardSize, stoneColors) {
+  const move = { x: point.x, y: point.y, color: stoneColors.white };
+  const evaluation = evaluatePlacement(stones, move, { boardSize, stoneColors });
+  if (evaluation.status !== PLACEMENT_STATUS.legal) {
+    return null;
+  }
+  const afterCapture = removeCapturedStonesAfterMove([...stones, move], move, {
+    boardSize,
+    stoneColors,
+  });
+  return {
+    stones: afterCapture.stones,
+    move,
+    capturedCount: afterCapture.capturedCount ?? 0,
+  };
+}
+
+function buildTargetLibertyDiagnostics({
+  problem,
+  stonesBeforeWhite,
+  stonesAfterWhite,
+  whitePoint,
+  boardSize,
+  stoneColors,
+}) {
+  const targetBefore = resolveTargetWhiteGroup(
+    problem,
+    stonesBeforeWhite,
+    boardSize,
+    stoneColors,
+  );
+
+  if (!targetBefore) {
+    return {
+      hasTarget: false,
+      targetSummary: "△/DB 타깃 없음",
+      libertiesBefore: null,
+      libertiesAfter: null,
+      libertyGain: null,
+      libertiesBeforeLabel: "—",
+      libertiesAfterLabel: "—",
+      libertyChangeLabel: "—",
+      selectedOnTargetLiberty: null,
+    };
+  }
+
+  const libertiesBeforeList = getTargetLibertyPoints(
+    targetBefore,
+    stonesBeforeWhite,
+    boardSize,
+  ).map(formatCoordLabel);
+  const metrics = whitePoint
+    ? measureTargetGroupAfterMove(
+        problem,
+        stonesAfterWhite,
+        boardSize,
+        stoneColors,
+        targetBefore,
+      )
+    : null;
+
+  const targetAfter = resolveTargetWhiteGroup(
+    problem,
+    stonesAfterWhite,
+    boardSize,
+    stoneColors,
+  );
+  const libertiesAfterList = targetAfter
+    ? getTargetLibertyPoints(targetAfter, stonesAfterWhite, boardSize).map(formatCoordLabel)
+    : [];
+
+  const libertiesBefore = targetBefore.minLiberties;
+  const libertiesAfter = targetAfter?.minLiberties ?? null;
+  const libertyGain = metrics?.libertyGain ?? (libertiesAfter != null ? libertiesAfter - libertiesBefore : null);
+
+  const selectedOnTargetLiberty = whitePoint
+    ? findSelectedMoveLibertySource(
+        whitePoint,
+        targetBefore,
+        stonesBeforeWhite,
+        boardSize,
+      )
+    : null;
+
+  let libertyChangeLabel = "—";
+  if (libertyGain != null) {
+    const sign = libertyGain > 0 ? "+" : "";
+    libertyChangeLabel = `${libertiesBefore} → ${libertiesAfter ?? "?"} (${sign}${libertyGain})`;
+  } else if (libertiesBefore != null) {
+    libertyChangeLabel = `${libertiesBefore} (백 응수 없음)`;
+  }
+
+  return {
+    hasTarget: true,
+    targetSummary: `최소 활로 ${libertiesBefore}${targetBefore.minLiberties <= 1 ? " (단수)" : ""}`,
+    libertiesBefore,
+    libertiesAfter,
+    libertyGain,
+    libertiesBeforeLabel: libertiesBeforeList.join(", ") || "—",
+    libertiesAfterLabel: libertiesAfterList.join(", ") || "—",
+    libertyChangeLabel,
+    selectedOnTargetLiberty,
+    selectedOnTargetLibertyLabel: selectedOnTargetLiberty?.matchedAs ?? null,
+  };
+}
+
+function buildFailedQualityRow(issueKey, issueLabel, verdict = "review") {
+  return {
+    verdict,
+    qualityScore: 0,
+    qualityGoal: "target_survival",
+    positiveFactors: [],
+    positiveLabels: [],
+    negativeFactors: [issueKey],
+    problemReasons: [issueLabel],
+    negativeLabels: [issueLabel],
+    status: "fail",
+    issues: [issueKey],
+    issueLabels: [issueLabel],
+  };
 }
 
 function applyBlackMove(stones, point, boardSize, stoneColors) {
@@ -161,6 +368,8 @@ function buildBoardBeforeBlackPly(problem, blackPlyIndex, boardSize, stoneColors
     stones: simulation.stones,
     playedMoves: simulation.history.map((entry) => entry.move),
     currentPly: prefixLength + 1,
+    currentPlyAfterBlack: prefixLength + 2,
+    blackAnswerIndex: blackPlyIndex,
     expectedBlack,
     authorWhite,
     blackPlyIndex,
@@ -387,6 +596,10 @@ function classifyQaResponse({
   };
 }
 
+function isSuspiciousQaRow(row) {
+  return row?.verdict === "review" || row?.verdict === "problem";
+}
+
 function logQaCase({
   problem,
   caseInfo,
@@ -394,19 +607,40 @@ function logQaCase({
   response,
   responseTimeMs,
   classification,
+  targetDiagnostics,
+  quality,
+  parityContext,
 }) {
   console.log(QA_LOG_PREFIX, {
     problemId: problem?.id ?? null,
     blackPly: caseInfo.scenario.blackPlyLabel,
+    blackAnswerIndex: parityContext?.blackAnswerIndex ?? caseInfo.scenario.blackAnswerIndex,
+    currentPlyBeforeBlack: parityContext?.currentPlyBeforeBlack ?? caseInfo.scenario.currentPly,
+    currentPly: parityContext?.currentPly ?? null,
     candidateMove: wrongLabel,
     candidateTag: caseInfo.candidateTag,
     selectedMove: response?.move ?? (response?.point ? formatCoordLabel(response.point) : null),
     selectedReason: response?.selectedReason ?? null,
+    selectedReasonLabel: formatSelectedReasonLabel(response?.selectedReason),
+    responseType: response ? formatResponseTypeLabel(response, problem) : null,
+    aiResponseStyle: response?.aiResponseStyle ?? resolveAiResponseStyle(problem),
+    stonesBeforeCount: parityContext?.stonesBeforeCount ?? null,
+    stonesAfterCount: parityContext?.stonesAfterCount ?? null,
+    allowedRegion: parityContext?.allowedRegion ?? null,
+    targetLibertyChange: targetDiagnostics?.libertyChangeLabel ?? null,
+    targetLibertiesBefore: targetDiagnostics?.libertiesBeforeLabel ?? null,
+    targetLibertiesAfter: targetDiagnostics?.libertiesAfterLabel ?? null,
+    libertyGain: targetDiagnostics?.libertyGain ?? null,
+    qualityScore: quality?.score ?? null,
+    verdict: quality?.verdict ?? null,
+    problemReasons: quality?.problemReasons ?? [],
+    positiveLabels: quality?.positiveLabels ?? [],
     source: response?.source ?? null,
     responseTimeMs,
     usedFallback: Boolean(response?.usedLocalFallback),
     status: classification.status,
     issues: classification.issues,
+    parityNote: "실제 풀이와 비교: 콘솔 [AI_RESPONSE_PARITY] play vs [AI_QA_PARITY] qa",
   });
 }
 
@@ -421,9 +655,7 @@ async function runSingleQaCase({ problem, caseInfo, boardSize, stoneColors }) {
   const applied = applyBlackMove(scenario.stones, wrongPoint, boardSize, stoneColors);
   if (!applied) {
     return {
-      status: "fail",
-      issues: ["illegal_wrong_black"],
-      issueLabels: ["흑 오답 불법"],
+      ...buildFailedQualityRow("illegal_wrong_black", "흑 오답 불법"),
       candidateMove: wrongLabel,
       candidateTag: caseInfo.candidateTag,
       blackPly: scenario.blackPlyLabel,
@@ -432,33 +664,32 @@ async function runSingleQaCase({ problem, caseInfo, boardSize, stoneColors }) {
       responseTimeMs: Date.now() - startMs,
       usedFallback: false,
       source: null,
+      targetDiagnostics: { hasTarget: false, targetSummary: "—" },
+      previewDataUrl: null,
     };
   }
 
   const stonesAfterWrong = applied.stones;
-  const playedMoves = [
-    ...scenario.playedMoves,
-    { x: wrongPoint.x, y: wrongPoint.y, color: stoneColors.black },
-  ];
+  const parityContext = buildWrongRevealResolveContext({
+    problem,
+    scenario,
+    wrongPoint,
+    applied,
+    boardSize,
+    stoneColors,
+    initialStones: problem?.stones ?? [],
+  });
+
+  logQaWrongRevealParity("before-resolve", parityContext);
 
   let response = null;
   try {
-    response = await resolveWhiteResponse({
-      problem,
-      boardSize,
-      stones: stonesAfterWrong,
-      playedMoves,
-      initialStones: problem?.stones ?? [],
-      lastBlackMove: { x: wrongPoint.x, y: wrongPoint.y, color: stoneColors.black },
-      stoneColors,
-      studentMoveResult: "wrong",
-      currentPly: scenario.currentPly,
-    });
+    response = await resolveWhiteResponse(parityContext.resolveWhiteResponseParams);
+    logQaWrongRevealParity("after-resolve", parityContext, response);
+    rememberQaParitySample(parityContext, response);
   } catch (error) {
     return {
-      status: "fail",
-      issues: ["exception"],
-      issueLabels: [String(error?.message ?? "exception")],
+      ...buildFailedQualityRow("exception", String(error?.message ?? "exception")),
       candidateMove: wrongLabel,
       candidateTag: caseInfo.candidateTag,
       blackPly: scenario.blackPlyLabel,
@@ -467,6 +698,8 @@ async function runSingleQaCase({ problem, caseInfo, boardSize, stoneColors }) {
       responseTimeMs: Date.now() - startMs,
       usedFallback: false,
       source: null,
+      targetDiagnostics: { hasTarget: false, targetSummary: "—" },
+      previewDataUrl: null,
     };
   }
 
@@ -482,6 +715,45 @@ async function runSingleQaCase({ problem, caseInfo, boardSize, stoneColors }) {
     stoneColors,
   });
 
+  const selectedReason = response?.selectedReason ?? null;
+  let stonesAfterWhite = stonesAfterWrong;
+  let whitePoint = null;
+  let whiteApplied = null;
+  if (response?.point) {
+    whitePoint = response.point;
+    whiteApplied = applyWhiteMove(
+      stonesAfterWrong,
+      response.point,
+      boardSize,
+      stoneColors,
+    );
+    if (whiteApplied) {
+      stonesAfterWhite = whiteApplied.stones;
+    }
+  }
+
+  const targetDiagnostics = buildTargetLibertyDiagnostics({
+    problem,
+    stonesBeforeWhite: stonesAfterWrong,
+    stonesAfterWhite,
+    whitePoint,
+    boardSize,
+    stoneColors,
+  });
+
+  const quality = evaluateResponseQuality({
+    problem,
+    response,
+    selectedReason,
+    targetDiagnostics,
+    classification,
+    stonesBeforeWhite: stonesAfterWrong,
+    stonesAfterWhite,
+    whiteApplied,
+    boardSize,
+    stoneColors,
+  });
+
   logQaCase({
     problem,
     caseInfo,
@@ -489,31 +761,58 @@ async function runSingleQaCase({ problem, caseInfo, boardSize, stoneColors }) {
     response,
     responseTimeMs,
     classification,
+    targetDiagnostics,
+    quality,
+    parityContext,
+  });
+
+  const previewDataUrl = buildQaBoardPreviewDataUrl({
+    stones: stonesAfterWhite,
+    boardSize,
+    wrongPoint,
+    whitePoint,
   });
 
   return {
-    ...classification,
+    verdict: quality.verdict,
+    qualityScore: quality.score,
+    qualityGoal: quality.goal,
+    positiveFactors: quality.positives,
+    positiveLabels: quality.positiveLabels,
+    negativeFactors: quality.negatives,
+    problemReasons: quality.problemReasons,
+    negativeLabels: quality.negativeLabels,
+    status: classification.status,
+    issues: classification.issues,
+    issueLabels: classification.issueLabels,
     candidateMove: wrongLabel,
     candidateTag: caseInfo.candidateTag,
     blackPly: scenario.blackPlyLabel,
     selectedMove:
       response?.move ?? (response?.point ? formatCoordLabel(response.point) : null),
-    selectedReason: response?.selectedReason ?? null,
+    selectedReason,
+    selectedReasonLabel: formatSelectedReasonLabel(selectedReason),
+    responseType: response ? formatResponseTypeLabel(response, problem) : "—",
+    aiResponseStyleLabel: response
+      ? formatAiResponseStyleLabel(response, problem)
+      : formatAiResponseStyleLabel({}, problem),
+    targetDiagnostics,
     responseTimeMs,
     usedFallback: Boolean(response?.usedLocalFallback),
     source: response?.source ?? null,
+    previewDataUrl,
   };
 }
 
 function summarizeQaResults(results) {
-  const summary = { normal: 0, review: 0, fail: 0, total: results.length };
+  const summary = { good: 0, review: 0, problem: 0, total: results.length };
   for (const row of results) {
-    if (row.status === "normal") {
-      summary.normal += 1;
-    } else if (row.status === "review") {
+    if (row.verdict === "good") {
+      summary.good += 1;
+    } else if (row.verdict === "review") {
       summary.review += 1;
     } else {
-      summary.fail += 1;
+      summary.problem += 1;
     }
   }
   return summary;
@@ -541,20 +840,24 @@ export async function runAiResponseQa({ problem, boardSize, stoneColors }) {
 
   const results = [];
   for (const caseInfo of cases) {
-    results.push(
-      await runSingleQaCase({
-        problem: qaProblem,
-        caseInfo,
-        boardSize,
-        stoneColors,
-      }),
-    );
+    const row = await runSingleQaCase({
+      problem: qaProblem,
+      caseInfo,
+      boardSize,
+      stoneColors,
+    });
+    row.suspicious = isSuspiciousQaRow(row);
+    results.push(row);
   }
+
+  const summary = summarizeQaResults(results);
+  const problemId = qaProblem?.id ?? qaProblem?.title ?? "draft";
 
   return {
     ok: true,
-    results,
-    summary: summarizeQaResults(results),
+    problemId,
+    results: attachCaseKeys(results, problemId),
+    summary,
     caseCount: cases.length,
     answerMoveCount: validation.answerMoveCount,
   };
@@ -563,57 +866,107 @@ export async function runAiResponseQa({ problem, boardSize, stoneColors }) {
 /**
  * @param {object} report
  * @param {(value: string) => string} escapeHtml
+ * @param {{ showMode?: 'all'|'marked', scopeId?: string, manualMarks?: Set<string> }} [options]
  */
-export function renderAiResponseQaReportHtml(report, escapeHtml) {
+export function renderAiResponseQaReportHtml(
+  report,
+  escapeHtml,
+  { showMode = "all", scopeId = null, manualMarks = null } = {},
+) {
   if (!report.ok) {
     return `<p class="admin-ai-response-qa-error">${escapeHtml(report.error ?? "점검 실패")}</p>`;
   }
 
-  const rows = report.results
-    .map((row) => {
-      const statusClass = `qa-status-${row.status}`;
-      const statusLabel =
-        row.status === "normal"
-          ? "정상"
-          : row.status === "review"
-            ? "확인 필요"
-            : "실패";
-      const detail =
-        row.status === "normal"
-          ? "정상"
-          : row.issueLabels?.join(", ") || statusLabel;
-      const selected = row.selectedMove ?? "—";
-      return `<tr class="${statusClass}">
-        <td>${escapeHtml(String(row.blackPly))}흑</td>
-        <td>${escapeHtml(row.candidateMove)}</td>
-        <td>${escapeHtml(selected)}</td>
-        <td>${escapeHtml(detail)}</td>
-        <td>${escapeHtml(String(row.responseTimeMs ?? "—"))}ms</td>
-      </tr>`;
-    })
+  const resolvedScopeId = scopeId ?? report.problemId ?? "single";
+  const marks = manualMarks ?? getScopeManualMarks(resolvedScopeId);
+  const allResults = report.results ?? [];
+  const visibleResults = filterCasesByManualMark(allResults, marks, showMode);
+  const markedCount = countManualMarksForCases(marks, allResults);
+
+  const rows = visibleResults
+    .map((row) =>
+      renderQaInspectionCaseCard({
+        row,
+        caseKey: row.caseKey,
+        manualMarked: isCaseManuallyMarked(marks, row.caseKey),
+        escapeHtml,
+      }),
+    )
     .join("");
 
-  const { summary, caseCount, answerMoveCount } = report;
+  const { caseCount, answerMoveCount } = report;
+  const emptyMessage =
+    visibleResults.length === 0
+      ? `<p class="admin-field-hint">${showMode === "marked" ? "수동 표시된 케이스 없음" : "표시할 케이스 없음"} — 전체 ${allResults.length}건</p>`
+      : "";
 
   return `
     <div class="admin-ai-response-qa-panel">
-      <p class="panel-label">오답 후보 AI 응수 결과 (${answerMoveCount}수 · ${caseCount}건)</p>
-      <table class="admin-ai-response-qa-table">
-        <thead>
-          <tr>
-            <th>흑 착</th>
-            <th>오답 후보</th>
-            <th>AI 응수</th>
-            <th>판정</th>
-            <th>응답</th>
-          </tr>
-        </thead>
-        <tbody>${rows}</tbody>
-      </table>
+      <div class="admin-ai-response-qa-toolbar">
+        <p class="panel-label">AI 응수 미리보기 (${answerMoveCount}수 · ${caseCount}건)</p>
+        <label class="admin-ai-response-qa-filter">
+          표시:
+          <select data-qa-show-mode>
+            <option value="all"${showMode === "all" ? " selected" : ""}>전체 (${allResults.length})</option>
+            <option value="marked"${showMode === "marked" ? " selected" : ""}>수동 표시 (${markedCount})</option>
+          </select>
+        </label>
+      </div>
       <p class="admin-ai-response-qa-summary">
-        요약: 정상 ${summary.normal} · 확인 필요 ${summary.review} · 실패 ${summary.fail}
+        응수 케이스 ${allResults.length}건 · 수동 표시 ${markedCount}건
+        <span class="admin-field-hint">자동 판정은 각 카드 「참고」에만 표시됩니다.</span>
       </p>
-      <p class="admin-field-hint">DB/저장 변경 없음 · 콘솔 <code>${QA_LOG_PREFIX}</code> 로그 참고</p>
+      ${emptyMessage}
+      <div class="admin-ai-response-qa-inspection-cards">${rows}</div>
+      <p class="admin-field-hint">빨간 링=흑 오답 · 파란 링=백 응수 · DB/저장 변경 없음 · 콘솔 <code>${QA_LOG_PREFIX}</code></p>
     </div>
   `;
+}
+
+/**
+ * @param {HTMLElement} container
+ * @param {object} report
+ * @param {(value: string) => string} escapeHtml
+ * @param {{ showMode?: 'all'|'marked', scopeId?: string }} [options]
+ */
+export function bindAiResponseQaReport(container, report, escapeHtml, options = {}) {
+  if (!container || !report?.ok) {
+    return;
+  }
+
+  const scopeId = options.scopeId ?? report.problemId ?? "single";
+  const manualMarks = getScopeManualMarks(scopeId);
+  let showMode = options.showMode ?? "all";
+
+  const rerender = () => {
+    showMode = container.__qaShowMode ?? showMode;
+    container.innerHTML = renderAiResponseQaReportHtml(report, escapeHtml, {
+      showMode,
+      scopeId,
+      manualMarks,
+    });
+    bindAiResponseQaReport(container, report, escapeHtml, { showMode, scopeId });
+  };
+
+  container.__qaShowMode = showMode;
+
+  bindQaManualMarkEvents(container, {
+    manualMarks,
+    rerender,
+  });
+
+  container.__qaShowMode = showMode;
+  container.__qaSingleRerender = rerender;
+
+  if (!container.__qaShowModeBound) {
+    container.__qaShowModeBound = true;
+    container.addEventListener("change", (event) => {
+      const select = event.target.closest("[data-qa-show-mode]");
+      if (!select || !container.contains(select)) {
+        return;
+      }
+      container.__qaShowMode = select.value === "marked" ? "marked" : "all";
+      container.__qaSingleRerender?.();
+    });
+  }
 }

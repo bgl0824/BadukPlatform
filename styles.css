@@ -4731,6 +4731,365 @@ h2 {
   color: var(--error);
 }
 
+.admin-ai-response-qa-toolbar {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px 16px;
+  margin-bottom: 8px;
+}
+
+.admin-ai-response-qa-filter {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  font-size: 13px;
+  font-weight: 600;
+}
+
+.admin-ai-response-qa-cards {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  margin-top: 10px;
+}
+
+.admin-ai-response-qa-card {
+  display: grid;
+  grid-template-columns: 140px 1fr;
+  gap: 12px;
+  padding: 10px;
+  border: 1px solid rgba(0, 0, 0, 0.1);
+  border-radius: 10px;
+  background: #fff;
+}
+
+.admin-ai-response-qa-card.is-suspicious,
+.admin-ai-response-qa-card.is-problem {
+  border-color: rgba(185, 74, 72, 0.45);
+  background: #fff8f7;
+}
+
+.admin-ai-response-qa-card.qa-verdict-problem {
+  border-color: rgba(185, 74, 72, 0.35);
+  background: #fff8f7;
+}
+
+.admin-ai-response-qa-card.qa-verdict-review {
+  border-color: rgba(184, 134, 11, 0.45);
+  background: #fffdf5;
+}
+
+.admin-ai-response-qa-card-preview {
+  display: flex;
+  align-items: flex-start;
+  justify-content: center;
+}
+
+.admin-ai-response-qa-thumb {
+  border-radius: 6px;
+  border: 1px solid rgba(0, 0, 0, 0.12);
+  display: block;
+}
+
+.admin-ai-response-qa-thumb--empty {
+  width: 132px;
+  height: 132px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  font-size: 12px;
+  color: #666;
+  background: #eee;
+  border-radius: 6px;
+}
+
+.admin-ai-response-qa-card-head {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 8px;
+  margin-bottom: 6px;
+}
+
+.admin-ai-response-qa-badge {
+  font-size: 11px;
+  font-weight: 800;
+  padding: 2px 8px;
+  border-radius: 999px;
+  background: #eee;
+}
+
+.admin-ai-response-qa-badge.qa-status-normal {
+  background: #e8f5ee;
+  color: #2d6a4f;
+}
+
+.admin-ai-response-qa-badge.qa-status-review {
+  background: #fff3cd;
+  color: #856404;
+}
+
+.admin-ai-response-qa-badge.qa-status-fail,
+.admin-ai-response-qa-badge.qa-verdict-problem {
+  background: #fdecea;
+  color: var(--error);
+}
+
+.admin-ai-response-qa-badge.qa-verdict-good {
+  background: #e8f5ee;
+  color: #2d6a4f;
+}
+
+.admin-ai-response-qa-badge.qa-verdict-review {
+  background: #fff3cd;
+  color: #856404;
+}
+
+.admin-ai-response-qa-score {
+  font-size: 12px;
+  font-weight: 800;
+  color: #444;
+  margin-left: auto;
+}
+
+.admin-ai-response-qa-move-line {
+  margin: 0 0 8px;
+  font-size: 14px;
+}
+
+.admin-ai-response-qa-meta {
+  margin-left: 8px;
+  font-size: 12px;
+  color: #666;
+}
+
+.admin-ai-response-qa-reason-grid {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 6px 12px;
+  margin: 0 0 8px;
+  font-size: 12px;
+}
+
+.admin-ai-response-qa-reason-grid dt {
+  font-weight: 700;
+  color: #555;
+}
+
+.admin-ai-response-qa-reason-grid dd {
+  margin: 0;
+}
+
+.admin-ai-response-qa-target-list {
+  margin: 0 0 8px;
+  padding-left: 18px;
+  font-size: 12px;
+}
+
+.admin-ai-response-qa-issues {
+  margin: 0;
+  font-size: 12px;
+  color: #555;
+}
+
+.admin-ai-response-qa-problem-block {
+  margin-top: 4px;
+}
+
+.admin-ai-response-qa-problem-title {
+  margin: 0 0 4px;
+  font-size: 12px;
+  font-weight: 800;
+  color: var(--error);
+}
+
+.admin-ai-response-qa-problem-list {
+  margin: 0;
+  padding-left: 18px;
+  font-size: 12px;
+  color: #8b2e2a;
+}
+
+.admin-ai-response-qa-positive-list {
+  margin: 0 0 8px;
+  padding-left: 18px;
+  font-size: 12px;
+  color: #2d6a4f;
+}
+
+.admin-ai-response-qa-filter select {
+  font-size: 13px;
+  padding: 2px 6px;
+  border-radius: 6px;
+  border: 1px solid rgba(0, 0, 0, 0.15);
+}
+
+.admin-ai-response-qa-batch-button {
+  white-space: nowrap;
+}
+
+.admin-ai-response-qa-batch-result {
+  margin-top: 12px;
+}
+
+.admin-ai-response-qa-batch-panel {
+  margin-top: 8px;
+  padding: 12px;
+  border: 1px solid rgba(0, 0, 0, 0.08);
+  border-radius: 10px;
+  background: #fafafa;
+}
+
+.admin-ai-response-qa-batch-progress {
+  margin: 0 0 6px;
+  font-weight: 700;
+}
+
+.admin-ai-response-qa-batch-head {
+  margin-bottom: 10px;
+}
+
+.admin-ai-response-qa-batch-section {
+  margin-top: 14px;
+}
+
+.admin-ai-response-qa-batch-section-title {
+  margin: 0 0 8px;
+  font-size: 14px;
+  font-weight: 800;
+}
+
+.admin-ai-response-qa-batch-items {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.admin-ai-response-qa-batch-item {
+  padding: 10px 12px;
+  border: 1px solid rgba(0, 0, 0, 0.1);
+  border-radius: 10px;
+  background: #fff;
+}
+
+.admin-ai-response-qa-batch-item.qa-verdict-problem {
+  border-color: rgba(185, 74, 72, 0.35);
+  background: #fff8f7;
+}
+
+.admin-ai-response-qa-batch-item.qa-verdict-review {
+  border-color: rgba(184, 134, 11, 0.35);
+  background: #fffdf5;
+}
+
+.admin-ai-response-qa-batch-item-head {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 8px;
+  margin-bottom: 6px;
+}
+
+.admin-ai-response-qa-inspection-cards {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  margin-top: 10px;
+}
+
+.admin-ai-response-qa-inspection-card {
+  padding: 10px 12px;
+  border: 1px solid rgba(0, 0, 0, 0.1);
+  border-radius: 10px;
+  background: #fff;
+}
+
+.admin-ai-response-qa-inspection-card.is-manually-marked {
+  border-color: rgba(185, 74, 72, 0.45);
+  background: #fff8f7;
+}
+
+.admin-ai-response-qa-manual-mark {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  font-size: 13px;
+  font-weight: 700;
+  margin-bottom: 8px;
+  cursor: pointer;
+}
+
+.admin-ai-response-qa-inspection-body {
+  display: grid;
+  grid-template-columns: 128px 1fr;
+  gap: 12px;
+}
+
+.admin-ai-response-qa-inspection-line {
+  margin: 0 0 6px;
+  font-size: 13px;
+}
+
+.admin-ai-response-qa-inspection-line span:first-child {
+  display: inline-block;
+  min-width: 96px;
+  font-weight: 700;
+  color: #555;
+}
+
+.admin-ai-response-qa-reference {
+  margin-top: 8px;
+  font-size: 12px;
+}
+
+.admin-ai-response-qa-reference summary {
+  cursor: pointer;
+  color: #666;
+  font-weight: 600;
+}
+
+.admin-ai-response-qa-reference-list {
+  margin: 6px 0 0;
+  padding-left: 18px;
+  color: #666;
+}
+
+.admin-ai-response-qa-batch-problem {
+  margin-top: 10px;
+  padding: 8px 10px;
+  border: 1px solid rgba(0, 0, 0, 0.08);
+  border-radius: 10px;
+  background: #fff;
+}
+
+.admin-ai-response-qa-batch-problem summary {
+  cursor: pointer;
+  font-weight: 700;
+  font-size: 14px;
+}
+
+.admin-ai-response-qa-batch-problem.is-skipped summary {
+  color: #777;
+}
+
+.admin-ai-response-qa-batch-groups {
+  margin-top: 8px;
+}
+
+@media (max-width: 640px) {
+  .admin-ai-response-qa-inspection-body {
+    grid-template-columns: 1fr;
+  }
+}
+
+@media (max-width: 640px) {
+  .admin-ai-response-qa-card {
+    grid-template-columns: 1fr;
+  }
+}
+
 .admin-editor-actions {
   display: flex;
   flex-wrap: wrap;

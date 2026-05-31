@@ -1,6 +1,6 @@
 import { isKatagoRespondApiEnabled, requestKatagoRespond } from "./katago-respond-client.js";
 import { logMockWhiteMove, pickMockWhiteResponse } from "./mock-white-response.js";
-import { logKatagoRespondFailure } from "./respond-diagnostics.js";
+import { logKatagoRespondFailure, logWrongRevealRequestContext } from "./respond-diagnostics.js";
 import { KATAGO_SOURCE, TACTICAL_FALLBACK_SOURCE } from "./wrong-response-fallback.js";
 
 function isMockAllowed() {
@@ -29,6 +29,19 @@ export async function resolveWhiteResponse({
       needsServer: true,
       message: "AI 응수 서버 연결 필요",
     };
+  }
+
+  if (studentMoveResult === "wrong") {
+    logWrongRevealRequestContext("play:resolveWhiteResponse", {
+      problem,
+      boardSize,
+      stones,
+      playedMoves,
+      initialStones,
+      lastBlackMove,
+      currentPly,
+      stoneColors,
+    });
   }
 
   const apiResult = await requestKatagoRespond({

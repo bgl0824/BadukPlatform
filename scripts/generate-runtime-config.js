@@ -18,6 +18,9 @@ const katagoRespondApiEnabled =
 
 const katagoRespondMaxVisits = Number(process.env.KATAGO_RESPOND_MAX_VISITS) || 8;
 const katagoRespondMaxTime = Number(process.env.KATAGO_RESPOND_MAX_TIME) || 0.15;
+const katagoWrongMaxVisits = Number(process.env.KATAGO_WRONG_MAX_VISITS) || 24;
+const katagoWrongMaxTime = Number(process.env.KATAGO_WRONG_MAX_TIME) || 0.45;
+const katagoWrongReplaceMs = Number(process.env.KATAGO_WRONG_REPLACE_MS) || 1100;
 
 const aiResponseSolveEnabled =
   process.env.AI_RESPONSE_SOLVE_ENABLED !== "false" &&
@@ -46,6 +49,9 @@ const contents = `(function () {
     katagoRespondAllowMock: false,
     katagoRespondMaxVisits: ${katagoRespondMaxVisits},
     katagoRespondMaxTime: ${katagoRespondMaxTime},
+    katagoWrongMaxVisits: ${katagoWrongMaxVisits},
+    katagoWrongMaxTime: ${katagoWrongMaxTime},
+    katagoWrongReplaceMs: ${katagoWrongReplaceMs},
     supabaseUrl: ${JSON.stringify(supabaseUrl)},
     supabaseKey: ${JSON.stringify(supabaseKey)},
     debugLogs: false,

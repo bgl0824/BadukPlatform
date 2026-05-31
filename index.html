@@ -313,6 +313,13 @@
                 </div>
                 <div class="admin-problems-toolbar-actions">
                   <button
+                    id="admin-ai-response-qa-batch"
+                    class="secondary-button admin-ai-response-qa-batch-button is-hidden"
+                    type="button"
+                  >
+                    AI 응수 일괄 미리보기
+                  </button>
+                  <button
                     id="admin-problem-sort-toggle"
                     class="secondary-button"
                     type="button"
@@ -323,6 +330,11 @@
                   <button id="add-problem" class="primary-button" type="button">새 문제 추가</button>
                 </div>
               </div>
+              <div
+                id="admin-ai-response-qa-batch-result"
+                class="admin-ai-response-qa-batch-result is-hidden"
+                aria-live="polite"
+              ></div>
               <section id="admin-editor" class="admin-editor is-hidden" aria-label="문제 편집"></section>
             </div>
             <div id="admin-grades-panel" class="admin-panel is-hidden" aria-label="급수 단수 배정">

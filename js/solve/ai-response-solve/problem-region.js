@@ -86,16 +86,18 @@ export function filterCandidatesInRegion(candidates, region, boardSize) {
     return [];
   }
 
-  return candidates.filter((candidate) => {
-    const point =
-      Number.isInteger(candidate.x) && Number.isInteger(candidate.y)
-        ? { x: candidate.x, y: candidate.y }
-        : null;
-    if (!point || !isPointInAllowedRegion(point, region)) {
-      return false;
-    }
-    return point.x >= 0 && point.y >= 0 && point.x < boardSize && point.y < boardSize;
-  });
+  return candidates
+    .filter((candidate) => {
+      const point =
+        Number.isInteger(candidate.x) && Number.isInteger(candidate.y)
+          ? { x: candidate.x, y: candidate.y }
+          : null;
+      if (!point || !isPointInAllowedRegion(point, region)) {
+        return false;
+      }
+      return point.x >= 0 && point.y >= 0 && point.x < boardSize && point.y < boardSize;
+    })
+    .map((candidate) => ({ ...candidate, fromRegion: true }));
 }
 
 /**

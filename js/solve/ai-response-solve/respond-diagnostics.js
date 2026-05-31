@@ -2,6 +2,9 @@
  * AI 응수 / 학습 복원 디버그 로그 (간헐 오류 추적용)
  */
 
+import { formatCoordLabel } from "./answer-sequence.js";
+import { computeAllowedRegion } from "./problem-region.js";
+
 function safeJson(value) {
   try {
     return JSON.parse(JSON.stringify(value));
@@ -20,6 +23,66 @@ export function logKatagoRespondFailure(label, details = {}) {
 
 export function logKatagoRespondSuccess(label, details = {}) {
   console.log(`[KatagoRespond] ${label}`, details);
+}
+
+function getParityRegionMargin() {
+  const configured = Number(window.BadukConfig?.katagoRespondRegionMargin);
+  if (Number.isFinite(configured) && configured >= 0) {
+    return configured;
+  }
+  return 2;
+}
+
+/**
+ * 오답 응수 요청 컨텍스트 — QA·실제 풀이 동일 포맷 로그
+ * @param {string} channel
+ * @param {object} params
+ */
+export function logWrongRevealRequestContext(channel, params) {
+  const {
+    problem,
+    boardSize,
+    stones = [],
+    playedMoves = [],
+    initialStones = [],
+    lastBlackMove,
+    currentPly,
+    stoneColors,
+    blackAnswerIndex = null,
+    stonesBeforeCount = null,
+    stonesAfterCount = null,
+    currentPlyBeforeBlack = null,
+  } = params;
+
+  const allowedRegion = computeAllowedRegion({
+    boardSize,
+    stones,
+    initialStones,
+    lastMove: lastBlackMove,
+    margin: getParityRegionMargin(),
+  });
+
+  const blackMoves = playedMoves.filter((move) => move.color === stoneColors?.black);
+  const inferredBlackAnswerIndex =
+    blackAnswerIndex ?? Math.max(0, blackMoves.length - 1);
+
+  console.info(`[AI_RESPONSE_PARITY] ${channel}`, {
+    problemId: problem?.id ?? null,
+    stonesCount: stones.length,
+    stonesBeforeCount,
+    stonesAfterCount,
+    initialStonesCount: initialStones.length,
+    playedMovesCount: playedMoves.length,
+    lastBlackMove: lastBlackMove
+      ? `${lastBlackMove.color}:${formatCoordLabel(lastBlackMove)}`
+      : null,
+    currentPlyBeforeBlack,
+    currentPly,
+    blackAnswerIndex: inferredBlackAnswerIndex,
+    allowedRegion,
+    studentMoveResult: "wrong",
+    recentMoves: playedMoves.slice(-6).map((move) => `${move.color}:${formatCoordLabel(move)}`),
+  });
 }
 
 export function logAiResponseSessionSnapshot(appState, label, extra = {}) {

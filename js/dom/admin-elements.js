@@ -70,6 +70,10 @@ export const adminElements = {
 
   addProblemButton: document.querySelector("#add-problem"),
 
+  adminAiResponseQaBatchButton: document.querySelector("#admin-ai-response-qa-batch"),
+
+  adminAiResponseQaBatchResult: document.querySelector("#admin-ai-response-qa-batch-result"),
+
   adminEditor: document.querySelector("#admin-editor"),
 
 };

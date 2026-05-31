@@ -10,6 +10,7 @@ import {
   computeAllowedRegion,
   DEFAULT_REGION_MARGIN,
   filterCandidatesInRegion,
+  isPointInAllowedRegion,
 } from "./problem-region.js";
 import {
   logKatagoRespondFailure,
@@ -35,9 +36,12 @@ function toMoveEntry(move) {
 
 const DEFAULT_KATAGO_MAX_VISITS = 8;
 const DEFAULT_KATAGO_MAX_TIME = 0.15;
-const WRONG_KATAGO_MAX_VISITS = 6;
-const WRONG_KATAGO_MAX_TIME = 0.12;
-const WRONG_KATAGO_REPLACE_MS = 700;
+/** 오답 응수(wrong reveal) — 정확도 우선 */
+const WRONG_KATAGO_MAX_VISITS = 24;
+const WRONG_KATAGO_MAX_TIME = 0.45;
+const WRONG_KATAGO_REPLACE_MS = 1100;
+const WRONG_KATAGO_REPLACE_MS_MIN = 1000;
+const WRONG_KATAGO_REPLACE_MS_MAX = 1200;
 
 function getKatagoRespondMaxVisits() {
   const configured = Number(window.BadukConfig?.katagoRespondMaxVisits);
@@ -64,13 +68,16 @@ function getWrongKatagoMaxVisits() {
 function getWrongKatagoMaxTime() {
   const configured = Number(window.BadukConfig?.katagoWrongMaxTime);
   const base = Number.isFinite(configured) && configured > 0 ? configured : WRONG_KATAGO_MAX_TIME;
-  return Math.min(base, 0.15);
+  return Math.min(base, WRONG_KATAGO_MAX_TIME);
 }
 
 function getWrongKatagoReplaceMs() {
   const configured = Number(window.BadukConfig?.katagoWrongReplaceMs);
   if (Number.isFinite(configured) && configured > 0) {
-    return Math.min(Math.max(configured, 500), 800);
+    return Math.min(
+      Math.max(configured, WRONG_KATAGO_REPLACE_MS_MIN),
+      WRONG_KATAGO_REPLACE_MS_MAX,
+    );
   }
   return WRONG_KATAGO_REPLACE_MS;
 }
@@ -347,6 +354,30 @@ function finalizeKatagoSelection({
     return null;
   }
 
+  if (!isPointInAllowedRegion(selected.point, allowedRegion)) {
+    console.warn("[KatagoRespond] selected move outside problem region — rejected", {
+      move: selected.move,
+      allowedRegion,
+    });
+    if (studentMoveResult === "wrong") {
+      return tryWrongRevealLocalFallback({
+        allowedRegion,
+        stones,
+        boardSize,
+        stoneColors,
+        lastMove,
+        problem,
+        regionCandidates,
+        requestStart,
+        katagoElapsedMs,
+        maxVisits,
+        maxTime,
+        reason: "selected_out_of_region",
+      });
+    }
+    return null;
+  }
+
   const totalElapsedMs = Date.now() - requestStart;
   logKatagoRespondTiming({
     requestStart,
@@ -484,7 +515,14 @@ async function processKatagoRespondResponse({
     allowedRegion,
     boardSize,
   );
-  const regionCandidateCount = data?.regionCandidates ?? regionCandidates.length;
+  const regionCandidateCount = regionCandidates.length;
+
+  console.log("[KatagoRespond] region filter", {
+    rawCandidates: totalCandidates,
+    inRegion: regionCandidateCount,
+    excluded: Math.max(0, totalCandidates - regionCandidateCount),
+    allowedRegion,
+  });
 
   if (regionCandidates.length === 0) {
     return { ok: false, emptyRegion: true, rawCandidates, totalCandidates };

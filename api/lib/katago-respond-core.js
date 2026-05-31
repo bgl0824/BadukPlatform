@@ -5,8 +5,9 @@
 /** 교육용: 즉각 리듬 우선 — policy 후보 + 극소 탐색 */
 const DEFAULT_KATAGO_MAX_VISITS = 8;
 const DEFAULT_KATAGO_MAX_TIME = 0.15;
-const WRONG_REVEAL_MAX_VISITS = 6;
-const WRONG_REVEAL_MAX_TIME = 0.12;
+/** 오답 응수(wrong reveal) — 프론트 payload 상한과 동일 */
+const WRONG_REVEAL_MAX_VISITS = 24;
+const WRONG_REVEAL_MAX_TIME = 0.45;
 const MIN_KATAGO_CANDIDATES = 30;
 
 function isWrongRevealRequest(frontendPayload) {

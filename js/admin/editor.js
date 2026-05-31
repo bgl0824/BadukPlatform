@@ -26,10 +26,6 @@ import {
   AI_RESPONSE_STYLE_LABELS,
 } from "../solve/ai-response-solve/tactical-response-styles.js";
 import { syncTargetWhiteGroupOnProblem } from "../solve/ai-response-solve/target-white-group.js";
-import {
-  renderAiResponseQaReportHtml,
-  runAiResponseQa,
-} from "./ai-response-qa.js";
 import { LEVEL_GROUPS, normalizeLevelGroup } from "../services/level-group-service.js";
 import {
   assignDisplayOrderForNewProblem,
@@ -157,7 +153,7 @@ export function createAdminEditorController({
               id="admin-ai-response-qa"
               class="secondary-button admin-ai-response-qa-button"
             >
-              AI 응수 점검
+              AI 응수 미리보기
             </button>
             <div id="admin-ai-response-qa-result" class="admin-ai-response-qa-result is-hidden"></div>
           </div>
@@ -401,6 +397,15 @@ export function createAdminEditorController({
     return String(draft?.problemMode ?? "") === PROBLEM_MODE.aiResponse;
   }
 
+  async function loadAiResponseQaModule() {
+    try {
+      return await import("./ai-response-qa.js");
+    } catch (error) {
+      console.error("[AI_QA] module load failed — app continues without QA", error);
+      return null;
+    }
+  }
+
   async function handleAiResponseQa() {
     if (!requireAdminMode() || !adminState.draft) {
       return;
@@ -426,28 +431,45 @@ export function createAdminEditorController({
     setAdminEditorStatus("AI 응수 점검 중…");
 
     try {
-      const report = await runAiResponseQa({
+      const qaModule = await loadAiResponseQaModule();
+      if (!qaModule?.runAiResponseQa) {
+        const loadMessage = "AI QA 모듈을 불러올 수 없습니다. 문제은행·편집 기능은 정상입니다.";
+        if (qaResult) {
+          qaResult.innerHTML = `<p class="admin-ai-response-qa-error">${escapeHtml(loadMessage)}</p>`;
+        }
+        setAdminEditorStatus(loadMessage, "wrong");
+        setFeedback(loadMessage, "wrong");
+        return;
+      }
+
+      const report = await qaModule.runAiResponseQa({
         problem: adminState.draft,
         boardSize: BOARD_SIZE,
         stoneColors: { black: STONE.black, white: STONE.white },
       });
 
       if (qaResult) {
-        qaResult.innerHTML = renderAiResponseQaReportHtml(report, escapeHtml);
+        qaResult.innerHTML = qaModule.renderAiResponseQaReportHtml(report, escapeHtml, {
+          showMode: "all",
+          scopeId: report.problemId,
+        });
+        qaModule.bindAiResponseQaReport(qaResult, report, escapeHtml, {
+          showMode: "all",
+          scopeId: report.problemId,
+        });
         qaResult.classList.remove("is-hidden");
       }
 
       if (!report.ok) {
-        setAdminEditorStatus(report.error ?? "AI 응수 점검 실패", "wrong");
-        setFeedback(report.error ?? "AI 응수 점검 실패", "wrong");
+        setAdminEditorStatus(report.error ?? "AI 응수 미리보기 실패", "wrong");
+        setFeedback(report.error ?? "AI 응수 미리보기 실패", "wrong");
         return;
       }
 
-      const { summary } = report;
-      const message = `AI 응수 점검 완료 — 정상 ${summary.normal}, 확인 필요 ${summary.review}, 실패 ${summary.fail}`;
-      const tone = summary.fail > 0 ? "wrong" : summary.review > 0 ? "neutral" : "correct";
-      setAdminEditorStatus(message, tone);
-      setFeedback(message, tone === "correct" ? "correct" : "wrong");
+      const { caseCount } = report;
+      const message = `AI 응수 미리보기 완료 — ${caseCount}건 · 수동 표시로 검수하세요`;
+      setAdminEditorStatus(message, "correct");
+      setFeedback(message, "correct");
     } catch (error) {
       console.error("[AI_QA] run failed", error);
       const message = error?.message ?? "AI 응수 점검 중 오류";
