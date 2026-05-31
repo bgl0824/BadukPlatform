@@ -159,6 +159,11 @@ function getGroupLibertyPoints(stones, group, boardSize) {
   return liberties;
 }
 
+/** @deprecated alias — use getGroupLibertyPoints */
+function getGroupLibertyKeys(stones, group, boardSize) {
+  return getGroupLibertyPoints(stones, group, boardSize);
+}
+
 function getAtariLibertyKeys(stones, color, boardSize) {
   const keys = new Set();
   for (const group of getGroupsForColor(stones, color, boardSize)) {
@@ -262,6 +267,35 @@ function mergeCaptureCandidates(regionCandidates, stones, boardSize, stoneColors
   }
 
   return merged;
+}
+
+function safeMergeCaptureCandidates(regionCandidates, stones, boardSize, stoneColors, lastBlackMove) {
+  try {
+    return mergeCaptureCandidates(
+      regionCandidates,
+      stones,
+      boardSize,
+      stoneColors,
+      lastBlackMove,
+    );
+  } catch (error) {
+    console.warn("[KatagoRespond] mergeCaptureCandidates failed — using region candidates only", {
+      message: error?.message,
+      stack: error?.stack,
+    });
+    return [...(regionCandidates ?? [])];
+  }
+}
+
+function safeDescribeCapturableBlackGroups(stones, boardSize, stoneColors) {
+  try {
+    return describeCapturableBlackGroups(stones, boardSize, stoneColors);
+  } catch (error) {
+    console.warn("[KatagoRespond] describeCapturableBlackGroups failed", {
+      message: error?.message,
+    });
+    return [];
+  }
 }
 
 function scoreWrongRevealWithCapture({
@@ -1210,7 +1244,7 @@ export function selectTacticalWhiteMove({
       problem,
     );
   } else if (capturePriority) {
-    mergedCandidates = mergeCaptureCandidates(
+    mergedCandidates = safeMergeCaptureCandidates(
       regionCandidates,
       stones,
       boardSize,
@@ -1221,7 +1255,7 @@ export function selectTacticalWhiteMove({
       problemId: problem?.id,
       aiResponseStyle: style,
       category: problem?.category,
-      capturableBlackGroups: describeCapturableBlackGroups(stones, boardSize, stoneColors),
+      capturableBlackGroups: safeDescribeCapturableBlackGroups(stones, boardSize, stoneColors),
     });
   }
 
@@ -1267,7 +1301,21 @@ export function selectTacticalWhiteMove({
     .sort((a, b) => b.totalScore - a.totalScore);
 
   const captureDiagnostics = capturePriority
-    ? buildCaptureSelectionDiagnostics(scoredCandidates, stones, boardSize, stoneColors)
+    ? (() => {
+        try {
+          return buildCaptureSelectionDiagnostics(
+            scoredCandidates,
+            stones,
+            boardSize,
+            stoneColors,
+          );
+        } catch (error) {
+          console.warn("[KatagoRespond] buildCaptureSelectionDiagnostics failed", {
+            message: error?.message,
+          });
+          return null;
+        }
+      })()
     : null;
 
   let pickDiagnostics = {};
