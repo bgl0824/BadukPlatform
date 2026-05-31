@@ -26,6 +26,10 @@ import {
   AI_RESPONSE_STYLE_LABELS,
 } from "../solve/ai-response-solve/tactical-response-styles.js";
 import { syncTargetWhiteGroupOnProblem } from "../solve/ai-response-solve/target-white-group.js";
+import {
+  renderAiResponseQaReportHtml,
+  runAiResponseQa,
+} from "./ai-response-qa.js";
 import { LEVEL_GROUPS, normalizeLevelGroup } from "../services/level-group-service.js";
 import {
   assignDisplayOrderForNewProblem,
@@ -148,6 +152,14 @@ export function createAdminEditorController({
             >
               정답 수순 전체 초기화
             </button>
+            <button
+              type="button"
+              id="admin-ai-response-qa"
+              class="secondary-button admin-ai-response-qa-button"
+            >
+              AI 응수 점검
+            </button>
+            <div id="admin-ai-response-qa-result" class="admin-ai-response-qa-result is-hidden"></div>
           </div>
         </div>
         <div class="tool-grid">
@@ -224,6 +236,9 @@ export function createAdminEditorController({
         adminState.draft.aiResponseStyle = value;
         adminState.draft.ai_response_style = value;
       }
+    });
+    elements.adminEditor.querySelector("#admin-ai-response-qa")?.addEventListener("click", () => {
+      void handleAiResponseQa();
     });
     elements.adminEditor.querySelector("#admin-answer-move-count")?.addEventListener("change", () => {
       adminState.draft.answerMoveCount = Number(
@@ -384,6 +399,68 @@ export function createAdminEditorController({
 
   function isAiResponseDraft(draft) {
     return String(draft?.problemMode ?? "") === PROBLEM_MODE.aiResponse;
+  }
+
+  async function handleAiResponseQa() {
+    if (!requireAdminMode() || !adminState.draft) {
+      return;
+    }
+
+    syncAdminDraftFromForm();
+
+    if (!isAiResponseDraft(adminState.draft)) {
+      setAdminEditorStatus("AI 응수형 문제만 점검할 수 있습니다.", "wrong");
+      return;
+    }
+
+    const qaButton = elements.adminEditor.querySelector("#admin-ai-response-qa");
+    const qaResult = elements.adminEditor.querySelector("#admin-ai-response-qa-result");
+
+    if (qaButton) {
+      qaButton.disabled = true;
+    }
+    if (qaResult) {
+      qaResult.classList.remove("is-hidden");
+      qaResult.innerHTML = `<p class="admin-field-hint">AI 응수 점검 중… (저장/DB 변경 없음)</p>`;
+    }
+    setAdminEditorStatus("AI 응수 점검 중…");
+
+    try {
+      const report = await runAiResponseQa({
+        problem: adminState.draft,
+        boardSize: BOARD_SIZE,
+        stoneColors: { black: STONE.black, white: STONE.white },
+      });
+
+      if (qaResult) {
+        qaResult.innerHTML = renderAiResponseQaReportHtml(report, escapeHtml);
+        qaResult.classList.remove("is-hidden");
+      }
+
+      if (!report.ok) {
+        setAdminEditorStatus(report.error ?? "AI 응수 점검 실패", "wrong");
+        setFeedback(report.error ?? "AI 응수 점검 실패", "wrong");
+        return;
+      }
+
+      const { summary } = report;
+      const message = `AI 응수 점검 완료 — 정상 ${summary.normal}, 확인 필요 ${summary.review}, 실패 ${summary.fail}`;
+      const tone = summary.fail > 0 ? "wrong" : summary.review > 0 ? "neutral" : "correct";
+      setAdminEditorStatus(message, tone);
+      setFeedback(message, tone === "correct" ? "correct" : "wrong");
+    } catch (error) {
+      console.error("[AI_QA] run failed", error);
+      const message = error?.message ?? "AI 응수 점검 중 오류";
+      if (qaResult) {
+        qaResult.innerHTML = `<p class="admin-ai-response-qa-error">${escapeHtml(message)}</p>`;
+      }
+      setAdminEditorStatus(message, "wrong");
+      setFeedback(message, "wrong");
+    } finally {
+      if (qaButton) {
+        qaButton.disabled = false;
+      }
+    }
   }
 
   function renderAiResponseStyleOptions(draft) {

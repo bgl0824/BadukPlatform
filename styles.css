@@ -4674,6 +4674,63 @@ h2 {
   background: #fff8f7;
 }
 
+.admin-ai-response-qa-button {
+  margin-top: 8px;
+}
+
+.admin-ai-response-qa-result {
+  margin-top: 12px;
+}
+
+.admin-ai-response-qa-panel {
+  margin-top: 8px;
+  padding: 12px;
+  border: 1px solid rgba(0, 0, 0, 0.08);
+  border-radius: 10px;
+  background: #fafafa;
+}
+
+.admin-ai-response-qa-table {
+  width: 100%;
+  border-collapse: collapse;
+  font-size: 13px;
+  margin-top: 8px;
+}
+
+.admin-ai-response-qa-table th,
+.admin-ai-response-qa-table td {
+  border: 1px solid rgba(0, 0, 0, 0.08);
+  padding: 6px 8px;
+  text-align: left;
+}
+
+.admin-ai-response-qa-table th {
+  background: #f0f0f0;
+  font-weight: 700;
+}
+
+.admin-ai-response-qa-summary {
+  margin-top: 10px;
+  font-weight: 700;
+}
+
+.admin-ai-response-qa-error {
+  color: var(--error);
+  margin-top: 8px;
+}
+
+.admin-ai-response-qa-table tr.qa-status-normal td:nth-child(4) {
+  color: #2d6a4f;
+}
+
+.admin-ai-response-qa-table tr.qa-status-review td:nth-child(4) {
+  color: #b8860b;
+}
+
+.admin-ai-response-qa-table tr.qa-status-fail td:nth-child(4) {
+  color: var(--error);
+}
+
 .admin-editor-actions {
   display: flex;
   flex-wrap: wrap;
