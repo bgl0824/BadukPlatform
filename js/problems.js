@@ -713,6 +713,17 @@ function toSupabaseRow(problem) {
     row.ai_response_style = aiResponseStyle;
   }
 
+  const problemGoal = String(problem.problemGoal ?? problem.problem_goal ?? "").trim();
+  if (problemGoal) {
+    row.problem_goal = problemGoal;
+  }
+
+  if (problem.showTargetMarker === false || problem.show_target_marker === false) {
+    row.show_target_marker = false;
+  } else if (problem.showTargetMarker === true || problem.show_target_marker === true) {
+    row.show_target_marker = true;
+  }
+
   const answerMoveCount = Number(problem.answerMoveCount);
   if ([1, 3, 5, 7].includes(answerMoveCount)) {
     row.answer_move_count = answerMoveCount;
@@ -735,6 +746,12 @@ function toSupabaseRow(problem) {
 
   if (Array.isArray(problem.targetWhiteGroup) && problem.targetWhiteGroup.length > 0) {
     row.target_white_group = problem.targetWhiteGroup;
+  }
+
+  const targetBlackGroup =
+    problem.targetBlackGroup ?? problem.target_black_group;
+  if (Array.isArray(targetBlackGroup) && targetBlackGroup.length > 0) {
+    row.target_black_group = targetBlackGroup;
   }
 
   const targetMark = String(problem.targetWhiteMark ?? problem.target_white_mark ?? "").trim();
@@ -824,6 +841,19 @@ function fromSupabaseRow(row) {
     problem.ai_response_style = problem.aiResponseStyle;
   }
 
+  if (row.problem_goal) {
+    problem.problemGoal = String(row.problem_goal).trim();
+    problem.problem_goal = problem.problemGoal;
+  }
+
+  if (row.show_target_marker === false) {
+    problem.showTargetMarker = false;
+    problem.show_target_marker = false;
+  } else if (row.show_target_marker === true) {
+    problem.showTargetMarker = true;
+    problem.show_target_marker = true;
+  }
+
   if (Array.isArray(row.candidate_responses)) {
     problem.candidateResponses = row.candidate_responses;
   }
@@ -845,6 +875,11 @@ function fromSupabaseRow(row) {
   if (Array.isArray(row.target_white_group)) {
     problem.targetWhiteGroup = row.target_white_group;
     problem.target_white_group = problem.targetWhiteGroup;
+  }
+
+  if (Array.isArray(row.target_black_group)) {
+    problem.targetBlackGroup = row.target_black_group;
+    problem.target_black_group = problem.targetBlackGroup;
   }
 
   if (row.target_white_mark) {
@@ -876,6 +911,10 @@ function cloneProblem(problem) {
     problemMode: problem.problemMode,
     aiResponseStyle: problem.aiResponseStyle ?? problem.ai_response_style,
     ai_response_style: problem.aiResponseStyle ?? problem.ai_response_style,
+    problemGoal: problem.problemGoal ?? problem.problem_goal,
+    problem_goal: problem.problemGoal ?? problem.problem_goal,
+    showTargetMarker: problem.showTargetMarker ?? problem.show_target_marker,
+    show_target_marker: problem.showTargetMarker ?? problem.show_target_marker,
     aiResponseCandidates: Array.isArray(problem.aiResponseCandidates)
       ? problem.aiResponseCandidates.map((entry) => ({ ...entry }))
       : undefined,
@@ -897,6 +936,12 @@ function cloneProblem(problem) {
       : undefined,
     target_white_group: Array.isArray(problem.targetWhiteGroup)
       ? problem.targetWhiteGroup.map((entry) => ({ ...entry }))
+      : undefined,
+    targetBlackGroup: Array.isArray(problem.targetBlackGroup)
+      ? problem.targetBlackGroup.map((entry) => ({ ...entry }))
+      : undefined,
+    target_black_group: Array.isArray(problem.targetBlackGroup)
+      ? problem.targetBlackGroup.map((entry) => ({ ...entry }))
       : undefined,
     targetWhiteMark: problem.targetWhiteMark ?? problem.target_white_mark,
     target_white_mark: problem.targetWhiteMark ?? problem.target_white_mark,

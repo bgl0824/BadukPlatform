@@ -22,17 +22,14 @@ import {
   validateFullAnswerSequence,
 } from "../solve/ai-response-solve/answer-sequence.js";
 import {
-  AI_RESPONSE_STYLES,
-  AI_RESPONSE_STYLE_LABELS,
-} from "../solve/ai-response-solve/tactical-response-styles.js";
-import {
-  formatAnswerMoveLabel,
-  formatAnswerMovesSummary,
-  normalizeProblemAnswerMoves,
-  syncProblemAnswerFields,
-  validateProblemAnswerMoves,
-} from "../game/answer-moves.js";
-import { syncTargetWhiteGroupOnProblem } from "../solve/ai-response-solve/target-white-group.js";
+  deriveAiResponseStyleFromGoal,
+  getTargetColorForGoal,
+  PROBLEM_GOAL_LABELS,
+  PROBLEM_GOALS,
+  resolveProblemGoal,
+} from "../solve/ai-response-solve/problem-goal.js";
+import { resolveAiResponseStyle } from "../solve/ai-response-solve/tactical-response-styles.js";
+import { syncTargetGroupOnProblem } from "../solve/ai-response-solve/target-white-group.js";
 import { LEVEL_GROUPS, normalizeLevelGroup } from "../services/level-group-service.js";
 import {
   assignDisplayOrderForNewProblem,
@@ -78,7 +75,7 @@ export function createAdminEditorController({
     normalizeProblemAnswerMoves(draft, BOARD_SIZE);
 
     if (isAiResponseDraft(draft)) {
-      syncTargetWhiteGroupOnProblem(draft, BOARD_SIZE);
+      syncTargetGroupOnProblem(draft, BOARD_SIZE);
     }
 
     const problemType = adminState.draft.type === PROBLEM_TYPE.ox ? PROBLEM_TYPE.ox : PROBLEM_TYPE.board;
@@ -142,12 +139,17 @@ export function createAdminEditorController({
             <strong id="admin-sequence-label">${formatCorrectSequence(draft)}</strong>
           </p>
           <div class="admin-ai-response-meta${isAiResponseDraft(draft) ? "" : " is-hidden"}">
-            <label class="admin-ai-response-style-label">
-              백 응수 전술 스타일
-              <select id="admin-ai-response-style">${renderAiResponseStyleOptions(draft)}</select>
+            <label class="admin-problem-goal-label">
+              문제 목표
+              <select id="admin-problem-goal">${renderProblemGoalOptions(draft)}</select>
             </label>
-            <p class="admin-field-hint">비우면 카테고리명으로만 보조 추론(단수치기→capture 등). 사활·맥 문제는 스타일을 직접 지정하세요.</p>
-            <p class="admin-field-hint">오답 백 응수 타깃: 백돌에 △ 1개만 찍어도 <strong>연결된 백그룹 전체</strong>가 타깃입니다. 서로 떨어진 그룹은 △를 각각 찍으세요. 저장 시 <code>target_white_group</code>에 그룹 전체 좌표가 저장됩니다.</p>
+            <p class="admin-field-hint" id="admin-target-group-hint">${escapeHtml(getTargetGroupHintText(draft))}</p>
+            <label class="admin-show-target-marker-label">
+              △ 타깃 표시
+              <select id="admin-show-target-marker">${renderShowTargetMarkerOptions(draft)}</select>
+            </label>
+            <p class="admin-field-hint">초급: 표시(△). 고급: 숨김 — DB target_group은 유지됩니다.</p>
+            <p class="admin-field-hint admin-field-hint--muted">전술 가중치: <code id="admin-derived-style-label">${escapeHtml(getDerivedStyleLabel(draft))}</code> (problem_goal에서 자동 파생)</p>
             <p class="panel-label">정답 수순 (${formatFullAnswerSequenceSummary(draft)})</p>
             <button
               type="button"
@@ -233,15 +235,23 @@ export function createAdminEditorController({
       updateAdminTypeUi();
       updateAdminAnswerLabel();
     });
-    elements.adminEditor.querySelector("#admin-ai-response-style")?.addEventListener("change", (event) => {
+    elements.adminEditor.querySelector("#admin-problem-goal")?.addEventListener("change", (event) => {
       const value = String(event.target.value ?? "").trim();
       if (!value) {
-        delete adminState.draft.aiResponseStyle;
-        delete adminState.draft.ai_response_style;
+        delete adminState.draft.problemGoal;
+        delete adminState.draft.problem_goal;
       } else {
-        adminState.draft.aiResponseStyle = value;
-        adminState.draft.ai_response_style = value;
+        adminState.draft.problemGoal = value;
+        adminState.draft.problem_goal = value;
       }
+      updateProblemGoalUi();
+      syncTargetGroupOnProblem(adminState.draft, BOARD_SIZE);
+      renderAdminBoard();
+    });
+    elements.adminEditor.querySelector("#admin-show-target-marker")?.addEventListener("change", (event) => {
+      const show = String(event.target.value ?? "true") === "true";
+      adminState.draft.showTargetMarker = show;
+      adminState.draft.show_target_marker = show;
     });
     elements.adminEditor.querySelector("#admin-answer-move-count")?.addEventListener("change", () => {
       adminState.draft.answerMoveCount = Number(
@@ -429,16 +439,58 @@ export function createAdminEditorController({
     return String(draft?.problemMode ?? "") === PROBLEM_MODE.aiResponse;
   }
 
-  function renderAiResponseStyleOptions(draft) {
-    const current = String(
-      draft?.aiResponseStyle ?? draft?.ai_response_style ?? "",
-    ).trim();
-    const autoOption = `<option value=""${!current ? " selected" : ""}>자동 (카테고리 보조)</option>`;
-    const styleOptions = AI_RESPONSE_STYLES.map(
-      (style) =>
-        `<option value="${style}"${style === current ? " selected" : ""}>${AI_RESPONSE_STYLE_LABELS[style] ?? style}</option>`,
+  function renderProblemGoalOptions(draft) {
+    const current = String(draft?.problemGoal ?? draft?.problem_goal ?? "").trim();
+    const autoOption = `<option value=""${!current ? " selected" : ""}>선택 (레거시 추론)</option>`;
+    const goalOptions = PROBLEM_GOALS.map(
+      (goal) =>
+        `<option value="${goal}"${goal === current ? " selected" : ""}>${PROBLEM_GOAL_LABELS[goal] ?? goal}</option>`,
     ).join("");
-    return autoOption + styleOptions;
+    return autoOption + goalOptions;
+  }
+
+  function renderShowTargetMarkerOptions(draft) {
+    const show =
+      draft?.showTargetMarker ??
+      draft?.show_target_marker;
+    const visible = show !== false && show !== "false" && show !== 0;
+    return `
+      <option value="true"${visible ? " selected" : ""}>표시</option>
+      <option value="false"${!visible ? " selected" : ""}>숨김</option>
+    `;
+  }
+
+  function getTargetGroupHintText(draft) {
+    const goal = resolveProblemGoal(draft);
+    const color = goal ? getTargetColorForGoal(goal) : "white";
+    const colorLabel = color === "black" ? "흑" : "백";
+    const fieldName = color === "black" ? "target_black_group" : "target_white_group";
+    return `목표 그룹: ${colorLabel}돌에 △ 1개만 찍어도 연결된 ${colorLabel}그룹 전체가 타깃입니다. 저장 시 ${fieldName}에 저장됩니다. 오답 응수는 목표의 반대 결과를 보여줍니다.`;
+  }
+
+  function getDerivedStyleLabel(draft) {
+    const goal = resolveProblemGoal(draft);
+    if (goal) {
+      const style = deriveAiResponseStyleFromGoal(goal, draft?.category);
+      return `${style} (${PROBLEM_GOAL_LABELS[goal] ?? goal})`;
+    }
+    const legacy = String(draft?.aiResponseStyle ?? draft?.ai_response_style ?? "").trim();
+    if (legacy) {
+      return legacy;
+    }
+    const inferred = resolveAiResponseStyle(draft);
+    return inferred || "default";
+  }
+
+  function updateProblemGoalUi() {
+    const hint = elements.adminEditor.querySelector("#admin-target-group-hint");
+    const styleLabel = elements.adminEditor.querySelector("#admin-derived-style-label");
+    if (hint) {
+      hint.textContent = getTargetGroupHintText(adminState.draft);
+    }
+    if (styleLabel && adminState.draft) {
+      styleLabel.textContent = getDerivedStyleLabel(adminState.draft);
+    }
   }
 
   function renderProblemModeOptions(selectedMode) {
@@ -1093,13 +1145,15 @@ export function createAdminEditorController({
 
     try {
       if (isAiResponseDraft(savedProblemDraft)) {
-        const synced = syncTargetWhiteGroupOnProblem(savedProblemDraft, BOARD_SIZE);
-        console.log("[Admin] target_white_group synced from △ marks (connected groups expanded)", {
+        const synced = syncTargetGroupOnProblem(savedProblemDraft, BOARD_SIZE);
+        console.log("[Admin] target group synced from △ marks (connected groups expanded)", {
           problemId: savedProblemDraft.id,
+          problemGoal: resolveProblemGoal(savedProblemDraft),
+          targetColor: synced.targetColor,
           policy: synced.policy,
           markedSeeds: synced.markedSeeds,
           stoneCount: synced.entries.length,
-          targetWhiteGroupStones: synced.entries.map((entry) => formatCoordLabel(entry)).join(", "),
+          targetGroupStones: synced.entries.map((entry) => formatCoordLabel(entry)).join(", "),
           expandedGroups: synced.expandedGroups,
         });
       }
@@ -1207,15 +1261,30 @@ export function createAdminEditorController({
     }
 
     if (isAiResponseDraft(adminState.draft)) {
-      const styleRaw = String(
-        editor.querySelector("#admin-ai-response-style")?.value ?? "",
+      const goalRaw = String(
+        editor.querySelector("#admin-problem-goal")?.value ?? "",
       ).trim();
-      if (styleRaw) {
-        adminState.draft.aiResponseStyle = styleRaw;
-        adminState.draft.ai_response_style = styleRaw;
+      if (goalRaw) {
+        adminState.draft.problemGoal = goalRaw;
+        adminState.draft.problem_goal = goalRaw;
       } else {
-        delete adminState.draft.aiResponseStyle;
-        delete adminState.draft.ai_response_style;
+        delete adminState.draft.problemGoal;
+        delete adminState.draft.problem_goal;
+      }
+
+      const showMarker = String(
+        editor.querySelector("#admin-show-target-marker")?.value ?? "true",
+      ) === "true";
+      adminState.draft.showTargetMarker = showMarker;
+      adminState.draft.show_target_marker = showMarker;
+
+      if (goalRaw) {
+        const derivedStyle = deriveAiResponseStyleFromGoal(
+          goalRaw,
+          adminState.draft.category,
+        );
+        adminState.draft.aiResponseStyle = derivedStyle;
+        adminState.draft.ai_response_style = derivedStyle;
       }
 
       delete adminState.draft.correctSequence;

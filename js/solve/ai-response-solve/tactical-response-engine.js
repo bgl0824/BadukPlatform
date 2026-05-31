@@ -16,8 +16,13 @@ import {
 import {
   getStyleWeights,
   isCapturePriorityStyle,
+  isWrongRevealCaptureGoal,
   resolveAiResponseStyle,
 } from "./tactical-response-styles.js";
+import {
+  getWrongRevealStrategy,
+  resolveProblemGoal,
+} from "./problem-goal.js";
 import { formatCoordLabel } from "./answer-sequence.js";
 import {
   buildTargetWhiteGroupDiagnosticLog,
@@ -27,6 +32,7 @@ import {
   isMoveOnTargetAtariLiberty,
   measureTargetGroupAfterMove,
   pointKeyToCoordLabel,
+  resolveTargetGroup,
   resolveTargetWhiteGroup,
   TARGET_WHITE_GROUP_POLICY,
 } from "./target-white-group.js";
@@ -37,6 +43,7 @@ import {
 } from "./wrong-reveal-guard.js";
 
 export { resolveAiResponseStyle } from "./tactical-response-styles.js";
+export { resolveProblemGoal } from "./problem-goal.js";
 
 const REASON_PRIORITY = {
   extend_atari: 6,
@@ -207,9 +214,25 @@ function describeCapturableBlackGroups(stones, boardSize, stoneColors) {
   });
 }
 
-function mergeCaptureCandidates(regionCandidates, stones, boardSize, stoneColors, lastBlackMove) {
+function groupOverlapsTargetContext(group, targetContext) {
+  if (!targetContext?.stoneKeys?.size) {
+    return true;
+  }
+  return group.some((stone) => targetContext.stoneKeys.has(pointKey(stone)));
+}
+
+function mergeCaptureCandidates(
+  regionCandidates,
+  stones,
+  boardSize,
+  stoneColors,
+  lastBlackMove,
+  targetContext = null,
+) {
   const merged = [...(regionCandidates ?? [])];
   const seen = new Set(merged.map((candidate) => `${candidate.x},${candidate.y}`));
+  const capturedColor =
+    targetContext?.targetColor === "white" ? stoneColors.white : stoneColors.black;
 
   const addPoint = (point, tag) => {
     if (getStoneAtPoint(stones, point)) {
@@ -236,17 +259,20 @@ function mergeCaptureCandidates(regionCandidates, stones, boardSize, stoneColors
     });
   };
 
-  for (const group of getGroupsForColor(stones, stoneColors.black, boardSize)) {
+  for (const group of getGroupsForColor(stones, capturedColor, boardSize)) {
+    if (!groupOverlapsTargetContext(group, targetContext)) {
+      continue;
+    }
     const libertyKeys = getGroupLibertyKeys(stones, group, boardSize);
     if (libertyKeys.size !== 1) {
       continue;
     }
     const [key] = [...libertyKeys];
     const [x, y] = key.split(":").map(Number);
-    addPoint({ x, y }, "black_atari_liberty");
+    addPoint({ x, y }, "target_atari_liberty");
   }
 
-  if (lastBlackMove) {
+  if (lastBlackMove && capturedColor === stoneColors.black) {
     const probePoints = [
       lastBlackMove,
       ...getNeighborPoints(lastBlackMove, boardSize),
@@ -269,7 +295,14 @@ function mergeCaptureCandidates(regionCandidates, stones, boardSize, stoneColors
   return merged;
 }
 
-function safeMergeCaptureCandidates(regionCandidates, stones, boardSize, stoneColors, lastBlackMove) {
+function safeMergeCaptureCandidates(
+  regionCandidates,
+  stones,
+  boardSize,
+  stoneColors,
+  lastBlackMove,
+  targetContext = null,
+) {
   try {
     return mergeCaptureCandidates(
       regionCandidates,
@@ -277,6 +310,7 @@ function safeMergeCaptureCandidates(regionCandidates, stones, boardSize, stoneCo
       boardSize,
       stoneColors,
       lastBlackMove,
+      targetContext,
     );
   } catch (error) {
     console.warn("[KatagoRespond] mergeCaptureCandidates failed — using region candidates only", {
@@ -308,10 +342,15 @@ function scoreWrongRevealWithCapture({
   lastBlackMove,
   style,
   weights,
+  targetContext = null,
+  problem = null,
 }) {
   const signals = {};
   const reasons = [];
-  const capturedCount = countCaptures(stones, afterStones, stoneColors.black);
+  const targetColor = targetContext?.targetColor ?? "black";
+  const enemyColor =
+    targetColor === "white" ? stoneColors.white : stoneColors.black;
+  const capturedCount = countCaptures(stones, afterStones, enemyColor);
 
   if (capturedCount > 0) {
     signals.capture_black = 90000 + capturedCount * 8000;
@@ -321,7 +360,7 @@ function scoreWrongRevealWithCapture({
     reasons.push("capture_black");
   }
 
-  if (lastBlackMove && capturedCount > 0) {
+  if (lastBlackMove && capturedCount > 0 && enemyColor === stoneColors.black) {
     const dist = manhattanDistance(point, lastBlackMove);
     if (dist <= 2) {
       signals.near_wrong_black_capture = 6000 + capturedCount * 600 - dist * 200;
@@ -329,12 +368,31 @@ function scoreWrongRevealWithCapture({
     }
   }
 
-  const blackLibertyDrop =
-    minGroupLibertiesForColor(stones, stoneColors.black, boardSize) -
-    minGroupLibertiesForColor(afterStones, stoneColors.black, boardSize);
-  if (blackLibertyDrop > 0 && capturedCount === 0) {
-    signals.decrease_black_liberty = 800 + blackLibertyDrop * 120;
+  const libertyDrop =
+    minGroupLibertiesForColor(stones, enemyColor, boardSize) -
+    minGroupLibertiesForColor(afterStones, enemyColor, boardSize);
+  if (libertyDrop > 0 && capturedCount === 0) {
+    signals.decrease_black_liberty = 800 + libertyDrop * 120;
     reasons.push("capture_black");
+  }
+
+  if (targetContext && targetColor === "white" && capturedCount === 0 && problem) {
+    const beforeTarget = targetContext.minLiberties ?? 99;
+    const afterTarget = measureTargetGroupAfterMove(
+      problem,
+      afterStones,
+      boardSize,
+      stoneColors,
+      targetContext,
+    );
+    const targetDrop = beforeTarget - (afterTarget?.minLiberties ?? beforeTarget);
+    if (targetDrop > 0) {
+      signals.decrease_black_liberty = (signals.decrease_black_liberty ?? 0) + targetDrop * 200;
+      reasons.push("capture_black");
+    } else if ((afterTarget?.minLiberties ?? 0) <= 1 && beforeTarget <= 2) {
+      signals.decrease_black_liberty = (signals.decrease_black_liberty ?? 0) + 500;
+      reasons.push("capture_black");
+    }
   }
 
   const policyBonus = (candidate.policyPrior ?? 0) * 8;
@@ -618,6 +676,8 @@ function scoreCandidate({
       lastBlackMove,
       style,
       weights,
+      targetContext,
+      problem,
     });
   }
 
@@ -1157,6 +1217,7 @@ function logTargetSurvivalSelection({
 
   console.log("[KatagoRespond] tactical target selection", {
     policy: TARGET_WHITE_GROUP_POLICY,
+    problemGoal: resolveProblemGoal(problem) ?? null,
     aiResponseStyle: aiResponseStyle ?? null,
     capturePriority,
     targetWhiteGroup: targetDiagnostic,
@@ -1210,15 +1271,17 @@ export function selectTacticalWhiteMove({
   studentMoveResult,
   session = null,
 }) {
+  const problemGoal = resolveProblemGoal(problem);
   const style = resolveAiResponseStyle(problem);
   const capturePriority =
-    studentMoveResult === "wrong" && isCapturePriorityStyle(style);
+    studentMoveResult === "wrong" && isWrongRevealCaptureGoal(problem);
   const responseMode = studentMoveResult === "wrong" ? "wrong_reveal" : "default";
   const targetContext =
-    responseMode === "wrong_reveal" && !capturePriority
-      ? resolveTargetWhiteGroup(problem, stones, boardSize, stoneColors)
+    responseMode === "wrong_reveal"
+      ? resolveTargetGroup(problem, stones, boardSize, stoneColors)
       : null;
-  const useTargetSurvival = responseMode === "wrong_reveal" && Boolean(targetContext);
+  const useTargetSurvival =
+    responseMode === "wrong_reveal" && !capturePriority && Boolean(targetContext);
 
   const forbiddenAuthorWhites =
     responseMode === "wrong_reveal" ? getForbiddenAuthorWhitePoints(session) : [];
@@ -1250,11 +1313,14 @@ export function selectTacticalWhiteMove({
       boardSize,
       stoneColors,
       lastBlackMove,
+      targetContext,
     );
     console.log("[KatagoRespond] capture-priority wrong-reveal", {
       problemId: problem?.id,
+      problemGoal: problemGoal ?? null,
       aiResponseStyle: style,
       category: problem?.category,
+      targetColor: targetContext?.targetColor ?? "black",
       capturableBlackGroups: safeDescribeCapturableBlackGroups(stones, boardSize, stoneColors),
     });
   }
@@ -1274,13 +1340,15 @@ export function selectTacticalWhiteMove({
   }
 
   if (responseMode === "wrong_reveal" && useTargetSurvival && targetContext) {
-    console.log("[TargetWhiteGroup] resolved for wrong-reveal", {
+    console.log("[TargetGroup] resolved for wrong-reveal survival", {
       problemId: problem?.id,
+      problemGoal: problemGoal ?? null,
       ...buildTargetWhiteGroupDiagnosticLog(targetContext, stones, boardSize),
     });
   }
 
-  const scoringTargetContext = useTargetSurvival ? targetContext : null;
+  const scoringTargetContext =
+    useTargetSurvival || capturePriority ? targetContext : null;
   const candidatesForScoring = authorSequenceFiltered.candidates;
 
   const scoredCandidates = candidatesForScoring
