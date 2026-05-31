@@ -165,14 +165,12 @@ export function markProblemInProgress({ user, problem }) {
   });
 }
 
-export function markProblemSolved({ user, problem, answerQuality = "best" } = {}) {
+export function markProblemSolved({ user, problem }) {
   if (!canRecordStudentProgress(user) || !problem?.id) {
     return null;
   }
 
   const now = new Date().toISOString();
-  const normalizedQuality =
-    answerQuality === "alternative" ? "alternative" : "best";
   return upsertStudentProgress(user, problem, (progress) => {
     const withAttempt = ensureCurrentAttempt(progress, now);
     const attempts = [...withAttempt.attempts];
@@ -185,7 +183,6 @@ export function markProblemSolved({ user, problem, answerQuality = "best" } = {}
     attempts[currentIndex] = {
       ...attempts[currentIndex],
       solvedAt: now,
-      answerQuality: normalizedQuality,
     };
 
     return syncSummaryFromLatestAttempt({

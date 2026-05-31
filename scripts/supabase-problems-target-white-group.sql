@@ -10,7 +10,7 @@ alter table public.problems
   add column if not exists target_white_mark text;
 
 comment on column public.problems.target_white_group is
-  '오답 시 백이 살려야 할 타깃 좌표 [{x,y},...]. △ 표시 백돌의 연결 그룹 전체가 저장됨. 미지정 시 stones의 target_white_mark(기본 triangle) 사용';
+  '오답 시 백이 살려야 할 타깃 좌표 [{x,y},...]. 미지정 시 stones의 target_white_mark(기본 triangle) 표시 백돌 사용';
 
 comment on column public.problems.target_white_mark is
   'stones.mark와 매칭해 타깃 시드 추출 (기본 triangle)';

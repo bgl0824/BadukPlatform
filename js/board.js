@@ -168,7 +168,7 @@ class BoardController {
     this.onInvalidPlay = onInvalidPlay;
     this.stones = [];
     this.aiResponseSpots = [];
-    this.answerMarkers = { best: [], alternative: [] };
+    this.answerMarker = null;
     this.previewContext = {
       enabled: Boolean(preview?.enabled),
       editorStonePlacement: Boolean(preview?.editorStonePlacement),
@@ -458,7 +458,7 @@ class BoardController {
 
   loadPosition(stones) {
     this.stones = sanitizeStones(stones, this.size, "loadPosition");
-    this.answerMarkers = { best: [], alternative: [] };
+    this.answerMarker = null;
     this.clearPreview();
     this.render();
   }
@@ -510,26 +510,14 @@ class BoardController {
   }
 
   setAnswerMarker(point) {
-    this.setAnswerMarkers({
-      best: point ? [point] : [],
-      alternative: [],
-    });
-  }
-
-  setAnswerMarkers({ best = [], alternative = [] } = {}) {
-    this.answerMarkers = {
-      best: (Array.isArray(best) ? best : best ? [best] : [])
-        .map((entry) => sanitizeBoardPoint(entry, this.size, "answerMarker:best"))
-        .filter(Boolean),
-      alternative: (Array.isArray(alternative) ? alternative : [])
-        .map((entry) => sanitizeBoardPoint(entry, this.size, "answerMarker:alternative"))
-        .filter(Boolean),
-    };
+    this.answerMarker = point
+      ? sanitizeBoardPoint(point, this.size, "answerMarker")
+      : null;
     this.render();
   }
 
   clearAnswerMarker() {
-    this.answerMarkers = { best: [], alternative: [] };
+    this.answerMarker = null;
     this.render();
   }
 
@@ -571,27 +559,16 @@ class BoardController {
       }
     });
 
-    this.answerMarkers.best.forEach((point) => {
+    if (this.answerMarker) {
       this.safeAddObject(
         {
-          x: point.x,
-          y: point.y,
+          x: this.answerMarker.x,
+          y: this.answerMarker.y,
           type: "TR",
         },
-        "render:answerMarker:best",
+        "render:answerMarker",
       );
-    });
-
-    this.answerMarkers.alternative.forEach((point) => {
-      this.safeAddObject(
-        {
-          x: point.x,
-          y: point.y,
-          type: "SQ",
-        },
-        "render:answerMarker:alternative",
-      );
-    });
+    }
 
     this.aiResponseSpots.forEach((spot) => {
       this.safeAddObject(

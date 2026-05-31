@@ -37,13 +37,7 @@ import { AI_RESPONSE_UX_MESSAGES } from "./solve/ai-response-ux/config.js";
 import { isOxProblem } from "./game/problem-type.js";
 import { createAiResponseUxController } from "./solve/ai-response-ux/controller.js";
 import { advanceCorrectSequence, getProblemCorrectSequence } from "./game/sequence.js";
-import {
-  isCorrectMove,
-  isCorrectOxAnswer,
-  isCorrectUserMove,
-  classifyUserMove,
-  ANSWER_QUALITY,
-} from "./game/validation.js";
+import { isCorrectMove, isCorrectOxAnswer, isCorrectUserMove } from "./game/validation.js";
 import {
   canManageAcademy,
   canManageAttendance,
@@ -1690,7 +1684,6 @@ function handleUserMove(point) {
   });
 
   if (isCorrectUserMove(point, problem, appState.solvedAnswerKeys)) {
-    const answerQuality = classifyUserMove(point, problem, appState.solvedAnswerKeys, BOARD_SIZE);
     const sequenceResult = advanceCorrectSequence(
       problem,
       appState.playedMoves,
@@ -1704,7 +1697,7 @@ function handleUserMove(point) {
       return;
     }
 
-    completeProblem(problem, { answerQuality });
+    completeProblem(problem);
     return;
   }
 
@@ -2723,13 +2716,8 @@ function getProblemStoreErrorMessage(error, actionLabel) {
     return "Supabase 삭제 권한이 적용되지 않아 실제로 삭제된 문제가 없습니다. README의 delete_problem SQL을 실행해 주세요.";
   }
 
-  if (
-    message.includes("correct_move") ||
-    message.includes("correct_sequence") ||
-    message.includes("best_moves") ||
-    message.includes("alternative_moves")
-  ) {
-    return "Supabase problems 테이블에 correct_move/best_moves/alternative_moves/correct_sequence 컬럼이 필요합니다.";
+  if (message.includes("correct_move") || message.includes("correct_sequence")) {
+    return "Supabase problems 테이블에 correct_move/correct_sequence 컬럼이 필요합니다.";
   }
 
   if (message.includes("display_order")) {
@@ -2794,12 +2782,6 @@ function cloneProblem(problem) {
     levelGroup: normalizeLevelGroup(problem.levelGroup),
     type: problem.type === "ox" ? "ox" : "board",
     correctMove: problem.correctMove ? { ...problem.correctMove } : null,
-    bestMoves: Array.isArray(problem.bestMoves)
-      ? problem.bestMoves.map((move) => ({ ...move }))
-      : [],
-    alternativeMoves: Array.isArray(problem.alternativeMoves)
-      ? problem.alternativeMoves.map((move) => ({ ...move }))
-      : [],
     stones: cloneBoardStones(problem.stones),
   };
 
@@ -2926,8 +2908,7 @@ function handleCategoryCompleteAction(action) {
   }
 }
 
-function completeProblem(problem, { answerQuality = ANSWER_QUALITY.best } = {}) {
-  const isAlternativeAnswer = answerQuality === ANSWER_QUALITY.alternative;
+function completeProblem(problem) {
   const levelGroup = normalizeLevelGroup(problem.levelGroup);
   const progressBeforeSolve = buildStudentProgressMap();
   const wasCategoryCompleteBefore = getCategoryProgressRow(
@@ -2946,17 +2927,12 @@ function completeProblem(problem, { answerQuality = ANSWER_QUALITY.best } = {}) 
     savedProgress = studentProgressService.markProblemSolved({
       user: getCurrentUser(),
       problem,
-      answerQuality,
     });
   });
   const progressAfterSolve = buildStudentProgressMap(savedProgress);
-  setStatus(isAlternativeAnswer ? "좋은 수입니다." : "정답입니다.");
+  setStatus("정답입니다.");
   setFeedback(
-    isOxProblem(problem)
-      ? "O/X 판정이 맞습니다."
-      : isAlternativeAnswer
-        ? "실전적으로 충분히 좋은 수입니다."
-        : "핵심 급소를 찾았습니다.",
+    isOxProblem(problem) ? "O/X 판정이 맞습니다." : "핵심 급소를 찾았습니다.",
   );
   logSgfForExtension(problem);
 
@@ -2968,13 +2944,7 @@ function completeProblem(problem, { answerQuality = ANSWER_QUALITY.best } = {}) 
       });
     });
     const nextReviewProblem = getNextReviewProblemInSession();
-    const preset = nextReviewProblem
-      ? isAlternativeAnswer
-        ? "alternativeReviewNext"
-        : "correctReviewNext"
-      : isAlternativeAnswer
-        ? "alternativeReviewDone"
-        : "correctReviewDone";
+    const preset = nextReviewProblem ? "correctReviewNext" : "correctReviewDone";
     boardFeedbackOverlay.showCorrectPreset(preset, { duration: 1000 });
 
     if (nextReviewProblem) {
@@ -2996,14 +2966,9 @@ function completeProblem(problem, { answerQuality = ANSWER_QUALITY.best } = {}) 
     const session = appState.examSession;
     const nextIndex = session.currentIndex + 1;
     const hasNext = nextIndex < session.problemIds.length;
-    const preset = hasNext
-      ? isAlternativeAnswer
-        ? "alternativeNext"
-        : "correctNext"
-      : isAlternativeAnswer
-        ? "alternativeLast"
-        : "correctLast";
-    boardFeedbackOverlay.showCorrectPreset(preset, { duration: 1000 });
+    boardFeedbackOverlay.showCorrectPreset(hasNext ? "correctNext" : "correctLast", {
+      duration: 1000,
+    });
 
     if (hasNext) {
       appState.autoNextTimeout = window.setTimeout(() => {
@@ -3027,7 +2992,6 @@ function completeProblem(problem, { answerQuality = ANSWER_QUALITY.best } = {}) 
       levelGroup,
       wasCategoryCompleteBefore,
       progressAfterSolve,
-      answerQuality,
     });
     return;
   }
@@ -3044,13 +3008,7 @@ function completeProblem(problem, { answerQuality = ANSWER_QUALITY.best } = {}) 
   }
 
   const nextProblem = resolveNextProblemAfterComplete(problem);
-  const preset = nextProblem
-    ? isAlternativeAnswer
-      ? "alternativeNext"
-      : "correctNext"
-    : isAlternativeAnswer
-      ? "alternativeLast"
-      : "correctLast";
+  const preset = nextProblem ? "correctNext" : "correctLast";
   boardFeedbackOverlay.showCorrectPreset(preset, { duration: 1000 });
 
   logLearningFlow("completeProblem — auto next (problem bank)", {
@@ -3067,11 +3025,7 @@ function completeProblem(problem, { answerQuality = ANSWER_QUALITY.best } = {}) 
   }
 }
 
-function completeProblemInStudyPath(
-  problem,
-  { levelGroup, wasCategoryCompleteBefore, progressAfterSolve, answerQuality = ANSWER_QUALITY.best },
-) {
-  const isAlternativeAnswer = answerQuality === ANSWER_QUALITY.alternative;
+function completeProblemInStudyPath(problem, { levelGroup, wasCategoryCompleteBefore, progressAfterSolve }) {
   const studyPath = appState.studySolvePath;
   const remainingProblemIds = getRemainingUnsolvedProblemIds(studyPath, progressAfterSolve);
   const isActuallyLastProblem = isActuallyLastProblemInStudyPath(studyPath, progressAfterSolve);
@@ -3113,10 +3067,7 @@ function completeProblemInStudyPath(
     logLearningFlow("completeProblem — study path last (no modal context)", {
       categoryName: problem.category,
     });
-    boardFeedbackOverlay.showCorrectPreset(
-      isAlternativeAnswer ? "alternativeLast" : "correctLast",
-      { duration: 1000 },
-    );
+    boardFeedbackOverlay.showCorrectPreset("correctLast", { duration: 1000 });
     return;
   }
 
@@ -3130,17 +3081,11 @@ function completeProblemInStudyPath(
       renderStudyScreen();
       return;
     }
-    boardFeedbackOverlay.showCorrectPreset(
-      isAlternativeAnswer ? "alternativeLast" : "correctLast",
-      { duration: 1000 },
-    );
+    boardFeedbackOverlay.showCorrectPreset("correctLast", { duration: 1000 });
     return;
   }
 
-  boardFeedbackOverlay.showCorrectPreset(
-    isAlternativeAnswer ? "alternativeNext" : "correctNext",
-    { duration: 1000 },
-  );
+  boardFeedbackOverlay.showCorrectPreset("correctNext", { duration: 1000 });
   logLearningFlow("completeProblem — study path auto next", {
     problemId: problem.id,
     nextProblemId: nextProblem.problem.id,

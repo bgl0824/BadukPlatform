@@ -23,26 +23,6 @@ const PRESETS = {
     title: "정답!",
     subtitle: "복습을 마쳤어요.",
   },
-  alternative: {
-    title: "좋은 수!",
-    subtitle: "실전적으로 충분히 좋은 수입니다.",
-  },
-  alternativeNext: {
-    title: "좋은 수!",
-    subtitle: "잠시 후 다음 문제로 이동합니다.",
-  },
-  alternativeLast: {
-    title: "좋은 수!",
-    subtitle: "이 카테고리의 마지막 문제예요.",
-  },
-  alternativeReviewNext: {
-    title: "좋은 수!",
-    subtitle: "다음 복습 문제로 이동합니다.",
-  },
-  alternativeReviewDone: {
-    title: "좋은 수!",
-    subtitle: "복습을 마쳤어요.",
-  },
   wrong: {
     title: "아쉬워요",
     subtitle: "다시 한 번 도전해 보세요.",
