@@ -39,11 +39,15 @@ const DEFAULT_KATAGO_MAX_TIME = 0.15;
 /** 오답 응수(wrong reveal) — 정확도 우선 */
 const WRONG_KATAGO_MAX_VISITS = 24;
 const WRONG_KATAGO_MAX_TIME = 0.45;
-const WRONG_KATAGO_REPLACE_MS = 1100;
+const WRONG_KATAGO_REPLACE_MS = 2000;
 const WRONG_KATAGO_REPLACE_MS_MIN = 1000;
-const WRONG_KATAGO_REPLACE_MS_MAX = 1200;
+const WRONG_KATAGO_REPLACE_MS_MAX = 2000;
 /** requestStart 로그·캐시 확인용 — Network 탭에서 이 문자열로 배포본 구분 */
-export const WRONG_REVEAL_LIMITS_TAG = "24.0.45.1100";
+export const WRONG_REVEAL_LIMITS_TAG = "24.0.45.2000";
+
+/** wrong-reveal 최종 응수 출처 (로그·디버그용) */
+export const SELECTED_SOURCE_KATAGO = "katago";
+export const SELECTED_SOURCE_LOCAL_TACTICAL = "local_tactical";
 
 function readConfiguredWrongLimit(configKey) {
   const raw = window.BadukConfig?.[configKey];
@@ -334,6 +338,7 @@ function tryWrongRevealLocalFallback({
   const totalElapsedMs = Date.now() - requestStart;
   console.warn("[KatagoRespond] wrong-reveal local fallback", {
     reason,
+    selectedSource: SELECTED_SOURCE_LOCAL_TACTICAL,
     katagoElapsedMs,
     selectedReason: fallback.selectedReason,
   });
@@ -351,6 +356,7 @@ function tryWrongRevealLocalFallback({
     ok: true,
     point: fallback.point,
     source: TACTICAL_FALLBACK_SOURCE,
+    selectedSource: SELECTED_SOURCE_LOCAL_TACTICAL,
     move: fallback.move,
     allowedRegion,
     regionCandidates,
@@ -483,6 +489,7 @@ function finalizeKatagoSelection({
     ok: true,
     point: selected.point,
     source: KATAGO_SOURCE,
+    selectedSource: SELECTED_SOURCE_KATAGO,
     move: selected.move,
     allowedRegion,
     rawCandidates,
@@ -499,6 +506,7 @@ function finalizeKatagoSelection({
     usedLocalFallback: false,
   };
   logKatagoRespondSuccess("tactical selection", {
+    selectedSource: SELECTED_SOURCE_KATAGO,
     selectedReason: success.selectedReason,
     move: success.move,
     studentMoveResult,
@@ -516,15 +524,22 @@ function formatWrongRevealFallbackResult({
   katagoElapsedMs,
   maxVisits,
   maxTime,
+  replaceMs,
   reason,
 }) {
   const totalElapsedMs = Date.now() - requestStart;
   console.warn("[KatagoRespond] wrong-reveal using local tactical", {
     reason,
+    selectedSource: SELECTED_SOURCE_LOCAL_TACTICAL,
     limitsTag: WRONG_REVEAL_LIMITS_TAG,
     maxVisits,
     maxTime,
+    replaceMs,
     katagoElapsedMs,
+    replaceWindowMissedByMs:
+      replaceMs != null && katagoElapsedMs > replaceMs
+        ? katagoElapsedMs - replaceMs
+        : null,
     selectedReason: fallback.selectedReason,
     move: fallback.move,
     totalElapsedMs,
@@ -543,6 +558,7 @@ function formatWrongRevealFallbackResult({
     ok: true,
     point: fallback.point,
     source: TACTICAL_FALLBACK_SOURCE,
+    selectedSource: SELECTED_SOURCE_LOCAL_TACTICAL,
     move: fallback.move,
     allowedRegion,
     scoredCandidates: fallback.scoredCandidates,
@@ -717,20 +733,37 @@ async function requestKatagoRespondWrong({
   ]);
 
   if (raced.kind === "wait") {
+    const elapsedAtExpire = Date.now() - requestStart;
+    console.warn("[KatagoRespond] replace window expired before KataGo finished", {
+      reason: "replace_window_expired",
+      selectedSource: SELECTED_SOURCE_LOCAL_TACTICAL,
+      replaceMs,
+      katagoElapsedMs: elapsedAtExpire,
+      replaceWindowMissedByMs: Math.max(0, elapsedAtExpire - replaceMs),
+    });
     controller.abort();
     if (immediateFallback.ok) {
       return formatWrongRevealFallbackResult({
         fallback: immediateFallback,
         allowedRegion,
         requestStart,
-        katagoElapsedMs: Date.now() - requestStart,
+        katagoElapsedMs: elapsedAtExpire,
         maxVisits,
         maxTime,
+        replaceMs,
         reason: "replace_window_expired",
       });
     }
   } else if (raced.result?.ok) {
     raced.result.usedLocalFallback = false;
+    raced.result.selectedSource = SELECTED_SOURCE_KATAGO;
+    console.log("[KatagoRespond] wrong-reveal selected", {
+      selectedSource: SELECTED_SOURCE_KATAGO,
+      replaceMs,
+      katagoElapsedMs: raced.result.katagoElapsedMs,
+      move: raced.result.move,
+      selectedReason: raced.result.selectedReason,
+    });
     return raced.result;
   }
 
@@ -742,12 +775,21 @@ async function requestKatagoRespondWrong({
       katagoElapsedMs: Date.now() - requestStart,
       maxVisits,
       maxTime,
+      replaceMs,
       reason: raced.kind === "katago" ? "katago_rejected" : "no_katago",
     });
   }
 
   const lateKatago = await katagoTask;
   if (lateKatago?.ok) {
+    lateKatago.selectedSource = SELECTED_SOURCE_KATAGO;
+    console.log("[KatagoRespond] wrong-reveal selected (late KataGo)", {
+      selectedSource: SELECTED_SOURCE_KATAGO,
+      replaceMs,
+      katagoElapsedMs: lateKatago.katagoElapsedMs,
+      move: lateKatago.move,
+      selectedReason: lateKatago.selectedReason,
+    });
     return lateKatago;
   }
 

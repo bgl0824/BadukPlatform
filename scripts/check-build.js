@@ -88,8 +88,8 @@ const katagoCore = readProjectFile("api/lib/katago-respond-core.js");
 for (const needle of [
   "katagoWrongMaxVisits: 24",
   "katagoWrongMaxTime: 0.45",
-  "katagoWrongReplaceMs: 1100",
-  'wrongRevealLimitsTag: "24.0.45.1100"',
+  "katagoWrongReplaceMs: 2000",
+  'wrongRevealLimitsTag: "24.0.45.2000"',
 ]) {
   if (!runtimeConfig.includes(needle)) {
     throw new Error(`js/runtime-config.js missing ${needle} — run npm run build`);
@@ -99,9 +99,11 @@ for (const needle of [
 for (const needle of [
   "const WRONG_KATAGO_MAX_VISITS = 24",
   "const WRONG_KATAGO_MAX_TIME = 0.45",
-  'WRONG_REVEAL_LIMITS_TAG = "24.0.45.1100"',
+  'WRONG_REVEAL_LIMITS_TAG = "24.0.45.2000"',
   "[KatagoRespond] client module loaded",
   "wrongRevealResolveTrace",
+  "SELECTED_SOURCE_KATAGO",
+  "replace window expired before KataGo finished",
 ]) {
   if (!katagoClient.includes(needle)) {
     throw new Error(`katago-respond-client.js missing ${needle}`);
