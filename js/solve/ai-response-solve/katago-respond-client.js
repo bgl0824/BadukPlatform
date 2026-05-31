@@ -44,10 +44,102 @@ const WRONG_KATAGO_REPLACE_MS_MIN = 1000;
 const WRONG_KATAGO_REPLACE_MS_MAX = 2000;
 /** requestStart 로그·캐시 확인용 — Network 탭에서 이 문자열로 배포본 구분 */
 export const WRONG_REVEAL_LIMITS_TAG = "24.0.45.2000";
+export const KATAGO_SELECTION_LOG_TAG = "katago-candidate-selection-v1";
 
 /** wrong-reveal 최종 응수 출처 (로그·디버그용) */
 export const SELECTED_SOURCE_KATAGO = "katago";
+export const SELECTED_SOURCE_TACTICAL_OVERRIDE = "tactical_override";
 export const SELECTED_SOURCE_LOCAL_TACTICAL = "local_tactical";
+
+function formatKatagoCandidatePolicy(policyPrior) {
+  if (policyPrior == null || !Number.isFinite(Number(policyPrior))) {
+    return "-";
+  }
+  return Number(policyPrior).toFixed(3);
+}
+
+function formatKatagoCandidateLine(candidate) {
+  const visits =
+    candidate?.visits != null && Number.isFinite(Number(candidate.visits))
+      ? String(candidate.visits)
+      : "-";
+  const policy = formatKatagoCandidatePolicy(candidate?.policyPrior);
+  return `${candidate?.move ?? "?"} visits=${visits} policy=${policy}`;
+}
+
+function isSameMovePoint(candidate, selected) {
+  if (!candidate || !selected?.point) {
+    return false;
+  }
+  if (
+    Number.isInteger(candidate.x) &&
+    Number.isInteger(candidate.y) &&
+    Number.isInteger(selected.point.x) &&
+    Number.isInteger(selected.point.y)
+  ) {
+    return candidate.x === selected.point.x && candidate.y === selected.point.y;
+  }
+  const candidateMove = candidate.move ?? formatCoordLabel(candidate);
+  const selectedMove = selected.move ?? formatCoordLabel(selected.point);
+  return Boolean(candidateMove && selectedMove && candidateMove === selectedMove);
+}
+
+function findKatagoRankOfSelected(rawCandidates, selected) {
+  if (!selected?.point || !Array.isArray(rawCandidates)) {
+    return null;
+  }
+  const index = rawCandidates.findIndex((candidate) =>
+    isSameMovePoint(candidate, selected),
+  );
+  return index >= 0 ? index + 1 : null;
+}
+
+function resolveKatagoMoveSelectionSource(rawCandidates, selected) {
+  const katagoFirst = rawCandidates?.[0];
+  if (!katagoFirst || !selected?.point) {
+    return SELECTED_SOURCE_TACTICAL_OVERRIDE;
+  }
+  return isSameMovePoint(katagoFirst, selected)
+    ? SELECTED_SOURCE_KATAGO
+    : SELECTED_SOURCE_TACTICAL_OVERRIDE;
+}
+
+function buildKatagoCandidateSelectionBreakdown({
+  rawCandidates,
+  selected,
+  selectedReason,
+}) {
+  const top5 = (rawCandidates ?? []).slice(0, 5);
+  const katagoTopMove = top5[0]?.move ?? null;
+  const selectedMove = selected?.move ?? null;
+  const selectedSource = resolveKatagoMoveSelectionSource(rawCandidates, selected);
+  const selectedKatagoRank = findKatagoRankOfSelected(rawCandidates, selected);
+
+  return {
+    katagoCandidates: top5.map((candidate) => formatKatagoCandidateLine(candidate)),
+    katagoTopMove,
+    selectedMove,
+    selectedReason,
+    selectedSource,
+    selectedKatagoRank,
+    matchesKatagoTop: selectedSource === SELECTED_SOURCE_KATAGO,
+  };
+}
+
+function logKatagoCandidateSelectionBreakdown({
+  rawCandidates,
+  selected,
+  selectedReason,
+}) {
+  console.info(
+    "[KatagoRespond] katago candidate selection",
+    buildKatagoCandidateSelectionBreakdown({
+      rawCandidates,
+      selected,
+      selectedReason,
+    }),
+  );
+}
 
 function readConfiguredWrongLimit(configKey) {
   const raw = window.BadukConfig?.[configKey];
@@ -135,6 +227,7 @@ function resolveWrongRevealLimitsWithTrace() {
 
 console.info("[KatagoRespond] client module loaded", {
   limitsTag: WRONG_REVEAL_LIMITS_TAG,
+  selectionLogTag: KATAGO_SELECTION_LOG_TAG,
   wrongRevealConstants: {
     maxVisits: WRONG_KATAGO_MAX_VISITS,
     maxTime: WRONG_KATAGO_MAX_TIME,
@@ -397,10 +490,11 @@ function finalizeKatagoSelection({
     studentMoveResult,
   });
 
-  console.log("[KatagoRespond] aiResponseStyle", education.aiResponseStyle ?? education.style);
-  console.log("[KatagoRespond] scoredCandidates", education.scoredCandidates);
-  console.log("[KatagoRespond] selectedMove", education.selected ?? null);
-  console.log("[KatagoRespond] selectedReason", education.selectedReason);
+  logKatagoCandidateSelectionBreakdown({
+    rawCandidates,
+    selected: education.selected,
+    selectedReason: education.selectedReason,
+  });
 
   const selected = education.selected;
   const style = education.aiResponseStyle ?? education.style ?? resolveAiResponseStyle(problem);
@@ -475,6 +569,7 @@ function finalizeKatagoSelection({
   }
 
   const totalElapsedMs = Date.now() - requestStart;
+  const moveSelectionSource = resolveKatagoMoveSelectionSource(rawCandidates, selected);
   logKatagoRespondTiming({
     requestStart,
     katagoElapsedMs,
@@ -489,7 +584,7 @@ function finalizeKatagoSelection({
     ok: true,
     point: selected.point,
     source: KATAGO_SOURCE,
-    selectedSource: SELECTED_SOURCE_KATAGO,
+    selectedSource: moveSelectionSource,
     move: selected.move,
     allowedRegion,
     rawCandidates,
@@ -506,7 +601,9 @@ function finalizeKatagoSelection({
     usedLocalFallback: false,
   };
   logKatagoRespondSuccess("tactical selection", {
-    selectedSource: SELECTED_SOURCE_KATAGO,
+    selectedSource: moveSelectionSource,
+    selectedKatagoRank: findKatagoRankOfSelected(rawCandidates, selected),
+    katagoTopMove: rawCandidates?.[0]?.move ?? null,
     selectedReason: success.selectedReason,
     move: success.move,
     studentMoveResult,
@@ -756,13 +853,25 @@ async function requestKatagoRespondWrong({
     }
   } else if (raced.result?.ok) {
     raced.result.usedLocalFallback = false;
-    raced.result.selectedSource = SELECTED_SOURCE_KATAGO;
-    console.log("[KatagoRespond] wrong-reveal selected", {
-      selectedSource: SELECTED_SOURCE_KATAGO,
+    const selectionBreakdown = buildKatagoCandidateSelectionBreakdown({
+      rawCandidates: raced.result.rawCandidates,
+      selected:
+        raced.result.selectedCandidate ??
+        { point: raced.result.point, move: raced.result.move },
+      selectedReason: raced.result.selectedReason,
+    });
+    raced.result.selectedSource = selectionBreakdown.selectedSource;
+    logKatagoCandidateSelectionBreakdown({
+      rawCandidates: raced.result.rawCandidates,
+      selected:
+        raced.result.selectedCandidate ??
+        { point: raced.result.point, move: raced.result.move },
+      selectedReason: raced.result.selectedReason,
+    });
+    console.info("[KatagoRespond] wrong-reveal selected", {
+      ...selectionBreakdown,
       replaceMs,
       katagoElapsedMs: raced.result.katagoElapsedMs,
-      move: raced.result.move,
-      selectedReason: raced.result.selectedReason,
     });
     return raced.result;
   }
@@ -782,13 +891,25 @@ async function requestKatagoRespondWrong({
 
   const lateKatago = await katagoTask;
   if (lateKatago?.ok) {
-    lateKatago.selectedSource = SELECTED_SOURCE_KATAGO;
-    console.log("[KatagoRespond] wrong-reveal selected (late KataGo)", {
-      selectedSource: SELECTED_SOURCE_KATAGO,
+    const selectionBreakdown = buildKatagoCandidateSelectionBreakdown({
+      rawCandidates: lateKatago.rawCandidates,
+      selected:
+        lateKatago.selectedCandidate ??
+        { point: lateKatago.point, move: lateKatago.move },
+      selectedReason: lateKatago.selectedReason,
+    });
+    lateKatago.selectedSource = selectionBreakdown.selectedSource;
+    logKatagoCandidateSelectionBreakdown({
+      rawCandidates: lateKatago.rawCandidates,
+      selected:
+        lateKatago.selectedCandidate ??
+        { point: lateKatago.point, move: lateKatago.move },
+      selectedReason: lateKatago.selectedReason,
+    });
+    console.info("[KatagoRespond] wrong-reveal selected (late KataGo)", {
+      ...selectionBreakdown,
       replaceMs,
       katagoElapsedMs: lateKatago.katagoElapsedMs,
-      move: lateKatago.move,
-      selectedReason: lateKatago.selectedReason,
     });
     return lateKatago;
   }

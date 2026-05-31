@@ -100,9 +100,12 @@ for (const needle of [
   "const WRONG_KATAGO_MAX_VISITS = 24",
   "const WRONG_KATAGO_MAX_TIME = 0.45",
   'WRONG_REVEAL_LIMITS_TAG = "24.0.45.2000"',
+  'KATAGO_SELECTION_LOG_TAG = "katago-candidate-selection-v1"',
   "[KatagoRespond] client module loaded",
   "wrongRevealResolveTrace",
   "SELECTED_SOURCE_KATAGO",
+  "SELECTED_SOURCE_TACTICAL_OVERRIDE",
+  "[KatagoRespond] katago candidate selection",
   "replace window expired before KataGo finished",
 ]) {
   if (!katagoClient.includes(needle)) {
