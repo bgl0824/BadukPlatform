@@ -81,5 +81,39 @@ for (const marker of authMarkers) {
   }
 }
 
+const runtimeConfig = readProjectFile("js/runtime-config.js");
+const katagoClient = readProjectFile("js/solve/ai-response-solve/katago-respond-client.js");
+const katagoCore = readProjectFile("api/lib/katago-respond-core.js");
+
+for (const needle of [
+  "katagoWrongMaxVisits: 24",
+  "katagoWrongMaxTime: 0.45",
+  "katagoWrongReplaceMs: 1100",
+  'wrongRevealLimitsTag: "24.0.45.1100"',
+]) {
+  if (!runtimeConfig.includes(needle)) {
+    throw new Error(`js/runtime-config.js missing ${needle} — run npm run build`);
+  }
+}
+
+for (const needle of [
+  "const WRONG_KATAGO_MAX_VISITS = 24",
+  "const WRONG_KATAGO_MAX_TIME = 0.45",
+  'WRONG_REVEAL_LIMITS_TAG = "24.0.45.1100"',
+]) {
+  if (!katagoClient.includes(needle)) {
+    throw new Error(`katago-respond-client.js missing ${needle}`);
+  }
+}
+
+for (const needle of [
+  "const WRONG_REVEAL_MAX_VISITS = 24",
+  "const WRONG_REVEAL_MAX_TIME = 0.45",
+]) {
+  if (!katagoCore.includes(needle)) {
+    throw new Error(`katago-respond-core.js missing ${needle}`);
+  }
+}
+
 console.log("BadukPlatform static build check passed.");
 console.log("Auth bundle ready for Vercel (baduk.app virtual email).");

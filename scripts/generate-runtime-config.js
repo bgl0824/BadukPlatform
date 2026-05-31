@@ -18,9 +18,38 @@ const katagoRespondApiEnabled =
 
 const katagoRespondMaxVisits = Number(process.env.KATAGO_RESPOND_MAX_VISITS) || 8;
 const katagoRespondMaxTime = Number(process.env.KATAGO_RESPOND_MAX_TIME) || 0.15;
-const katagoWrongMaxVisits = Number(process.env.KATAGO_WRONG_MAX_VISITS) || 24;
-const katagoWrongMaxTime = Number(process.env.KATAGO_WRONG_MAX_TIME) || 0.45;
-const katagoWrongReplaceMs = Number(process.env.KATAGO_WRONG_REPLACE_MS) || 1100;
+
+/** Wrong-reveal KataGo limits — always emitted into runtime-config.js */
+const WRONG_REVEAL_DEFAULTS = {
+  katagoWrongMaxVisits: 24,
+  katagoWrongMaxTime: 0.45,
+  katagoWrongReplaceMs: 1100,
+};
+
+function resolveWrongRevealNumber(envName, fallback) {
+  const raw = process.env[envName];
+  if (raw === undefined || raw === "") {
+    return fallback;
+  }
+  const parsed = Number(raw);
+  return Number.isFinite(parsed) && parsed > 0 ? parsed : fallback;
+}
+
+const katagoWrongMaxVisits = resolveWrongRevealNumber(
+  "KATAGO_WRONG_MAX_VISITS",
+  WRONG_REVEAL_DEFAULTS.katagoWrongMaxVisits,
+);
+const katagoWrongMaxTime = resolveWrongRevealNumber(
+  "KATAGO_WRONG_MAX_TIME",
+  WRONG_REVEAL_DEFAULTS.katagoWrongMaxTime,
+);
+const katagoWrongReplaceMs = resolveWrongRevealNumber(
+  "KATAGO_WRONG_REPLACE_MS",
+  WRONG_REVEAL_DEFAULTS.katagoWrongReplaceMs,
+);
+const wrongRevealLimitsTag = `${katagoWrongMaxVisits}.${katagoWrongMaxTime}.${katagoWrongReplaceMs}`;
+const authorWhiteResponseDelayMs =
+  Number(process.env.AUTHOR_WHITE_RESPONSE_DELAY_MS) || 500;
 
 const aiResponseSolveEnabled =
   process.env.AI_RESPONSE_SOLVE_ENABLED !== "false" &&
@@ -52,6 +81,8 @@ const contents = `(function () {
     katagoWrongMaxVisits: ${katagoWrongMaxVisits},
     katagoWrongMaxTime: ${katagoWrongMaxTime},
     katagoWrongReplaceMs: ${katagoWrongReplaceMs},
+    wrongRevealLimitsTag: ${JSON.stringify(wrongRevealLimitsTag)},
+    authorWhiteResponseDelayMs: ${authorWhiteResponseDelayMs},
     supabaseUrl: ${JSON.stringify(supabaseUrl)},
     supabaseKey: ${JSON.stringify(supabaseKey)},
     debugLogs: false,
@@ -62,8 +93,26 @@ const contents = `(function () {
 
 fs.writeFileSync(outputPath, contents);
 
+const written = fs.readFileSync(outputPath, "utf8");
+const requiredNeedles = [
+  `katagoWrongMaxVisits: ${katagoWrongMaxVisits}`,
+  `katagoWrongMaxTime: ${katagoWrongMaxTime}`,
+  `katagoWrongReplaceMs: ${katagoWrongReplaceMs}`,
+  `wrongRevealLimitsTag: ${JSON.stringify(wrongRevealLimitsTag)}`,
+];
+for (const needle of requiredNeedles) {
+  if (!written.includes(needle)) {
+    throw new Error(
+      `runtime-config.js generation failed — missing ${needle}. Check scripts/generate-runtime-config.js`,
+    );
+  }
+}
+
 const katagoServer = process.env.KATAGO_SERVER_URL || "(not set — set on Vercel for /api/katago/respond)";
 console.log("Runtime config generated.");
 console.log(`  katagoRespondApiEnabled: ${katagoRespondApiEnabled}`);
-console.log(`  katagoRespondApiUrl: ${katagoRespondApiUrl}`);
+console.log(`  katagoWrongMaxVisits: ${katagoWrongMaxVisits}`);
+console.log(`  katagoWrongMaxTime: ${katagoWrongMaxTime}`);
+console.log(`  katagoWrongReplaceMs: ${katagoWrongReplaceMs}`);
+console.log(`  wrongRevealLimitsTag: ${wrongRevealLimitsTag}`);
 console.log(`  KATAGO_SERVER_URL (Vercel server): ${katagoServer}`);

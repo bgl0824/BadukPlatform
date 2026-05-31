@@ -42,6 +42,8 @@ const WRONG_KATAGO_MAX_TIME = 0.45;
 const WRONG_KATAGO_REPLACE_MS = 1100;
 const WRONG_KATAGO_REPLACE_MS_MIN = 1000;
 const WRONG_KATAGO_REPLACE_MS_MAX = 1200;
+/** requestStart 로그·캐시 확인용 */
+export const WRONG_REVEAL_LIMITS_TAG = "24.0.45.1100";
 
 function getKatagoRespondMaxVisits() {
   const configured = Number(window.BadukConfig?.katagoRespondMaxVisits);
@@ -84,17 +86,31 @@ function getWrongKatagoReplaceMs() {
 
 function resolveKatagoLimits(studentMoveResult) {
   if (studentMoveResult === "wrong") {
-    return {
+    const limits = {
       maxVisits: getWrongKatagoMaxVisits(),
       maxTime: getWrongKatagoMaxTime(),
       replaceMs: getWrongKatagoReplaceMs(),
     };
+    return limits;
   }
   return {
     maxVisits: getKatagoRespondMaxVisits(),
     maxTime: getKatagoRespondMaxTime(),
     replaceMs: 0,
   };
+}
+
+function logWrongRevealLimitsResolved(limits) {
+  console.info("[KatagoRespond] wrong reveal limits resolved", {
+    limitsTag: WRONG_REVEAL_LIMITS_TAG,
+    resolved: limits,
+    badukConfig: {
+      katagoWrongMaxVisits: window.BadukConfig?.katagoWrongMaxVisits,
+      katagoWrongMaxTime: window.BadukConfig?.katagoWrongMaxTime,
+      katagoWrongReplaceMs: window.BadukConfig?.katagoWrongReplaceMs,
+      wrongRevealLimitsTag: window.BadukConfig?.wrongRevealLimitsTag,
+    },
+  });
 }
 
 function delay(ms) {
@@ -755,7 +771,14 @@ export async function requestKatagoRespond({
     maxVisits,
     maxTime,
     replaceMs: isWrongReveal ? replaceMs : null,
+    limitsTag: isWrongReveal ? WRONG_REVEAL_LIMITS_TAG : null,
+    configWrongMaxVisits: isWrongReveal ? window.BadukConfig?.katagoWrongMaxVisits : null,
+    configWrongMaxTime: isWrongReveal ? window.BadukConfig?.katagoWrongMaxTime : null,
   });
+
+  if (isWrongReveal) {
+    logWrongRevealLimitsResolved({ maxVisits, maxTime, replaceMs });
+  }
 
   if (isWrongReveal) {
     return requestKatagoRespondWrong({
