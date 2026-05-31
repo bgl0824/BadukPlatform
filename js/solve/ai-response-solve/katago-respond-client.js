@@ -42,8 +42,101 @@ const WRONG_KATAGO_MAX_TIME = 0.45;
 const WRONG_KATAGO_REPLACE_MS = 1100;
 const WRONG_KATAGO_REPLACE_MS_MIN = 1000;
 const WRONG_KATAGO_REPLACE_MS_MAX = 1200;
-/** requestStart 로그·캐시 확인용 */
+/** requestStart 로그·캐시 확인용 — Network 탭에서 이 문자열로 배포본 구분 */
 export const WRONG_REVEAL_LIMITS_TAG = "24.0.45.1100";
+
+function readConfiguredWrongLimit(configKey) {
+  const raw = window.BadukConfig?.[configKey];
+  const parsed = Number(raw);
+  return {
+    raw,
+    parsed: Number.isFinite(parsed) ? parsed : null,
+  };
+}
+
+function resolveWrongRevealLimitsWithTrace() {
+  const configVisits = readConfiguredWrongLimit("katagoWrongMaxVisits");
+  const configTime = readConfiguredWrongLimit("katagoWrongMaxTime");
+  const configReplace = readConfiguredWrongLimit("katagoWrongReplaceMs");
+
+  const visitsBase =
+    configVisits.parsed != null && configVisits.parsed > 0
+      ? configVisits.parsed
+      : WRONG_KATAGO_MAX_VISITS;
+  const visitsSource =
+    configVisits.parsed != null && configVisits.parsed > 0
+      ? "BadukConfig.katagoWrongMaxVisits"
+      : "client constant fallback";
+
+  const timeBase =
+    configTime.parsed != null && configTime.parsed > 0
+      ? configTime.parsed
+      : WRONG_KATAGO_MAX_TIME;
+  const timeSource =
+    configTime.parsed != null && configTime.parsed > 0
+      ? "BadukConfig.katagoWrongMaxTime"
+      : "client constant fallback";
+
+  const maxVisits = Math.min(visitsBase, WRONG_KATAGO_MAX_VISITS);
+  const maxTime = Math.min(timeBase, WRONG_KATAGO_MAX_TIME);
+
+  let replaceMs = WRONG_KATAGO_REPLACE_MS;
+  let replaceSource = "client constant fallback";
+  if (configReplace.parsed != null && configReplace.parsed > 0) {
+    replaceMs = Math.min(
+      Math.max(configReplace.parsed, WRONG_KATAGO_REPLACE_MS_MIN),
+      WRONG_KATAGO_REPLACE_MS_MAX,
+    );
+    replaceSource = "BadukConfig.katagoWrongReplaceMs (clamped)";
+  }
+
+  return {
+    maxVisits,
+    maxTime,
+    replaceMs,
+    trace: {
+      clientLimitsTag: WRONG_REVEAL_LIMITS_TAG,
+      clientConstants: {
+        maxVisits: WRONG_KATAGO_MAX_VISITS,
+        maxTime: WRONG_KATAGO_MAX_TIME,
+        replaceMs: WRONG_KATAGO_REPLACE_MS,
+      },
+      badukConfig: {
+        katagoWrongMaxVisits: configVisits,
+        katagoWrongMaxTime: configTime,
+        katagoWrongReplaceMs: configReplace,
+        wrongRevealLimitsTag: window.BadukConfig?.wrongRevealLimitsTag ?? null,
+      },
+      resolveSteps: {
+        maxVisits: {
+          source: visitsSource,
+          base: visitsBase,
+          ceiling: WRONG_KATAGO_MAX_VISITS,
+          resolved: maxVisits,
+        },
+        maxTime: {
+          source: timeSource,
+          base: timeBase,
+          ceiling: WRONG_KATAGO_MAX_TIME,
+          resolved: maxTime,
+        },
+        replaceMs: {
+          source: replaceSource,
+          resolved: replaceMs,
+        },
+      },
+    },
+  };
+}
+
+console.info("[KatagoRespond] client module loaded", {
+  limitsTag: WRONG_REVEAL_LIMITS_TAG,
+  wrongRevealConstants: {
+    maxVisits: WRONG_KATAGO_MAX_VISITS,
+    maxTime: WRONG_KATAGO_MAX_TIME,
+    replaceMs: WRONG_KATAGO_REPLACE_MS,
+  },
+});
 
 function getKatagoRespondMaxVisits() {
   const configured = Number(window.BadukConfig?.katagoRespondMaxVisits);
@@ -62,36 +155,21 @@ function getKatagoRespondMaxTime() {
 }
 
 function getWrongKatagoMaxVisits() {
-  const configured = Number(window.BadukConfig?.katagoWrongMaxVisits);
-  const base = Number.isFinite(configured) && configured > 0 ? configured : WRONG_KATAGO_MAX_VISITS;
-  return Math.min(base, WRONG_KATAGO_MAX_VISITS);
+  return resolveWrongRevealLimitsWithTrace().maxVisits;
 }
 
 function getWrongKatagoMaxTime() {
-  const configured = Number(window.BadukConfig?.katagoWrongMaxTime);
-  const base = Number.isFinite(configured) && configured > 0 ? configured : WRONG_KATAGO_MAX_TIME;
-  return Math.min(base, WRONG_KATAGO_MAX_TIME);
+  return resolveWrongRevealLimitsWithTrace().maxTime;
 }
 
 function getWrongKatagoReplaceMs() {
-  const configured = Number(window.BadukConfig?.katagoWrongReplaceMs);
-  if (Number.isFinite(configured) && configured > 0) {
-    return Math.min(
-      Math.max(configured, WRONG_KATAGO_REPLACE_MS_MIN),
-      WRONG_KATAGO_REPLACE_MS_MAX,
-    );
-  }
-  return WRONG_KATAGO_REPLACE_MS;
+  return resolveWrongRevealLimitsWithTrace().replaceMs;
 }
 
 function resolveKatagoLimits(studentMoveResult) {
   if (studentMoveResult === "wrong") {
-    const limits = {
-      maxVisits: getWrongKatagoMaxVisits(),
-      maxTime: getWrongKatagoMaxTime(),
-      replaceMs: getWrongKatagoReplaceMs(),
-    };
-    return limits;
+    const { maxVisits, maxTime, replaceMs } = resolveWrongRevealLimitsWithTrace();
+    return { maxVisits, maxTime, replaceMs };
   }
   return {
     maxVisits: getKatagoRespondMaxVisits(),
@@ -101,15 +179,11 @@ function resolveKatagoLimits(studentMoveResult) {
 }
 
 function logWrongRevealLimitsResolved(limits) {
+  const traced = resolveWrongRevealLimitsWithTrace();
   console.info("[KatagoRespond] wrong reveal limits resolved", {
     limitsTag: WRONG_REVEAL_LIMITS_TAG,
     resolved: limits,
-    badukConfig: {
-      katagoWrongMaxVisits: window.BadukConfig?.katagoWrongMaxVisits,
-      katagoWrongMaxTime: window.BadukConfig?.katagoWrongMaxTime,
-      katagoWrongReplaceMs: window.BadukConfig?.katagoWrongReplaceMs,
-      wrongRevealLimitsTag: window.BadukConfig?.wrongRevealLimitsTag,
-    },
+    trace: traced.trace,
   });
 }
 
@@ -447,6 +521,9 @@ function formatWrongRevealFallbackResult({
   const totalElapsedMs = Date.now() - requestStart;
   console.warn("[KatagoRespond] wrong-reveal using local tactical", {
     reason,
+    limitsTag: WRONG_REVEAL_LIMITS_TAG,
+    maxVisits,
+    maxTime,
     katagoElapsedMs,
     selectedReason: fallback.selectedReason,
     move: fallback.move,
@@ -734,8 +811,11 @@ export async function requestKatagoRespond({
     .map((move) => toMoveEntry(move))
     .filter(Boolean);
 
-  const { maxVisits, maxTime, replaceMs } = resolveKatagoLimits(studentMoveResult);
   const isWrongReveal = studentMoveResult === "wrong";
+  const wrongRevealResolved = isWrongReveal ? resolveWrongRevealLimitsWithTrace() : null;
+  const { maxVisits, maxTime, replaceMs } = wrongRevealResolved
+    ? wrongRevealResolved
+    : resolveKatagoLimits(studentMoveResult);
 
   const payload = {
     problemId: problem.id,
@@ -774,6 +854,11 @@ export async function requestKatagoRespond({
     limitsTag: isWrongReveal ? WRONG_REVEAL_LIMITS_TAG : null,
     configWrongMaxVisits: isWrongReveal ? window.BadukConfig?.katagoWrongMaxVisits : null,
     configWrongMaxTime: isWrongReveal ? window.BadukConfig?.katagoWrongMaxTime : null,
+    configWrongReplaceMs: isWrongReveal ? window.BadukConfig?.katagoWrongReplaceMs : null,
+    configWrongRevealLimitsTag: isWrongReveal
+      ? window.BadukConfig?.wrongRevealLimitsTag
+      : null,
+    wrongRevealResolveTrace: wrongRevealResolved?.trace ?? null,
   });
 
   if (isWrongReveal) {

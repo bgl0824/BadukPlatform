@@ -100,6 +100,8 @@ for (const needle of [
   "const WRONG_KATAGO_MAX_VISITS = 24",
   "const WRONG_KATAGO_MAX_TIME = 0.45",
   'WRONG_REVEAL_LIMITS_TAG = "24.0.45.1100"',
+  "[KatagoRespond] client module loaded",
+  "wrongRevealResolveTrace",
 ]) {
   if (!katagoClient.includes(needle)) {
     throw new Error(`katago-respond-client.js missing ${needle}`);
