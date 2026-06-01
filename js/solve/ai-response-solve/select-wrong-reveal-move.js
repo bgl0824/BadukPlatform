@@ -1,4 +1,8 @@
-import { getExpectedWrongRevealAuthorWhite } from "./answer-sequence.js";
+import {
+  formatCoordLabel,
+  logWrongRevealExpectedMoveContext,
+  resolveWrongRevealExpectedWhite,
+} from "./answer-sequence.js";
 import { generateGoalCandidates } from "./goal-candidates.js";
 import { resolveProblemGoal } from "./problem-goal.js";
 import {
@@ -33,14 +37,31 @@ function selectAuthorWhiteCandidate({
   blackAnswerIndex,
   boardSize,
   candidates,
+  currentPly = null,
+  lastBlackMove = null,
 }) {
   if (!enabled) {
     return { selected: null, attempt: { move: null, legal: false, used: false, rejectReason: "disabled_by_flag" } };
   }
 
-  const expected = getExpectedWrongRevealAuthorWhite(problem, blackAnswerIndex, boardSize);
-  if (!expected) {
-    return { selected: null, attempt: { move: null, legal: false, used: false, rejectReason: "missing_sequence" } };
+  const resolved = resolveWrongRevealExpectedWhite({
+    problem,
+    boardSize,
+    blackAnswerIndex,
+    currentPly,
+    lastBlackMove,
+  });
+  const expected = resolved.entry;
+  if (!expected || resolved.invalid) {
+    return {
+      selected: null,
+      attempt: {
+        move: null,
+        legal: false,
+        used: false,
+        rejectReason: resolved.invalidReason ?? "missing_sequence",
+      },
+    };
   }
 
   const matched = candidates.find((candidate) => candidate.x === expected.x && candidate.y === expected.y);
@@ -78,6 +99,7 @@ export function selectWrongRevealMove({
   targetContext = null,
   problemGoal = null,
   blackAnswerIndex = 0,
+  currentPly = null,
   rawCandidates = [],
 }) {
   const style = resolveAiResponseStyle(problem);
@@ -85,12 +107,24 @@ export function selectWrongRevealMove({
   const resolvedTargetContext =
     targetContext ?? resolveTargetWhiteGroup(problem, stones, boardSize, stoneColors);
   const katagoTopMove = rawCandidates?.[0]?.move ?? null;
-  const expected = getExpectedWrongRevealAuthorWhite(problem, blackAnswerIndex, boardSize);
+  const expectedResolved = logWrongRevealExpectedMoveContext({
+    problem,
+    boardSize,
+    blackAnswerIndex,
+    currentPly,
+    lastBlackMove,
+  });
+  const expected = expectedResolved.entry;
+  const expectedInvalid = expectedResolved.invalid;
+  const expectedInvalidReason = expectedResolved.invalidReason;
   const expectedPoint =
-    expected && Number.isInteger(expected.x) && Number.isInteger(expected.y)
+    !expectedInvalid &&
+    expected &&
+    Number.isInteger(expected.x) &&
+    Number.isInteger(expected.y)
       ? { x: expected.x, y: expected.y }
       : null;
-  const expectedMove = expected?.label ?? null;
+  const expectedMove = expectedPoint ? expected.label ?? formatCoordLabel(expectedPoint) : null;
 
   const { candidates: goalCandidates, meta } = generateGoalCandidates({
     problemGoal: resolvedGoal,
@@ -135,6 +169,8 @@ export function selectWrongRevealMove({
     console.warn("[KatagoRespond] goal-first expected move trace", {
       expectedMove,
       expectedPoint,
+      expectedInvalid,
+      expectedInvalidReason,
       expectedRawRank,
       stage: {
         generated: meta?.trace?.generated ?? false,
@@ -192,6 +228,8 @@ export function selectWrongRevealMove({
     blackAnswerIndex,
     boardSize,
     candidates: goalCandidates,
+    currentPly,
+    lastBlackMove,
   });
   if (author.selected) {
     return {
@@ -289,6 +327,8 @@ export function selectWrongRevealMove({
   console.warn("[KatagoRespond] goal-first expected move trace", {
     expectedMove,
     expectedPoint,
+    expectedInvalid,
+    expectedInvalidReason,
     expectedRawRank,
     stage: {
       generated: meta?.trace?.generated ?? false,

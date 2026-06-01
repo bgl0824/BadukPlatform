@@ -302,10 +302,191 @@ export function getExpectedAuthorWhite(session) {
   return null;
 }
 
+function isSameCoord(a, b) {
+  return (
+    a &&
+    b &&
+    Number.isInteger(a.x) &&
+    Number.isInteger(a.y) &&
+    a.x === b.x &&
+    a.y === b.y
+  );
+}
+
+function formatSequenceEntry(entry) {
+  if (!entry) {
+    return null;
+  }
+  return {
+    ply: entry.ply ?? null,
+    color: entry.color,
+    move: entry.label ?? formatCoordLabel(entry),
+    x: entry.x,
+    y: entry.y,
+  };
+}
+
+/**
+ * 오답 흑 착수 직후 fullAnswerSequence에서 "이번 백 수"를 해석한다.
+ * - 우선 currentPly - 1 (오답 흑 직후 currentPly는 백 차례)
+ * - blackAnswerIndex * 2 + 1 과 비교해 불일치 시 로그용으로 남김
+ *
+ * @param {object} params
+ * @returns {{
+ *   entry: SequenceMove|null,
+ *   invalid: boolean,
+ *   invalidReason: string|null,
+ *   sequenceIndex: number|null,
+ *   sequenceIndexFromPly: number|null,
+ *   sequenceIndexFromBlackAnswerIndex: number|null,
+ *   indexMismatch: boolean,
+ *   fullSequence: SequenceMove[],
+ *   blackAnswers: SequenceMove[],
+ *   whiteAnswers: SequenceMove[],
+ *   answerMoveCount: number,
+ * }}
+ */
+export function resolveWrongRevealExpectedWhite({
+  problem,
+  boardSize = 19,
+  blackAnswerIndex = 0,
+  currentPly = null,
+  lastBlackMove = null,
+}) {
+  const { answerMoveCount, fullSequence, blackAnswers, whiteAnswers } =
+    resolveAnswerSequenceConfig(problem, boardSize);
+
+  const sequenceIndexFromBlackAnswerIndex = blackAnswerIndex * 2 + 1;
+  const sequenceIndexFromPly =
+    Number.isInteger(currentPly) && currentPly > 0 ? currentPly - 1 : null;
+
+  let sequenceIndex = sequenceIndexFromBlackAnswerIndex;
+  if (sequenceIndexFromPly != null) {
+    sequenceIndex = sequenceIndexFromPly;
+  }
+
+  const entryAtIndex = fullSequence[sequenceIndex] ?? null;
+  const entry =
+    entryAtIndex?.color === COLOR_WHITE
+      ? entryAtIndex
+      : whiteAnswers.find((move) => move.ply === currentPly) ??
+        fullSequence.find(
+          (move, index) =>
+            move.color === COLOR_WHITE &&
+            (index === sequenceIndex || index === sequenceIndexFromBlackAnswerIndex),
+        ) ??
+        null;
+
+  const base = {
+    entry: null,
+    invalid: false,
+    invalidReason: null,
+    sequenceIndex: entry ? sequenceIndex : null,
+    sequenceIndexFromPly,
+    sequenceIndexFromBlackAnswerIndex,
+    indexMismatch:
+      sequenceIndexFromPly != null &&
+      sequenceIndexFromPly !== sequenceIndexFromBlackAnswerIndex,
+    fullSequence,
+    blackAnswers,
+    whiteAnswers,
+    answerMoveCount,
+  };
+
+  if (!entry) {
+    return {
+      ...base,
+      invalid: true,
+      invalidReason: "missing_white_in_sequence",
+    };
+  }
+
+  if (entry.color !== COLOR_WHITE) {
+    return {
+      ...base,
+      invalid: true,
+      invalidReason: "sequence_index_not_white",
+      entryAtIndex: formatSequenceEntry(entryAtIndex),
+    };
+  }
+
+  if (lastBlackMove && isSameCoord(entry, lastBlackMove)) {
+    return {
+      ...base,
+      invalid: true,
+      invalidReason: "matches_last_black_move",
+      entry,
+    };
+  }
+
+  return {
+    ...base,
+    entry,
+  };
+}
+
+/**
+ * 오답 reveal 기대 백 수 + 수순 컨텍스트 로그
+ * @param {object} params
+ */
+export function logWrongRevealExpectedMoveContext({
+  problem,
+  boardSize = 19,
+  blackAnswerIndex = 0,
+  currentPly = null,
+  lastBlackMove = null,
+}) {
+  const resolved = resolveWrongRevealExpectedWhite({
+    problem,
+    boardSize,
+    blackAnswerIndex,
+    currentPly,
+    lastBlackMove,
+  });
+
+  const expectedBlackAtPly = resolved.fullSequence.find((move) => move.ply === currentPly - 1);
+  const context = {
+    answerMoveCount: resolved.answerMoveCount,
+    blackAnswerIndex,
+    currentPly,
+    lastBlackMove: lastBlackMove ? formatCoordLabel(lastBlackMove) : null,
+    fullSequence: resolved.fullSequence.map(formatSequenceEntry),
+    blackAnswers: resolved.blackAnswers.map(formatSequenceEntry),
+    whiteAnswers: resolved.whiteAnswers.map(formatSequenceEntry),
+    sequenceIndexFromPly: resolved.sequenceIndexFromPly,
+    sequenceIndexFromBlackAnswerIndex: resolved.sequenceIndexFromBlackAnswerIndex,
+    indexMismatch: resolved.indexMismatch,
+    expectedBlackAtThisPly: expectedBlackAtPly
+      ? formatSequenceEntry(expectedBlackAtPly)
+      : null,
+    expectedWhiteMove: resolved.entry ? formatSequenceEntry(resolved.entry) : null,
+    invalid: resolved.invalid,
+    invalidReason: resolved.invalidReason,
+    matchesLastBlackMove: resolved.invalidReason === "matches_last_black_move",
+  };
+
+  console.warn("[KatagoRespond] wrong reveal expected move context", context);
+  return { ...resolved, context };
+}
+
 /** 오답 응수 QA: 정답 루트 제작자 백 수 (기대 응수 기준) */
-export function getExpectedWrongRevealAuthorWhite(problem, blackAnswerIndex, boardSize = 19) {
-  const { fullSequence } = resolveAnswerSequenceConfig(problem, boardSize);
-  return getExpectedAuthorWhite({ blackAnswerIndex, fullSequence });
+export function getExpectedWrongRevealAuthorWhite(
+  problem,
+  blackAnswerIndex,
+  boardSize = 19,
+  options = {},
+) {
+  const resolved = resolveWrongRevealExpectedWhite({
+    problem,
+    boardSize,
+    blackAnswerIndex,
+    currentPly: options.currentPly ?? null,
+    lastBlackMove: options.lastBlackMove ?? null,
+  });
+  if (resolved.invalid) {
+    return null;
+  }
+  return resolved.entry;
 }
 
 export function getNextSequenceColor(currentLength) {

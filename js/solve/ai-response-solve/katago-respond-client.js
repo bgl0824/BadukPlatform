@@ -546,6 +546,7 @@ function buildTacticalSelection({
   katagoBoardYSize = null,
   allowedRegion = null,
   blackAnswerIndex = 0,
+  currentPly = null,
 }) {
   if (studentMoveResult === "wrong") {
     const policy =
@@ -566,6 +567,7 @@ function buildTacticalSelection({
             allowedRegion,
             problemGoal,
             blackAnswerIndex,
+            currentPly,
             rawCandidates,
           })
         : selectWrongRevealKatagoFirstMove({
@@ -617,6 +619,7 @@ function tryWrongRevealLocalFallback({
   maxTime,
   reason,
   blackAnswerIndex = 0,
+  currentPly = null,
   rawCandidates = [],
   katagoSelection = null,
   katagoBoardXSize = null,
@@ -641,6 +644,8 @@ function tryWrongRevealLocalFallback({
       lastMove,
       allowedRegion,
       blackAnswerIndex,
+      currentPly,
+      lastBlackMove: lastMove,
       rawCandidates,
       regionCandidates,
       katagoSelection,
@@ -675,6 +680,8 @@ function tryWrongRevealLocalFallback({
     lastMove,
     allowedRegion,
     blackAnswerIndex,
+    currentPly,
+    lastBlackMove: lastMove,
     rawCandidates,
     regionCandidates,
     katagoSelection,
@@ -731,6 +738,7 @@ function finalizeKatagoSelection({
   initialStones = [],
   playedMoves = [],
   blackAnswerIndex = 0,
+  currentPly = null,
 }) {
   const education = buildTacticalSelection({
     regionCandidates,
@@ -745,6 +753,7 @@ function finalizeKatagoSelection({
     katagoBoardYSize,
     allowedRegion,
     blackAnswerIndex,
+    currentPly,
   });
 
   logKatagoCandidateSelectionBreakdown({
@@ -791,6 +800,7 @@ function finalizeKatagoSelection({
     maxVisits,
     maxTime,
     blackAnswerIndex,
+    currentPly,
     rawCandidates,
     katagoSelection: education,
     katagoBoardXSize,
@@ -896,6 +906,8 @@ function finalizeKatagoSelection({
       lastMove,
       allowedRegion,
       blackAnswerIndex,
+      currentPly,
+      lastBlackMove: lastMove,
       rawCandidates,
       regionCandidates,
       katagoSelection: education,
@@ -923,6 +935,7 @@ function formatWrongRevealFallbackResult({
   stoneColors,
   lastMove,
   blackAnswerIndex = 0,
+  currentPly = null,
   rawCandidates = [],
   regionCandidates = [],
   katagoSelection = null,
@@ -962,6 +975,8 @@ function formatWrongRevealFallbackResult({
     lastMove,
     allowedRegion,
     blackAnswerIndex,
+    currentPly,
+    lastBlackMove: lastMove,
     rawCandidates,
     regionCandidates,
     katagoSelection,
@@ -1067,6 +1082,7 @@ async function processKatagoRespondResponse({
   initialStones = [],
   playedMoves = [],
   blackAnswerIndex = 0,
+  currentPly = null,
 }) {
   if (!response.ok) {
     const errorDetail = logKatagoUpstreamHttpErrorDetail({
@@ -1161,6 +1177,7 @@ async function processKatagoRespondResponse({
     initialStones,
     playedMoves,
     blackAnswerIndex,
+    currentPly: currentPly ?? payload?.currentPly ?? null,
   });
 
   return finalized ? { ok: true, result: finalized } : { ok: false, emptyRegion: true };
@@ -1229,6 +1246,7 @@ async function requestKatagoRespondWrong({
         initialStones,
         playedMoves,
         blackAnswerIndex,
+        currentPly: payload?.currentPly ?? null,
       });
 
       if (processed.ok && processed.result) {
@@ -1274,6 +1292,7 @@ async function requestKatagoRespondWrong({
         stoneColors,
         lastMove,
         blackAnswerIndex,
+        currentPly: payload?.currentPly ?? null,
       });
     }
   } else if (raced.result?.ok) {
@@ -1318,6 +1337,7 @@ async function requestKatagoRespondWrong({
       stoneColors,
       lastMove,
       blackAnswerIndex,
+      currentPly: payload?.currentPly ?? null,
       rawCandidates: raced.result?.rawCandidates ?? [],
       regionCandidates: raced.result?.regionCandidates ?? [],
       katagoSelection: raced.result?.selectionMeta

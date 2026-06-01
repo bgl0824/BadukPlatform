@@ -1,7 +1,11 @@
 import { evaluatePlacement, PLACEMENT_STATUS } from "../../game/placement-validation.js";
 import { getStoneAtPoint, isSamePoint } from "../../game/rules.js";
 import { parseGtpCoordinate } from "../ai-response-ux/coordinates.js";
-import { formatCoordLabel, getExpectedWrongRevealAuthorWhite } from "./answer-sequence.js";
+import {
+  formatCoordLabel,
+  logWrongRevealExpectedMoveContext,
+  resolveWrongRevealExpectedWhite,
+} from "./answer-sequence.js";
 import { isPointInAllowedRegion } from "./problem-region.js";
 import {
   buildNearLastBlackCandidates,
@@ -57,25 +61,58 @@ function summarizePoolRow({
   };
 }
 
-function resolveExpectedMove(problem, blackAnswerIndex, boardSize) {
-  const entry = getExpectedWrongRevealAuthorWhite(problem, blackAnswerIndex, boardSize);
-  if (!entry) {
+function resolveExpectedMove(problem, blackAnswerIndex, boardSize, lastBlackMove = null, currentPly = null) {
+  const resolved = resolveWrongRevealExpectedWhite({
+    problem,
+    boardSize,
+    blackAnswerIndex,
+    currentPly,
+    lastBlackMove,
+  });
+
+  if (resolved.invalid) {
     return {
       move: null,
       point: null,
       source: "author_white_sequence",
       blackAnswerIndex,
+      currentPly,
+      sequenceIndex: resolved.sequenceIndex,
+      invalid: true,
+      invalidReason: resolved.invalidReason,
+      note:
+        resolved.invalidReason === "matches_last_black_move"
+          ? "기대 백 수가 방금 둔 오답 흑 수와 같습니다."
+          : "fullAnswerSequence에서 이번 백 수를 찾을 수 없습니다.",
+    };
+  }
+
+  if (!resolved.entry) {
+    return {
+      move: null,
+      point: null,
+      source: "author_white_sequence",
+      blackAnswerIndex,
+      currentPly,
+      invalid: true,
+      invalidReason: resolved.invalidReason ?? "missing_white_in_sequence",
       note: "fullAnswerSequence에 해당 백 수가 없습니다.",
     };
   }
 
-  const point = { x: entry.x, y: entry.y };
+  const point = { x: resolved.entry.x, y: resolved.entry.y };
   return {
-    move: entry.label ?? formatCoordLabel(point),
+    move: resolved.entry.label ?? formatCoordLabel(point),
     point,
     source: "author_white_sequence",
     blackAnswerIndex,
-    sequenceIndex: blackAnswerIndex * 2 + 1,
+    currentPly,
+    sequenceIndex: resolved.sequenceIndex,
+    sequenceIndexFromPly: resolved.sequenceIndexFromPly,
+    sequenceIndexFromBlackAnswerIndex: resolved.sequenceIndexFromBlackAnswerIndex,
+    indexMismatch: resolved.indexMismatch,
+    invalid: false,
+    invalidReason: null,
   };
 }
 
@@ -272,6 +309,8 @@ export function auditWrongRevealCandidatePools({
   lastMove,
   allowedRegion,
   blackAnswerIndex = 0,
+  currentPly = null,
+  lastBlackMove = null,
   rawCandidates = [],
   regionCandidates = [],
   regionKeys = null,
@@ -282,7 +321,20 @@ export function auditWrongRevealCandidatePools({
   katagoBoardYSize = null,
 }) {
   const targetContext = resolveTargetWhiteGroup(problem, stones, boardSize, stoneColors);
-  const expected = resolveExpectedMove(problem, blackAnswerIndex, boardSize);
+  logWrongRevealExpectedMoveContext({
+    problem,
+    boardSize,
+    blackAnswerIndex,
+    currentPly,
+    lastBlackMove,
+  });
+  const expected = resolveExpectedMove(
+    problem,
+    blackAnswerIndex,
+    boardSize,
+    lastBlackMove,
+    currentPly,
+  );
 
   const katagoPool =
     katagoSelection?.selectionMeta?.rawInRegionCandidates?.map((row) =>
@@ -363,6 +415,11 @@ export function auditWrongRevealCandidatePools({
       expectedMove: expected.move,
       expectedPoint: expected.point,
       expectedSource: expected.source,
+      invalid: expected.invalid ?? false,
+      invalidReason: expected.invalidReason ?? null,
+      currentPly: expected.currentPly ?? currentPly,
+      sequenceIndex: expected.sequenceIndex ?? null,
+      indexMismatch: expected.indexMismatch ?? null,
       inKatagoPool: Boolean(expectedKatagoRow),
       inTargetImpactPool: Boolean(expectedTargetImpactRow),
       inLocalTacticalPool: Boolean(expectedLocalRow),
