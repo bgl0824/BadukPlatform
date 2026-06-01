@@ -223,6 +223,9 @@ const targetWhiteGroup = readProjectFile("js/solve/ai-response-solve/target-whit
 if (!targetWhiteGroup.includes("export function measureMultiTargetMetrics")) {
   throw new Error("target-white-group.js missing measureMultiTargetMetrics");
 }
+if (!targetWhiteGroup.includes("export function evaluateMultiTargetConnectQuality")) {
+  throw new Error("target-white-group.js missing evaluateMultiTargetConnectQuality");
+}
 
 const captureSurvive = readProjectFile("js/solve/ai-response-solve/capture-to-survive-candidates.js");
 for (const needle of [

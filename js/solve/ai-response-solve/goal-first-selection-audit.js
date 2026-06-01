@@ -161,8 +161,14 @@ export function logGoalFirstSelectionAudit({
     groupsAfter: row.groupsAfter,
     totalLibertiesBefore: row.totalLibertiesBefore,
     totalLibertiesAfter: row.totalLibertiesAfter,
-    groupCountReduction: row.groupCountReduction,
     totalLibertyGain: row.totalLibertyGain,
+    minLibertiesAfter: row.minLibertiesAfter,
+    perGroupLibertiesAfter: row.perGroupLibertiesAfter,
+    groupCountReduction: row.groupCountReduction,
+    bothGroupsSafeAfterMove: row.bothGroupsSafeAfterMove,
+    escapeShapeScore: row.escapeShapeScore,
+    connectRankScore: row.connectRankScore,
+    harmfulMerge: row.harmfulMerge,
     connectsGroups: row.connectsGroups,
     beneficialForSurvival: row.beneficialForSurvival,
     bridgeTags: row.bridgeTags,
@@ -241,8 +247,12 @@ export function logGoalFirstSelectionAudit({
   console.warn("[KatagoRespond] goal-first connect selection", {
     multiTarget: pickDiagnostics?.multiTarget ?? false,
     connectRejectReason: pickDiagnostics?.connectRejectReason ?? null,
+    connectSelectionCriteria: pickDiagnostics?.connectSelectionCriteria ?? null,
+    selectionPoolNote: pickDiagnostics?.selectionPoolNote ?? null,
     selectedOverForcedLiberty: pickDiagnostics?.selectedOverForcedLiberty ?? false,
     pickedConnectMeta: pickDiagnostics?.pickedConnectMeta ?? null,
+    runnerUpConnect: pickDiagnostics?.runnerUpConnect ?? null,
+    connectRankedComparison: pickDiagnostics?.connectRankedComparison ?? null,
     attempts: connectAttempts,
   });
 

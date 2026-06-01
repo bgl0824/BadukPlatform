@@ -8,6 +8,7 @@ import {
 } from "../../game/rules.js";
 import { formatCoordLabel } from "./answer-sequence.js";
 import {
+  evaluateMultiTargetConnectQuality,
   measureMultiTargetAfterMove,
   measureMultiTargetMetrics,
 } from "./target-white-group.js";
@@ -131,6 +132,7 @@ function classifyConnectSource(multiAfter) {
 }
 
 function buildConnectMeta(multiBefore, multiAfter, source) {
+  const quality = evaluateMultiTargetConnectQuality(multiBefore, multiAfter);
   return {
     source,
     groupsBefore: multiAfter.groupsBefore,
@@ -139,12 +141,14 @@ function buildConnectMeta(multiBefore, multiAfter, source) {
     totalLibertiesAfter: multiAfter.totalLibertiesAfter,
     groupCountReduction: multiAfter.groupCountReduction,
     totalLibertyGain: multiAfter.totalLibertyGain,
+    minLibertiesAfter: quality?.minLibertiesAfter ?? multiAfter.minLiberties ?? null,
+    perGroupLibertiesAfter: quality?.perGroupLibertiesAfter ?? multiAfter.perGroupLiberties ?? [],
     connectsGroups: multiAfter.connectsGroups,
-    beneficialForSurvival:
-      multiAfter.connectsGroups ||
-      multiAfter.totalLibertyGain > 0 ||
-      multiAfter.groupCountReduction > 0 ||
-      (multiAfter.minLiberties ?? 0) >= 2,
+    bothGroupsSafeAfterMove: quality?.bothGroupsSafeAfterMove ?? false,
+    escapeShapeScore: quality?.escapeShapeScore ?? 0,
+    connectRankScore: quality?.connectRankScore ?? 0,
+    harmfulMerge: quality?.harmfulMerge ?? false,
+    beneficialForSurvival: quality?.beneficialForSurvival ?? false,
     multiTarget: multiBefore.multiTarget,
   };
 }

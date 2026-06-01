@@ -166,11 +166,85 @@ export function measureMultiTargetMetrics(targetContext, stones, boardSize) {
     getGroupLibertyKeys(stones, group, boardSize).forEach((key) => libertyKeys.add(key));
   }
 
+  const perGroupLiberties = targetContext.groups.map((group) =>
+    countGroupLiberties(stones, group, boardSize),
+  );
+
   return {
     multiTarget: targetContext.groups.length >= 2,
     groupCount: targetContext.groups.length,
     totalLiberties: libertyKeys.size,
     minLiberties: targetContext.minLiberties,
+    perGroupLiberties,
+    bothGroupsSafe: perGroupLiberties.every((libs) => libs >= 2),
+  };
+}
+
+/**
+ * 장문 multi-target 연결/병합 착수의 생존 형태 점수
+ */
+export function evaluateMultiTargetConnectQuality(multiBefore, multiAfter) {
+  if (!multiBefore || !multiAfter) {
+    return null;
+  }
+
+  const totalLibertyGain = multiAfter.totalLibertyGain ?? 0;
+  const minLibertiesAfter = multiAfter.minLiberties ?? 0;
+  const totalLibertiesAfter = multiAfter.totalLibertiesAfter ?? 0;
+  const totalLibertiesBefore = multiAfter.totalLibertiesBefore ?? 0;
+  const groupCountReduction = multiAfter.groupCountReduction ?? 0;
+  const harmfulMerge = groupCountReduction > 0 && totalLibertyGain < 0;
+  const bothGroupsSafeAfterMove = Boolean(multiAfter.bothGroupsSafe);
+
+  let escapeShapeScore = 0;
+  escapeShapeScore += totalLibertyGain * 120;
+  escapeShapeScore += minLibertiesAfter * 80;
+  if (totalLibertiesAfter >= totalLibertiesBefore) {
+    escapeShapeScore += 50;
+  }
+  if (bothGroupsSafeAfterMove) {
+    escapeShapeScore += 70;
+  }
+  if (multiAfter.groupsAfter === multiBefore.groupCount && totalLibertyGain >= 0) {
+    escapeShapeScore += 40;
+  }
+  if (harmfulMerge) {
+    escapeShapeScore -= 250;
+  }
+  if (groupCountReduction > 0 && totalLibertyGain > 0) {
+    escapeShapeScore += 30;
+  }
+
+  const connectRankScore =
+    totalLibertyGain * 10_000 +
+    minLibertiesAfter * 2_000 +
+    (bothGroupsSafeAfterMove ? 1_500 : 0) +
+    escapeShapeScore +
+    groupCountReduction * (harmfulMerge ? -5_000 : 400);
+
+  const maintainsConnectedShape =
+    groupCountReduction === 0 &&
+    totalLibertiesAfter >= totalLibertiesBefore &&
+    totalLibertyGain >= 0;
+
+  const beneficialForSurvival =
+    !harmfulMerge &&
+    (totalLibertyGain > 0 ||
+      bothGroupsSafeAfterMove ||
+      maintainsConnectedShape ||
+      (minLibertiesAfter >= 2 && totalLibertiesAfter >= totalLibertiesBefore) ||
+      (groupCountReduction > 0 && totalLibertyGain >= 0));
+
+  return {
+    totalLibertyGain,
+    minLibertiesAfter,
+    totalLibertiesAfter,
+    perGroupLibertiesAfter: multiAfter.perGroupLiberties ?? [],
+    bothGroupsSafeAfterMove,
+    escapeShapeScore,
+    connectRankScore,
+    harmfulMerge,
+    beneficialForSurvival,
   };
 }
 
@@ -215,7 +289,7 @@ export function measureMultiTargetAfterMove({
     };
   }
 
-  return {
+  const result = {
     ...after,
     groupsBefore: before.groupCount,
     groupsAfter: after.groupCount,
@@ -224,6 +298,11 @@ export function measureMultiTargetAfterMove({
     groupCountReduction: before.groupCount - after.groupCount,
     totalLibertyGain: after.totalLiberties - before.totalLiberties,
     connectsGroups: after.groupCount < before.groupCount,
+  };
+
+  return {
+    ...result,
+    ...evaluateMultiTargetConnectQuality(before, result),
   };
 }
 

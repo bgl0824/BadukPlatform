@@ -28,7 +28,9 @@ import {
   getTargetLibertyPoints,
   isMoveAdjacentToTargetGroup,
   isMoveOnTargetAtariLiberty,
+  evaluateMultiTargetConnectQuality,
   measureMultiTargetAfterMove,
+  measureMultiTargetMetrics,
   measureTargetGroupAfterMove,
   pointKeyToCoordLabel,
   resolveTargetWhiteGroup,
@@ -540,18 +542,30 @@ function scoreWrongRevealWithTarget({
     stoneColors,
   });
   if (multiAfter?.multiTarget) {
-    if (multiAfter.connectsGroups || multiAfter.groupCountReduction > 0) {
+    const connectQuality = evaluateMultiTargetConnectQuality(
+      measureMultiTargetMetrics(targetContext, stones, boardSize),
+      multiAfter,
+    );
+    if (
+      (multiAfter.connectsGroups || multiAfter.groupCountReduction > 0) &&
+      !connectQuality?.harmfulMerge
+    ) {
       signals.merge_target_groups =
         135000 +
         multiAfter.groupCountReduction * 8000 +
-        multiAfter.totalLibertyGain * 1200;
+        (multiAfter.totalLibertyGain ?? 0) * 1200 +
+        (connectQuality?.escapeShapeScore ?? 0);
       reasons.push("merge_target_groups");
     } else if (
-      multiAfter.totalLibertyGain > 0 ||
+      (multiAfter.totalLibertyGain ?? 0) > 0 ||
+      connectQuality?.bothGroupsSafeAfterMove ||
       CONNECT_TARGET_GROUPS_SOURCES.has(candidate.source)
     ) {
       signals.connect_target_groups =
-        125000 + multiAfter.totalLibertyGain * 1500 + targetGain * 500;
+        125000 +
+        (multiAfter.totalLibertyGain ?? 0) * 1500 +
+        targetGain * 500 +
+        (connectQuality?.escapeShapeScore ?? 0);
       reasons.push("connect_target_groups");
     }
   }
@@ -1093,6 +1107,38 @@ function mergeConnectCandidatesForCrisis(
   return merged;
 }
 
+function formatConnectAttemptMetrics(multiAfter, connectMeta) {
+  const quality =
+    connectMeta ??
+    (multiAfter?.groupsBefore != null
+      ? evaluateMultiTargetConnectQuality(
+          {
+            groupCount: multiAfter.groupsBefore,
+            totalLiberties: multiAfter.totalLibertiesBefore,
+          },
+          multiAfter,
+        )
+      : null);
+
+  return {
+    groupsBefore: multiAfter?.groupsBefore ?? null,
+    groupsAfter: multiAfter?.groupsAfter ?? null,
+    totalLibertiesBefore: multiAfter?.totalLibertiesBefore ?? null,
+    totalLibertiesAfter: multiAfter?.totalLibertiesAfter ?? null,
+    totalLibertyGain: quality?.totalLibertyGain ?? multiAfter?.totalLibertyGain ?? 0,
+    minLibertiesAfter: quality?.minLibertiesAfter ?? multiAfter?.minLiberties ?? null,
+    perGroupLibertiesAfter:
+      quality?.perGroupLibertiesAfter ?? multiAfter?.perGroupLiberties ?? [],
+    bothGroupsSafeAfterMove:
+      quality?.bothGroupsSafeAfterMove ?? multiAfter?.bothGroupsSafe ?? false,
+    escapeShapeScore: quality?.escapeShapeScore ?? connectMeta?.escapeShapeScore ?? 0,
+    connectRankScore: quality?.connectRankScore ?? connectMeta?.connectRankScore ?? 0,
+    harmfulMerge: quality?.harmfulMerge ?? connectMeta?.harmfulMerge ?? false,
+    beneficialForSurvival:
+      quality?.beneficialForSurvival ?? connectMeta?.beneficialForSurvival ?? false,
+  };
+}
+
 function tryPickConnectTargetGroupsOverForcedLiberty({
   targetContext,
   stones,
@@ -1167,48 +1213,46 @@ function tryPickConnectTargetGroupsOverForcedLiberty({
       }
     }
 
+    const metrics = formatConnectAttemptMetrics(multiAfter, meta);
+
     if (!scored) {
       connectAttempts.push({
         move: candidate.move ?? formatCoordLabel(candidate),
         legal: false,
         rejectReason: "illegal_placement",
-        groupsBefore: multiAfter?.groupsBefore ?? null,
-        groupsAfter: multiAfter?.groupsAfter ?? null,
-        totalLibertiesBefore: multiAfter?.totalLibertiesBefore ?? null,
-        totalLibertiesAfter: multiAfter?.totalLibertiesAfter ?? null,
-        beneficialForSurvival: false,
+        source: candidate.source ?? meta?.source ?? null,
+        ...metrics,
       });
       continue;
     }
 
-    const beneficialForSurvival = Boolean(
-      multiAfter?.connectsGroups ||
-        (multiAfter?.totalLibertyGain ?? 0) > 0 ||
-        (multiAfter?.groupCountReduction ?? 0) > 0 ||
-        (multiAfter?.minLiberties ?? 0) >= 2,
-    );
-
-    connectAttempts.push({
+    const attemptRow = {
       move: scored.move ?? formatCoordLabel(candidate),
       legal: true,
       source: candidate.source ?? meta?.source ?? null,
-      groupsBefore: multiAfter?.groupsBefore ?? null,
-      groupsAfter: multiAfter?.groupsAfter ?? null,
-      totalLibertiesBefore: multiAfter?.totalLibertiesBefore ?? null,
-      totalLibertiesAfter: multiAfter?.totalLibertiesAfter ?? null,
       groupCountReduction: multiAfter?.groupCountReduction ?? 0,
-      totalLibertyGain: multiAfter?.totalLibertyGain ?? 0,
       connectsGroups: multiAfter?.connectsGroups ?? false,
-      beneficialForSurvival,
       totalScore: scored.totalScore,
       primaryReason: scored.primaryReason,
       selectedReason: scored.selectedReason,
-    });
+      ...metrics,
+    };
+    connectAttempts.push(attemptRow);
 
-    if (beneficialForSurvival) {
-      beneficial.push({ scored, meta: multiAfter });
+    if (metrics.beneficialForSurvival) {
+      beneficial.push({
+        scored,
+        meta: multiAfter,
+        connectMeta: meta,
+        connectRankScore: metrics.connectRankScore,
+      });
     }
   }
+
+  const rankedForLog = [...connectAttempts]
+    .filter((row) => row.legal)
+    .sort((a, b) => (b.connectRankScore ?? 0) - (a.connectRankScore ?? 0))
+    .map((row, index) => ({ connectRank: index + 1, ...row }));
 
   if (beneficial.length === 0) {
     return {
@@ -1216,34 +1260,44 @@ function tryPickConnectTargetGroupsOverForcedLiberty({
       diagnostics: {
         multiTarget: true,
         connectCandidates: connectAttempts,
+        connectRankedComparison: rankedForLog,
         connectRejectReason: "no_beneficial_connect",
+        connectSelectionCriteria:
+          "connectRankScore = totalLibertyGain*10000 + minLibertiesAfter*2000 + bothGroupsSafe*1500 + escapeShapeScore; harmfulMerge excluded",
         selectedOverForcedLiberty: false,
       },
     };
   }
 
-  beneficial.sort((a, b) => {
-    const mergeA = a.meta?.groupCountReduction ?? 0;
-    const mergeB = b.meta?.groupCountReduction ?? 0;
-    if (mergeB !== mergeA) {
-      return mergeB - mergeA;
-    }
-    const libA = a.meta?.totalLibertyGain ?? 0;
-    const libB = b.meta?.totalLibertyGain ?? 0;
-    if (libB !== libA) {
-      return libB - libA;
-    }
-    return b.scored.totalScore - a.scored.totalScore;
-  });
+  beneficial.sort(
+    (a, b) => (b.connectRankScore ?? 0) - (a.connectRankScore ?? 0),
+  );
 
-  const best = beneficial[0].scored;
+  const forcedKey = forcedLibertyPoint ? pointKey(forcedLibertyPoint) : null;
+  const nonForcedBeneficial = forcedKey
+    ? beneficial.filter(
+        (entry) => entry.scored?.point && pointKey(entry.scored.point) !== forcedKey,
+      )
+    : beneficial;
+
+  const pool = nonForcedBeneficial.length > 0 ? nonForcedBeneficial : beneficial;
+  const selectionPoolNote =
+    nonForcedBeneficial.length > 0
+      ? "preferred_non_forced_liberty"
+      : beneficial.length > 0 && forcedKey
+        ? "only_forced_liberty_shape_available"
+        : "all_beneficial";
+
+  const winner = pool[0];
+  const best = winner.scored;
   best.selectedReason = mapWrongRevealReason(best.primaryReason);
   best.totalScore = 100_000_002;
 
-  const forcedKey = forcedLibertyPoint ? pointKey(forcedLibertyPoint) : null;
   const selectedOverForcedLiberty = Boolean(
     forcedKey && best.point && pointKey(best.point) !== forcedKey,
   );
+
+  const pickedMetrics = formatConnectAttemptMetrics(winner.meta, winner.connectMeta);
 
   return {
     picked: best,
@@ -1253,8 +1307,28 @@ function tryPickConnectTargetGroupsOverForcedLiberty({
       forcedRejectReason: null,
       forcedPickMode: "connect_target_groups_override",
       connectCandidates: connectAttempts,
+      connectRankedComparison: rankedForLog,
+      connectSelectionCriteria:
+        "primary: connectRankScore (libertyGain, minLibertiesAfter, bothGroupsSafe, escapeShape); excludes harmfulMerge; prefers non-forced liberty",
+      selectionPoolNote,
       selectedOverForcedLiberty,
-      pickedConnectMeta: beneficial[0].meta,
+      pickedConnectMeta: {
+        move: best.move ?? formatCoordLabel(best.point ?? best),
+        ...pickedMetrics,
+        selectionReason:
+          selectedOverForcedLiberty
+            ? "beat_forced_liberty_on_connect_rank"
+            : selectionPoolNote === "only_forced_liberty_shape_available"
+              ? "only_beneficial_connect_was_forced_liberty"
+              : "best_connect_rank_score",
+      },
+      runnerUpConnect: pool[1]
+        ? {
+            move: pool[1].scored.move,
+            connectRankScore: pool[1].connectRankScore,
+            ...formatConnectAttemptMetrics(pool[1].meta, pool[1].connectMeta),
+          }
+        : null,
     },
   };
 }
