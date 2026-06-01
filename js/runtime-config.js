@@ -12,6 +12,7 @@
     katagoWrongMaxTime: 0.45,
     katagoWrongReplaceMs: 3000,
     wrongRevealLimitsTag: "24.0.45.3000",
+    wrongRevealPolicy: "katago_filter",
     authorWhiteResponseDelayMs: 500,
     supabaseUrl: "https://biprcqrqnizwpxolkfyi.supabase.co",
     supabaseKey: "sb_publishable_YuonJkHovfeQhOGE3xikIw_P4zbhQqM",

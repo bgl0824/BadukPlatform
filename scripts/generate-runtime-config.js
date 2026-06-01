@@ -48,6 +48,10 @@ const katagoWrongReplaceMs = resolveWrongRevealNumber(
   WRONG_REVEAL_DEFAULTS.katagoWrongReplaceMs,
 );
 const wrongRevealLimitsTag = `${katagoWrongMaxVisits}.${katagoWrongMaxTime}.${katagoWrongReplaceMs}`;
+const wrongRevealPolicy =
+  process.env.WRONG_REVEAL_POLICY === "goal_first"
+    ? "goal_first"
+    : "katago_filter";
 const authorWhiteResponseDelayMs =
   Number(process.env.AUTHOR_WHITE_RESPONSE_DELAY_MS) || 500;
 
@@ -82,6 +86,7 @@ const contents = `(function () {
     katagoWrongMaxTime: ${katagoWrongMaxTime},
     katagoWrongReplaceMs: ${katagoWrongReplaceMs},
     wrongRevealLimitsTag: ${JSON.stringify(wrongRevealLimitsTag)},
+    wrongRevealPolicy: ${JSON.stringify(wrongRevealPolicy)},
     authorWhiteResponseDelayMs: ${authorWhiteResponseDelayMs},
     supabaseUrl: ${JSON.stringify(supabaseUrl)},
     supabaseKey: ${JSON.stringify(supabaseKey)},
@@ -99,6 +104,7 @@ const requiredNeedles = [
   `katagoWrongMaxTime: ${katagoWrongMaxTime}`,
   `katagoWrongReplaceMs: ${katagoWrongReplaceMs}`,
   `wrongRevealLimitsTag: ${JSON.stringify(wrongRevealLimitsTag)}`,
+  `wrongRevealPolicy: ${JSON.stringify(wrongRevealPolicy)}`,
 ];
 for (const needle of requiredNeedles) {
   if (!written.includes(needle)) {
@@ -115,4 +121,5 @@ console.log(`  katagoWrongMaxVisits: ${katagoWrongMaxVisits}`);
 console.log(`  katagoWrongMaxTime: ${katagoWrongMaxTime}`);
 console.log(`  katagoWrongReplaceMs: ${katagoWrongReplaceMs}`);
 console.log(`  wrongRevealLimitsTag: ${wrongRevealLimitsTag}`);
+console.log(`  wrongRevealPolicy: ${wrongRevealPolicy}`);
 console.log(`  KATAGO_SERVER_URL (Vercel server): ${katagoServer}`);

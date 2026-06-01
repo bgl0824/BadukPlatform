@@ -9,6 +9,11 @@ import {
   WRONG_REVEAL_KATAGO_TOP_N,
 } from "./tactical-response-engine.js";
 import {
+  isPhase1GoalFirstEligible,
+  resolveProblemGoal,
+} from "./problem-goal.js";
+import { selectWrongRevealMove } from "./select-wrong-reveal-move.js";
+import {
   computeAllowedRegion,
   DEFAULT_REGION_MARGIN,
   filterCandidatesInRegion,
@@ -540,20 +545,51 @@ function buildTacticalSelection({
   katagoBoardXSize = null,
   katagoBoardYSize = null,
   allowedRegion = null,
+  blackAnswerIndex = 0,
 }) {
   if (studentMoveResult === "wrong") {
-    return selectWrongRevealKatagoFirstMove({
-      rawCandidates,
-      regionCandidates,
-      stones,
-      boardSize,
-      stoneColors,
-      lastBlackMove: lastMove,
-      problem,
-      katagoBoardXSize,
-      katagoBoardYSize,
-      allowedRegion,
+    const policy =
+      window.BadukConfig?.wrongRevealPolicy === "goal_first"
+        ? "goal_first"
+        : "katago_filter";
+    const problemGoal = resolveProblemGoal(problem);
+    const eligible = isPhase1GoalFirstEligible(problem);
+
+    const education =
+      policy === "goal_first" && eligible
+        ? selectWrongRevealMove({
+            problem,
+            boardSize,
+            stones,
+            stoneColors,
+            lastBlackMove: lastMove,
+            allowedRegion,
+            problemGoal,
+            blackAnswerIndex,
+            rawCandidates,
+          })
+        : selectWrongRevealKatagoFirstMove({
+            rawCandidates,
+            regionCandidates,
+            stones,
+            boardSize,
+            stoneColors,
+            lastBlackMove: lastMove,
+            problem,
+            katagoBoardXSize,
+            katagoBoardYSize,
+            allowedRegion,
+          });
+
+    console.warn("[KatagoRespond] wrong reveal policy", {
+      policy,
+      problemGoal,
+      eligible,
+      selectedSource: education?.selectionMeta?.selectedSource ?? null,
+      selectedReason: education?.selectedReason ?? null,
     });
+
+    return education;
   }
 
   return selectTacticalWhiteMove({
@@ -708,6 +744,7 @@ function finalizeKatagoSelection({
     katagoBoardXSize,
     katagoBoardYSize,
     allowedRegion,
+    blackAnswerIndex,
   });
 
   logKatagoCandidateSelectionBreakdown({
