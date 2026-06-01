@@ -90,8 +90,8 @@ const katagoRespondApi = readProjectFile("api/katago/respond.js");
 for (const needle of [
   "katagoWrongMaxVisits: 24",
   "katagoWrongMaxTime: 0.45",
-  "katagoWrongReplaceMs: 2000",
-  'wrongRevealLimitsTag: "24.0.45.2000"',
+  "katagoWrongReplaceMs: 3000",
+  'wrongRevealLimitsTag: "24.0.45.3000"',
 ]) {
   if (!runtimeConfig.includes(needle)) {
     throw new Error(`js/runtime-config.js missing ${needle} — run npm run build`);
@@ -101,7 +101,7 @@ for (const needle of [
 for (const needle of [
   "const WRONG_KATAGO_MAX_VISITS = 24",
   "const WRONG_KATAGO_MAX_TIME = 0.45",
-  'WRONG_REVEAL_LIMITS_TAG = "24.0.45.2000"',
+  'WRONG_REVEAL_LIMITS_TAG = "24.0.45.3000"',
   'KATAGO_SELECTION_LOG_TAG = "katago-candidate-selection-v1"',
   "[KatagoRespond] client module loaded",
   "wrongRevealResolveTrace",

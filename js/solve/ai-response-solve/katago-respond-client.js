@@ -41,11 +41,11 @@ const DEFAULT_KATAGO_MAX_TIME = 0.15;
 /** 오답 응수(wrong reveal) — 정확도 우선 */
 const WRONG_KATAGO_MAX_VISITS = 24;
 const WRONG_KATAGO_MAX_TIME = 0.45;
-const WRONG_KATAGO_REPLACE_MS = 2000;
+const WRONG_KATAGO_REPLACE_MS = 3000;
 const WRONG_KATAGO_REPLACE_MS_MIN = 1000;
-const WRONG_KATAGO_REPLACE_MS_MAX = 2000;
+const WRONG_KATAGO_REPLACE_MS_MAX = 3000;
 /** requestStart 로그·캐시 확인용 — Network 탭에서 이 문자열로 배포본 구분 */
-export const WRONG_REVEAL_LIMITS_TAG = "24.0.45.2000";
+export const WRONG_REVEAL_LIMITS_TAG = "24.0.45.3000";
 export const KATAGO_SELECTION_LOG_TAG = "katago-candidate-selection-v1";
 
 /** wrong-reveal 최종 응수 출처 (로그·디버그용) */

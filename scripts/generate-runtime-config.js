@@ -23,7 +23,7 @@ const katagoRespondMaxTime = Number(process.env.KATAGO_RESPOND_MAX_TIME) || 0.15
 const WRONG_REVEAL_DEFAULTS = {
   katagoWrongMaxVisits: 24,
   katagoWrongMaxTime: 0.45,
-  katagoWrongReplaceMs: 2000,
+  katagoWrongReplaceMs: 3000,
 };
 
 function resolveWrongRevealNumber(envName, fallback) {
