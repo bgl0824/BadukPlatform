@@ -10,6 +10,7 @@ import {
   resolveAiResponseStyle,
   selectTacticalWhiteMove,
 } from "./tactical-response-engine.js";
+import { logGoalFirstSelectionAudit } from "./goal-first-selection-audit.js";
 import { resolveTargetWhiteGroup } from "./target-white-group.js";
 
 function findRawRank(rawCandidates, selected) {
@@ -293,6 +294,22 @@ export function selectWrongRevealMove({
   if (selected) {
     selected.selectedReason = selectedReason;
   }
+
+  logGoalFirstSelectionAudit({
+    problem,
+    boardSize,
+    stones,
+    stoneColors,
+    targetContext: resolvedTargetContext,
+    goalCandidates,
+    goalMeta: meta,
+    rankAdjusted,
+    rawCandidates,
+    education,
+    selectedSource,
+    selectedReason,
+    katagoTopMove,
+  });
 
   const expectedRankInRankAdjusted = expectedPoint
     ? rankAdjusted.findIndex(

@@ -186,6 +186,21 @@ for (const needle of [
   }
 }
 
+const goalFirstAudit = readProjectFile("js/solve/ai-response-solve/goal-first-selection-audit.js");
+for (const needle of [
+  "export function logGoalFirstSelectionAudit",
+  "[KatagoRespond] goal-first candidate pool",
+  "[KatagoRespond] goal-first target context",
+  "[KatagoRespond] goal-first scored row",
+  "[KatagoRespond] goal-first forced liberty diagnostic",
+  "[KatagoRespond] goal-first final selection",
+  "[KatagoRespond] goal-first selected liberty",
+]) {
+  if (!goalFirstAudit.includes(needle)) {
+    throw new Error(`goal-first-selection-audit.js missing ${needle}`);
+  }
+}
+
 for (const needle of [
   "const WRONG_REVEAL_MAX_VISITS = 24",
   "const WRONG_REVEAL_MAX_TIME = 0.45",
