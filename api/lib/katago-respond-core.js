@@ -453,6 +453,7 @@ async function requestKatagoAnalysis(frontendPayload) {
   const katagoServerUrl = process.env.KATAGO_SERVER_URL || "";
   const analyzePath =
     process.env.KATAGO_ANALYZE_PATH || "/api/v1/analysis";
+  const boardSize = Number(frontendPayload?.boardSize) || 19;
 
   if (!katagoServerUrl) {
     const error = new Error("KATAGO_SERVER_URL is not configured on the API server.");
@@ -470,10 +471,10 @@ async function requestKatagoAnalysis(frontendPayload) {
   console.log("[katago-respond-core] POST", endpoint.toString());
   console.log("[katago-respond-core] upstream", {
     boardSize,
-    boardXSize: katagoPayload.boardXSize,
-    boardYSize: katagoPayload.boardYSize,
+    boardXSize: katagoPayload.boardXSize ?? katagoPayload.boardSize ?? boardSize,
+    boardYSize: katagoPayload.boardYSize ?? katagoPayload.boardSize ?? boardSize,
     maxVisits: katagoPayload.maxVisits,
-    maxTime: katagoPayload.overrideSettings?.maxTime,
+    maxTime: katagoPayload.overrideSettings?.maxTime ?? katagoPayload.maxTime,
     includePolicy: katagoPayload.includePolicy,
     moveCount: katagoPayload.moves?.length ?? 0,
   });
@@ -523,6 +524,12 @@ async function requestKatagoAnalysis(frontendPayload) {
 async function produceKatagoRespond(frontendPayload) {
   const requestStart = Date.now();
   const boardSize = Number(frontendPayload?.boardSize) || 19;
+  console.log("[katago-respond-core] produceKatagoRespond", {
+    boardSize,
+    studentMoveResult: frontendPayload?.studentMoveResult ?? null,
+    maxVisits: resolveMaxVisits(frontendPayload),
+    maxTime: resolveMaxTime(frontendPayload),
+  });
   const { body: katagoResponse, katagoElapsedMs } = await requestKatagoAnalysis(
     frontendPayload,
   );

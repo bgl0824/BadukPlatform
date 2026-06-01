@@ -848,13 +848,55 @@ async function fetchKatagoRespondPayload(url, payload, signal) {
     body: JSON.stringify(payload),
     signal,
   });
-  const data = await response.json().catch(() => ({}));
-  return { response, data };
+  const rawBody = await response.text();
+  let data = {};
+  if (rawBody) {
+    try {
+      data = JSON.parse(rawBody);
+    } catch {
+      data = {
+        parseError: true,
+        rawBodyPreview: rawBody.slice(0, 2000),
+      };
+    }
+  }
+  return { response, data, rawBody };
+}
+
+function logKatagoUpstreamHttpErrorDetail({
+  httpStatus,
+  boardSize,
+  payload,
+  data,
+  rawBody,
+  katagoElapsedMs,
+  studentMoveResult,
+}) {
+  const detail = {
+    httpStatus,
+    boardSize,
+    requestBoardSize: payload?.boardSize ?? null,
+    studentMoveResult,
+    katagoElapsedMs,
+    errorCode: data?.code ?? null,
+    errorMessage: data?.error ?? null,
+    upstreamStatus: data?.upstreamStatus ?? null,
+    upstreamBody: data?.upstreamBody ?? null,
+    upstreamJson: data?.upstreamJson ?? null,
+    rawBodyPreview:
+      data?.rawBodyPreview ??
+      (rawBody && !data?.error ? rawBody.slice(0, 500) : null),
+    responseBody: data,
+  };
+  console.warn("[KatagoRespond] upstream HTTP error detail", detail);
+  return detail;
 }
 
 async function processKatagoRespondResponse({
   response,
   data,
+  rawBody = "",
+  payload = null,
   boardSize,
   allowedRegion,
   stones,
@@ -868,10 +910,22 @@ async function processKatagoRespondResponse({
   maxTime,
 }) {
   if (!response.ok) {
+    const errorDetail = logKatagoUpstreamHttpErrorDetail({
+      httpStatus: response.status,
+      boardSize,
+      payload,
+      data,
+      rawBody,
+      katagoElapsedMs,
+      studentMoveResult,
+    });
     logKatagoRespondFailure("upstream HTTP error", {
       httpStatus: response.status,
       studentMoveResult,
+      boardSize,
+      requestBoardSize: payload?.boardSize ?? null,
       responseBody: data,
+      upstreamDetail: errorDetail,
       katagoElapsedMs,
     });
     return { ok: false, httpStatus: response.status, data };
@@ -967,7 +1021,7 @@ async function requestKatagoRespondWrong({
   const controller = new AbortController();
   const katagoTask = (async () => {
     try {
-      const { response, data } = await fetchKatagoRespondPayload(
+      const { response, data, rawBody } = await fetchKatagoRespondPayload(
         url,
         payload,
         controller.signal,
@@ -981,6 +1035,8 @@ async function requestKatagoRespondWrong({
       const processed = await processKatagoRespondResponse({
         response,
         data,
+        rawBody,
+        payload,
         boardSize,
         allowedRegion,
         stones,
@@ -1231,11 +1287,20 @@ export async function requestKatagoRespond({
   }
 
   try {
-    const { response, data } = await fetchKatagoRespondPayload(url, payload);
+    const { response, data, rawBody } = await fetchKatagoRespondPayload(url, payload);
 
     const katagoElapsedMs = Date.now() - requestStart;
 
     if (!response.ok) {
+      logKatagoUpstreamHttpErrorDetail({
+        httpStatus: response.status,
+        boardSize,
+        payload,
+        data,
+        rawBody,
+        katagoElapsedMs,
+        studentMoveResult,
+      });
       logKatagoRespondTiming({
         requestStart,
         katagoElapsedMs,
@@ -1247,6 +1312,7 @@ export async function requestKatagoRespond({
       const upstreamDetail =
         data?.upstreamBody ??
         (data?.upstreamJson ? JSON.stringify(data.upstreamJson) : null) ??
+        data?.rawBodyPreview ??
         data?.error ??
         null;
 

@@ -85,6 +85,7 @@ const runtimeConfig = readProjectFile("js/runtime-config.js");
 const katagoClient = readProjectFile("js/solve/ai-response-solve/katago-respond-client.js");
 const tacticalEngine = readProjectFile("js/solve/ai-response-solve/tactical-response-engine.js");
 const katagoCore = readProjectFile("api/lib/katago-respond-core.js");
+const katagoRespondApi = readProjectFile("api/katago/respond.js");
 
 for (const needle of [
   "katagoWrongMaxVisits: 24",
@@ -110,7 +111,8 @@ for (const needle of [
   "[KatagoRespond] katago candidate selection",
   'console.warn("[KatagoRespond] katago candidate selection"',
   "resolveKatagoCandidatePoint",
-  "katago candidate coord audit",
+  "upstream HTTP error detail",
+  "requestBoardSize",
   "replace window expired before KataGo finished",
 ]) {
   if (!katagoClient.includes(needle)) {
@@ -139,9 +141,16 @@ for (const needle of [
   "const WRONG_REVEAL_MAX_VISITS = 24",
   "const WRONG_REVEAL_MAX_TIME = 0.45",
   "katagoBoardXSize: boardSize",
+  "produceKatagoRespond",
 ]) {
   if (!katagoCore.includes(needle)) {
     throw new Error(`katago-respond-core.js missing ${needle}`);
+  }
+}
+
+for (const needle of ["[api/katago/respond] request", "[api/katago/respond] failed"]) {
+  if (!katagoRespondApi.includes(needle)) {
+    throw new Error(`api/katago/respond.js missing ${needle}`);
   }
 }
 

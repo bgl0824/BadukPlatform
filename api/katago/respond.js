@@ -17,9 +17,20 @@ module.exports = async function handler(request, response) {
     return;
   }
 
+  let requestBody = null;
   try {
-    const body = typeof request.body === "string" ? JSON.parse(request.body) : request.body;
-    const result = await produceKatagoRespond(body ?? {});
+    requestBody =
+      typeof request.body === "string" ? JSON.parse(request.body) : request.body;
+    console.log("[api/katago/respond] request", {
+      boardSize: requestBody?.boardSize ?? null,
+      studentMoveResult: requestBody?.studentMoveResult ?? null,
+      maxVisits: requestBody?.maxVisits ?? null,
+      maxTime: requestBody?.maxTime ?? null,
+      stoneCount: Array.isArray(requestBody?.stones) ? requestBody.stones.length : 0,
+      moveCount: Array.isArray(requestBody?.moves) ? requestBody.moves.length : 0,
+      problemId: requestBody?.problemId ?? null,
+    });
+    const result = await produceKatagoRespond(requestBody ?? {});
     if (result?.katagoElapsedMs != null) {
       console.log("[api/katago/respond] timing", {
         requestStart: result.requestStart,
@@ -43,6 +54,17 @@ module.exports = async function handler(request, response) {
     }
     response.status(200).json(result);
   } catch (error) {
+    console.error("[api/katago/respond] failed", {
+      boardSize: requestBody?.boardSize ?? null,
+      studentMoveResult: requestBody?.studentMoveResult ?? null,
+      code: error.code ?? "KATAGO_ERROR",
+      message: error.message ?? "KataGo respond failed",
+      upstreamStatus: error.upstreamStatus ?? null,
+      upstreamBodyPreview: error.upstreamBody
+        ? String(error.upstreamBody).slice(0, 800)
+        : null,
+      katagoElapsedMs: error.katagoElapsedMs ?? null,
+    });
     console.error(
       "[api/katago/respond]",
       error.message,
