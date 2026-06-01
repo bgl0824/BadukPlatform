@@ -55,6 +55,7 @@ function buildTargetContextDetail(targetContext, stones, boardSize) {
 
   return {
     ...formatTargetWhiteGroupForLog(targetContext),
+    groupCount: targetContext.groups?.length ?? 0,
     targetWhiteGroupStones: groupStones.map((stonesInGroup) => stonesInGroup.join(", ")),
     targetLiberties: liberties,
     targetLibertyCount: liberties.length,
@@ -146,6 +147,30 @@ export function logGoalFirstSelectionAudit({
   }
 
   const scoredKeys = new Set(scoredCandidates.map((c) => candidateKey(c)).filter(Boolean));
+  const targetDetail = buildTargetContextDetail(targetContext, stones, boardSize);
+
+  console.warn("[KatagoRespond] goal-first multi-target", {
+    multiTarget: goalMeta?.multiTarget ?? (targetDetail?.groupCount ?? 0) >= 2,
+    groupCount: targetDetail?.groupCount ?? null,
+  });
+
+  const connectPool = (goalMeta?.connectDiagnostics ?? []).map((row) => ({
+    move: row.move,
+    source: row.source,
+    groupsBefore: row.groupsBefore,
+    groupsAfter: row.groupsAfter,
+    totalLibertiesBefore: row.totalLibertiesBefore,
+    totalLibertiesAfter: row.totalLibertiesAfter,
+    groupCountReduction: row.groupCountReduction,
+    totalLibertyGain: row.totalLibertyGain,
+    connectsGroups: row.connectsGroups,
+    beneficialForSurvival: row.beneficialForSurvival,
+    bridgeTags: row.bridgeTags,
+  }));
+  console.warn("[KatagoRespond] goal-first connect candidates", {
+    count: connectPool.length,
+    connectCandidates: connectPool,
+  });
 
   const capturePool = (goalMeta?.captureDiagnostics ?? []).map((row) => ({
     move: row.move,
@@ -169,6 +194,7 @@ export function logGoalFirstSelectionAudit({
       const key = candidateKey(candidate);
       const rankMeta = rankByKey.get(key) ?? {};
       const captureMeta = candidate.captureMeta ?? null;
+      const connectMeta = candidate.connectMeta ?? null;
       return {
         move: candidate.move ?? formatCoordLabel(candidate),
         source: candidate.source ?? rankMeta.source ?? null,
@@ -178,11 +204,14 @@ export function logGoalFirstSelectionAudit({
         capturedBlackStones: captureMeta?.capturedBlackStones ?? null,
         libertyGainAfterCapture: captureMeta?.libertyGainAfterCapture ?? null,
         targetLibertiesAfterMove: captureMeta?.targetLibertiesAfterMove ?? null,
+        groupsBefore: connectMeta?.groupsBefore ?? null,
+        groupsAfter: connectMeta?.groupsAfter ?? null,
+        totalLibertiesBefore: connectMeta?.totalLibertiesBefore ?? null,
+        totalLibertiesAfter: connectMeta?.totalLibertiesAfter ?? null,
       };
     }),
   });
 
-  const targetDetail = buildTargetContextDetail(targetContext, stones, boardSize);
   console.warn("[KatagoRespond] goal-first target context", targetDetail);
 
   const selectedLiberty = targetContext
@@ -207,6 +236,15 @@ export function logGoalFirstSelectionAudit({
       targetImpactReasons: impact?.impactReasons ?? [],
     });
   }
+
+  const connectAttempts = pickDiagnostics?.connectCandidates ?? [];
+  console.warn("[KatagoRespond] goal-first connect selection", {
+    multiTarget: pickDiagnostics?.multiTarget ?? false,
+    connectRejectReason: pickDiagnostics?.connectRejectReason ?? null,
+    selectedOverForcedLiberty: pickDiagnostics?.selectedOverForcedLiberty ?? false,
+    pickedConnectMeta: pickDiagnostics?.pickedConnectMeta ?? null,
+    attempts: connectAttempts,
+  });
 
   const captureAttempts = pickDiagnostics?.captureToSurviveAttempts ?? [];
   console.warn("[KatagoRespond] goal-first capture selection", {
@@ -235,12 +273,15 @@ export function logGoalFirstSelectionAudit({
   };
   console.warn("[KatagoRespond] goal-first forced liberty diagnostic", forced);
 
+  const connectOverride =
+    pickDiagnostics?.forcedPickMode === "connect_target_groups_override";
   const captureOverride = pickDiagnostics?.forcedPickMode === "capture_to_survive_override";
   const forcedOverride = Boolean(
     pickDiagnostics?.forcedPickMode &&
       !pickDiagnostics?.forcedRejectReason &&
       selected &&
-      !captureOverride,
+      !captureOverride &&
+      !connectOverride,
   );
   const poolWouldPick = poolWinner?.move ?? null;
   const selectedMove = selected?.move ?? null;
@@ -250,11 +291,14 @@ export function logGoalFirstSelectionAudit({
     selectedMove,
     selectedSource,
     selectedReason: selectedReason ?? education?.selectedReason ?? null,
-    selectionPath: captureOverride
-      ? "capture_to_survive_override"
-      : forcedOverride
-        ? "forced_target_liberty_override"
-        : pickDiagnostics?.pickMode ?? "goal_scored_best",
+    selectionPath: connectOverride
+      ? "connect_target_groups_override"
+      : captureOverride
+        ? "capture_to_survive_override"
+        : forcedOverride
+          ? "forced_target_liberty_override"
+          : pickDiagnostics?.pickMode ?? "goal_scored_best",
+    connectOverride,
     captureOverride,
     forcedOverride,
     selectedOverForcedLiberty: pickDiagnostics?.selectedOverForcedLiberty ?? false,

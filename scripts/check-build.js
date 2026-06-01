@@ -197,10 +197,31 @@ for (const needle of [
   "[KatagoRespond] goal-first selected liberty",
   "[KatagoRespond] goal-first capture candidates",
   "[KatagoRespond] goal-first capture selection",
+  "[KatagoRespond] goal-first multi-target",
+  "[KatagoRespond] goal-first connect candidates",
+  "[KatagoRespond] goal-first connect selection",
 ]) {
   if (!goalFirstAudit.includes(needle)) {
     throw new Error(`goal-first-selection-audit.js missing ${needle}`);
   }
+}
+
+const connectTargetGroups = readProjectFile(
+  "js/solve/ai-response-solve/connect-target-groups-candidates.js",
+);
+for (const needle of [
+  "export function collectConnectTargetGroupsCandidates",
+  "connect_target_groups",
+  "merge_target_groups",
+]) {
+  if (!connectTargetGroups.includes(needle)) {
+    throw new Error(`connect-target-groups-candidates.js missing ${needle}`);
+  }
+}
+
+const targetWhiteGroup = readProjectFile("js/solve/ai-response-solve/target-white-group.js");
+if (!targetWhiteGroup.includes("export function measureMultiTargetMetrics")) {
+  throw new Error("target-white-group.js missing measureMultiTargetMetrics");
 }
 
 const captureSurvive = readProjectFile("js/solve/ai-response-solve/capture-to-survive-candidates.js");

@@ -22,11 +22,13 @@ import { parseGtpCoordinate } from "../ai-response-ux/coordinates.js";
 import { isPointInAllowedRegion } from "./problem-region.js";
 import { buildBoardStateHash } from "./board-state-audit.js";
 import { collectCaptureToSurviveCandidates } from "./capture-to-survive-candidates.js";
+import { collectConnectTargetGroupsCandidates } from "./connect-target-groups-candidates.js";
 import {
   formatTargetWhiteGroupForLog,
   getTargetLibertyPoints,
   isMoveAdjacentToTargetGroup,
   isMoveOnTargetAtariLiberty,
+  measureMultiTargetAfterMove,
   measureTargetGroupAfterMove,
   pointKeyToCoordLabel,
   resolveTargetWhiteGroup,
@@ -49,6 +51,8 @@ const REASON_PRIORITY = {
 
 /** 오답 대응 — internal reason 키 기준 (정렬용) */
 const WRONG_REVEAL_INTERNAL_PRIORITY = {
+  connect_target_groups: 9,
+  merge_target_groups: 9,
   capture_to_survive: 8,
   create_liberty_by_capture: 7,
   capture_adjacent_black: 7,
@@ -68,6 +72,8 @@ const WRONG_REVEAL_INTERNAL_PRIORITY = {
 
 const WRONG_REVEAL_REASON_LABEL = {
   extend_atari: "forced_extend_atari",
+  connect_target_groups: "connect_target_groups",
+  merge_target_groups: "merge_target_groups",
   capture_to_survive: "capture_to_survive",
   create_liberty_by_capture: "create_liberty_by_capture",
   capture_adjacent_black: "capture_adjacent_black",
@@ -88,6 +94,8 @@ const WRONG_REVEAL_REASON_LABEL = {
 const FORBIDDEN_WRONG_REVEAL_REASONS = new Set(["sacrifice_play"]);
 
 const TARGET_SURVIVAL_PRIMARY_REASONS = new Set([
+  "connect_target_groups",
+  "merge_target_groups",
   "capture_to_survive",
   "create_liberty_by_capture",
   "capture_adjacent_black",
@@ -101,6 +109,11 @@ const CAPTURE_TO_SURVIVE_SOURCES = new Set([
   "capture_to_survive",
   "capture_adjacent_black",
   "create_liberty_by_capture",
+]);
+
+const CONNECT_TARGET_GROUPS_SOURCES = new Set([
+  "connect_target_groups",
+  "merge_target_groups",
 ]);
 
 function manhattanDistance(a, b) {
@@ -518,6 +531,31 @@ function scoreWrongRevealWithTarget({
   );
   const targetGain = targetAfter?.libertyGain ?? 0;
 
+  const multiAfter = measureMultiTargetAfterMove({
+    problem,
+    beforeContext: targetContext,
+    beforeStones: stones,
+    afterStones,
+    boardSize,
+    stoneColors,
+  });
+  if (multiAfter?.multiTarget) {
+    if (multiAfter.connectsGroups || multiAfter.groupCountReduction > 0) {
+      signals.merge_target_groups =
+        135000 +
+        multiAfter.groupCountReduction * 8000 +
+        multiAfter.totalLibertyGain * 1200;
+      reasons.push("merge_target_groups");
+    } else if (
+      multiAfter.totalLibertyGain > 0 ||
+      CONNECT_TARGET_GROUPS_SOURCES.has(candidate.source)
+    ) {
+      signals.connect_target_groups =
+        125000 + multiAfter.totalLibertyGain * 1500 + targetGain * 500;
+      reasons.push("connect_target_groups");
+    }
+  }
+
   const capturedCount = countCaptures(stones, afterStones, stoneColors.black);
   if (capturedCount > 0) {
     const touchesTarget = isMoveAdjacentToTargetGroup(
@@ -540,7 +578,11 @@ function scoreWrongRevealWithTarget({
   }
 
   if (isMoveOnTargetAtariLiberty(moveKey, targetContext)) {
-    if (!reasons.includes("capture_to_survive")) {
+    const skipForcedExtend =
+      reasons.includes("capture_to_survive") ||
+      reasons.includes("connect_target_groups") ||
+      reasons.includes("merge_target_groups");
+    if (!skipForcedExtend) {
       signals.extend_atari = inTargetCrisis ? 80000 : 2500;
       reasons.push("extend_atari");
     }
@@ -1023,6 +1065,200 @@ function scoreForcedTargetLibertyMoves({
   return { liberties, attempts };
 }
 
+function mergeConnectCandidatesForCrisis(
+  regionCandidates,
+  targetContext,
+  stones,
+  boardSize,
+  stoneColors,
+  problem,
+) {
+  const { candidates: generated } = collectConnectTargetGroupsCandidates({
+    targetContext,
+    stones,
+    boardSize,
+    stoneColors,
+    problem,
+  });
+  const merged = [...generated];
+  const seen = new Set(merged.map((candidate) => `${candidate.x},${candidate.y}`));
+  for (const candidate of regionCandidates ?? []) {
+    const key = `${candidate.x},${candidate.y}`;
+    if (seen.has(key)) {
+      continue;
+    }
+    seen.add(key);
+    merged.push(candidate);
+  }
+  return merged;
+}
+
+function tryPickConnectTargetGroupsOverForcedLiberty({
+  targetContext,
+  stones,
+  boardSize,
+  stoneColors,
+  lastBlackMove,
+  style,
+  problem,
+  regionCandidates,
+  forcedLibertyPoint,
+}) {
+  if ((targetContext?.groups?.length ?? 0) < 2) {
+    return {
+      picked: null,
+      diagnostics: {
+        multiTarget: false,
+        connectRejectReason: "single_target_group",
+        connectCandidates: [],
+        selectedOverForcedLiberty: false,
+      },
+    };
+  }
+
+  const merged = mergeConnectCandidatesForCrisis(
+    regionCandidates,
+    targetContext,
+    stones,
+    boardSize,
+    stoneColors,
+    problem,
+  );
+  const connectAttempts = [];
+  const beneficial = [];
+
+  for (const candidate of merged) {
+    const isConnectCandidate =
+      CONNECT_TARGET_GROUPS_SOURCES.has(candidate.source) || candidate.connectMeta;
+    if (!isConnectCandidate) {
+      continue;
+    }
+
+    const scored = scoreCandidate({
+      candidate,
+      stones,
+      boardSize,
+      stoneColors,
+      lastBlackMove,
+      style,
+      responseMode: "wrong_reveal",
+      problem,
+      targetContext,
+    });
+
+    const meta = candidate.connectMeta ?? null;
+    let multiAfter = meta;
+    if (!multiAfter && scored) {
+      const afterStones = simulateWhiteMove(
+        stones,
+        { x: candidate.x, y: candidate.y },
+        boardSize,
+        stoneColors,
+      );
+      if (afterStones) {
+        multiAfter = measureMultiTargetAfterMove({
+          problem,
+          beforeContext: targetContext,
+          beforeStones: stones,
+          afterStones,
+          boardSize,
+          stoneColors,
+        });
+      }
+    }
+
+    if (!scored) {
+      connectAttempts.push({
+        move: candidate.move ?? formatCoordLabel(candidate),
+        legal: false,
+        rejectReason: "illegal_placement",
+        groupsBefore: multiAfter?.groupsBefore ?? null,
+        groupsAfter: multiAfter?.groupsAfter ?? null,
+        totalLibertiesBefore: multiAfter?.totalLibertiesBefore ?? null,
+        totalLibertiesAfter: multiAfter?.totalLibertiesAfter ?? null,
+        beneficialForSurvival: false,
+      });
+      continue;
+    }
+
+    const beneficialForSurvival = Boolean(
+      multiAfter?.connectsGroups ||
+        (multiAfter?.totalLibertyGain ?? 0) > 0 ||
+        (multiAfter?.groupCountReduction ?? 0) > 0 ||
+        (multiAfter?.minLiberties ?? 0) >= 2,
+    );
+
+    connectAttempts.push({
+      move: scored.move ?? formatCoordLabel(candidate),
+      legal: true,
+      source: candidate.source ?? meta?.source ?? null,
+      groupsBefore: multiAfter?.groupsBefore ?? null,
+      groupsAfter: multiAfter?.groupsAfter ?? null,
+      totalLibertiesBefore: multiAfter?.totalLibertiesBefore ?? null,
+      totalLibertiesAfter: multiAfter?.totalLibertiesAfter ?? null,
+      groupCountReduction: multiAfter?.groupCountReduction ?? 0,
+      totalLibertyGain: multiAfter?.totalLibertyGain ?? 0,
+      connectsGroups: multiAfter?.connectsGroups ?? false,
+      beneficialForSurvival,
+      totalScore: scored.totalScore,
+      primaryReason: scored.primaryReason,
+      selectedReason: scored.selectedReason,
+    });
+
+    if (beneficialForSurvival) {
+      beneficial.push({ scored, meta: multiAfter });
+    }
+  }
+
+  if (beneficial.length === 0) {
+    return {
+      picked: null,
+      diagnostics: {
+        multiTarget: true,
+        connectCandidates: connectAttempts,
+        connectRejectReason: "no_beneficial_connect",
+        selectedOverForcedLiberty: false,
+      },
+    };
+  }
+
+  beneficial.sort((a, b) => {
+    const mergeA = a.meta?.groupCountReduction ?? 0;
+    const mergeB = b.meta?.groupCountReduction ?? 0;
+    if (mergeB !== mergeA) {
+      return mergeB - mergeA;
+    }
+    const libA = a.meta?.totalLibertyGain ?? 0;
+    const libB = b.meta?.totalLibertyGain ?? 0;
+    if (libB !== libA) {
+      return libB - libA;
+    }
+    return b.scored.totalScore - a.scored.totalScore;
+  });
+
+  const best = beneficial[0].scored;
+  best.selectedReason = mapWrongRevealReason(best.primaryReason);
+  best.totalScore = 100_000_002;
+
+  const forcedKey = forcedLibertyPoint ? pointKey(forcedLibertyPoint) : null;
+  const selectedOverForcedLiberty = Boolean(
+    forcedKey && best.point && pointKey(best.point) !== forcedKey,
+  );
+
+  return {
+    picked: best,
+    diagnostics: {
+      multiTarget: true,
+      forcedExtendMove: forcedLibertyPoint ? formatCoordLabel(forcedLibertyPoint) : null,
+      forcedRejectReason: null,
+      forcedPickMode: "connect_target_groups_override",
+      connectCandidates: connectAttempts,
+      selectedOverForcedLiberty,
+      pickedConnectMeta: beneficial[0].meta,
+    },
+  };
+}
+
 function mergeCaptureCandidatesForCrisis(
   regionCandidates,
   targetContext,
@@ -1232,6 +1468,33 @@ function tryPickForcedTargetLiberty({
     };
   }
 
+  const forcedLibertyPoint = liberties.length === 1 ? liberties[0] : null;
+  let connectOverrideAttempt = null;
+
+  if (targetContext.groups.length >= 2) {
+    connectOverrideAttempt = tryPickConnectTargetGroupsOverForcedLiberty({
+      targetContext,
+      stones,
+      boardSize,
+      stoneColors,
+      lastBlackMove,
+      style,
+      problem,
+      regionCandidates,
+      forcedLibertyPoint,
+    });
+    if (connectOverrideAttempt.picked) {
+      return {
+        picked: connectOverrideAttempt.picked,
+        diagnostics: {
+          ...connectOverrideAttempt.diagnostics,
+          libertyAttempts: attempts,
+          deferredForcedLiberty: forcedExtendMove,
+        },
+      };
+    }
+  }
+
   if (liberties.length === 1) {
     const captureOverride = tryPickCaptureToSurviveOverForcedLiberty({
       targetContext,
@@ -1268,6 +1531,9 @@ function tryPickForcedTargetLiberty({
         libertyAttempts: attempts,
         captureToSurviveAttempts: captureOverride.diagnostics.captureToSurviveAttempts,
         captureRejectReason: captureOverride.diagnostics.captureRejectReason,
+        connectCandidates: connectOverrideAttempt?.diagnostics?.connectCandidates ?? [],
+        connectRejectReason: connectOverrideAttempt?.diagnostics?.connectRejectReason ?? null,
+        multiTarget: (targetContext.groups?.length ?? 0) >= 2,
         selectedOverForcedLiberty: false,
       },
     };

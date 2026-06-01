@@ -153,6 +153,80 @@ export function resolveTargetWhiteGroup(problem, stones, boardSize, stoneColors)
 /**
  * 착수 후 타깃 그룹 활로 지표 (같은 seed 기준으로 그룹 재계산)
  */
+/**
+ * 복수 타깃 백 그룹의 그룹 수·합산 활로(중복 제거)
+ */
+export function measureMultiTargetMetrics(targetContext, stones, boardSize) {
+  if (!targetContext?.groups?.length) {
+    return null;
+  }
+
+  const libertyKeys = new Set();
+  for (const group of targetContext.groups) {
+    getGroupLibertyKeys(stones, group, boardSize).forEach((key) => libertyKeys.add(key));
+  }
+
+  return {
+    multiTarget: targetContext.groups.length >= 2,
+    groupCount: targetContext.groups.length,
+    totalLiberties: libertyKeys.size,
+    minLiberties: targetContext.minLiberties,
+  };
+}
+
+/**
+ * 착수 전후 복수 타깃 그룹 병합·활로 변화
+ */
+export function measureMultiTargetAfterMove({
+  problem,
+  beforeContext,
+  beforeStones,
+  afterStones,
+  boardSize,
+  stoneColors,
+}) {
+  const before = measureMultiTargetMetrics(beforeContext, beforeStones, boardSize);
+  if (!before) {
+    return null;
+  }
+
+  const afterContext = resolveTargetWhiteGroup(
+    {
+      ...problem,
+      targetWhiteGroup: beforeContext.seedPoints,
+      target_white_group: beforeContext.seedPoints,
+      targetWhiteMark: beforeContext.targetMark,
+    },
+    afterStones,
+    boardSize,
+    stoneColors,
+  );
+  const after = measureMultiTargetMetrics(afterContext, afterStones, boardSize);
+  if (!after) {
+    return {
+      ...before,
+      groupsBefore: before.groupCount,
+      groupsAfter: before.groupCount,
+      totalLibertiesBefore: before.totalLiberties,
+      totalLibertiesAfter: before.totalLiberties,
+      groupCountReduction: 0,
+      totalLibertyGain: 0,
+      connectsGroups: false,
+    };
+  }
+
+  return {
+    ...after,
+    groupsBefore: before.groupCount,
+    groupsAfter: after.groupCount,
+    totalLibertiesBefore: before.totalLiberties,
+    totalLibertiesAfter: after.totalLiberties,
+    groupCountReduction: before.groupCount - after.groupCount,
+    totalLibertyGain: after.totalLiberties - before.totalLiberties,
+    connectsGroups: after.groupCount < before.groupCount,
+  };
+}
+
 export function measureTargetGroupAfterMove(
   problem,
   stones,

@@ -4,6 +4,7 @@ import { formatCoordLabel } from "./answer-sequence.js";
 import { isPointInAllowedRegion } from "./problem-region.js";
 import { getTargetLibertyPoints, isMoveAdjacentToTargetGroup } from "./target-white-group.js";
 import { collectCaptureToSurviveCandidates } from "./capture-to-survive-candidates.js";
+import { collectConnectTargetGroupsCandidates } from "./connect-target-groups-candidates.js";
 import { buildNearLastBlackCandidates } from "./wrong-response-fallback.js";
 
 function toCandidate(point, source) {
@@ -220,6 +221,15 @@ export function generateGoalCandidates({
     }),
   );
 
+  const { candidates: connectTargetGroups, connectDiagnostics, multiTarget } =
+    collectConnectTargetGroupsCandidates({
+      targetContext,
+      stones,
+      boardSize,
+      stoneColors,
+      problem,
+    });
+
   const { candidates: captureCandidates, captureDiagnostics } =
     collectCaptureToSurviveCandidates({
       targetContext,
@@ -230,6 +240,7 @@ export function generateGoalCandidates({
     });
 
   const merged = mergeCandidates([
+    connectTargetGroups,
     captureCandidates,
     targetLiberties,
     targetAdjacent,
@@ -265,13 +276,22 @@ export function generateGoalCandidates({
           ?.source ?? "capture_to_survive",
       );
     }
+    if (connectTargetGroups.some((candidate) => `${candidate.x},${candidate.y}` === traceKey)) {
+      sourcePoolsForTrace.push(
+        connectTargetGroups.find((candidate) => `${candidate.x},${candidate.y}` === traceKey)
+          ?.source ?? "connect_target_groups",
+      );
+    }
   }
 
   return {
     candidates,
     meta: {
       sources: [...sourceSet],
+      multiTarget,
       targetLibertyLabels: targetLiberties.map((candidate) => candidate.move),
+      connectCandidateCount: connectTargetGroups.length,
+      connectDiagnostics,
       captureCandidateCount: captureCandidates.length,
       captureDiagnostics,
       mergedCount: merged.length,
