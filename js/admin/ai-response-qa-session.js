@@ -4,6 +4,32 @@
 
 const QA_SESSION_KEY = "__AI_QA_RUN";
 
+/** @typedef {"fast"|"precise"} QaRunMode */
+
+export const QA_RUN_MODES = {
+  fast: {
+    id: "fast",
+    label: "빠른 QA",
+    waitForKatago: false,
+    description: "replace_window 허용 · fallback 가능 · 속도 우선",
+  },
+  precise: {
+    id: "precise",
+    label: "정밀 QA",
+    waitForKatago: true,
+    description: "KataGo 응답 완료까지 대기 · 엔진 선택 품질 검증",
+  },
+};
+
+/**
+ * @param {string} [mode]
+ * @returns {{ id: QaRunMode, label: string, waitForKatago: boolean, description: string }}
+ */
+export function resolveQaRunMode(mode) {
+  const key = mode === "fast" ? "fast" : "precise";
+  return QA_RUN_MODES[key];
+}
+
 export function isQaManualMarkEnabled() {
   return (
     window.BadukConfig?.adminQaDebugManualMark === true ||
@@ -12,23 +38,33 @@ export function isQaManualMarkEnabled() {
 }
 
 /**
- * @param {{ waitForKatago?: boolean, signal?: AbortSignal|null }} [options]
+ * @param {{ waitForKatago?: boolean, qaMode?: QaRunMode, signal?: AbortSignal|null }} [options]
  */
 export function beginQaSession(options = {}) {
+  const runMode = resolveQaRunMode(
+    options.qaMode ??
+      (options.waitForKatago === false
+        ? "fast"
+        : options.waitForKatago === true
+          ? "precise"
+          : window.BadukConfig?.qaDefaultMode === "fast"
+            ? "fast"
+            : "precise"),
+  );
   const waitForKatago =
-    options.waitForKatago ??
-    window.BadukConfig?.qaWaitForKatago ??
-    true;
+    options.waitForKatago ?? runMode.waitForKatago ?? window.BadukConfig?.qaWaitForKatago ?? true;
 
   window[QA_SESSION_KEY] = {
     waitForKatago: Boolean(waitForKatago),
+    qaMode: runMode.id,
     signal: options.signal ?? null,
     startedAt: Date.now(),
   };
 
-  if (waitForKatago) {
-    console.info("[AI_QA] qaWaitForKatago enabled — replace_window race skipped");
-  }
+  console.info("[AI_QA] session", {
+    qaMode: runMode.id,
+    qaWaitForKatago: Boolean(waitForKatago),
+  });
 
   return window[QA_SESSION_KEY];
 }

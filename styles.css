@@ -4930,6 +4930,15 @@ h2 {
   white-space: nowrap;
 }
 
+.admin-problems-toolbar-actions .admin-ai-response-qa-batch-button + .admin-ai-response-qa-batch-button {
+  margin-left: 6px;
+}
+
+.admin-ai-response-qa-criteria-hint {
+  margin: 0 0 10px;
+  line-height: 1.45;
+}
+
 .admin-ai-response-qa-batch-result {
   margin-top: 12px;
 }

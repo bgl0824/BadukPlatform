@@ -70,7 +70,11 @@ export const adminElements = {
 
   addProblemButton: document.querySelector("#add-problem"),
 
-  adminAiResponseQaBatchButton: document.querySelector("#admin-ai-response-qa-batch"),
+  adminAiResponseQaBatchFastButton: document.querySelector("#admin-ai-response-qa-batch-fast"),
+
+  adminAiResponseQaBatchPreciseButton: document.querySelector(
+    "#admin-ai-response-qa-batch-precise",
+  ),
 
   adminAiResponseQaBatchResult: document.querySelector("#admin-ai-response-qa-batch-result"),
 

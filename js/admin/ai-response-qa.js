@@ -51,6 +51,7 @@ import {
   isCaseManuallyMarked,
   renderQaInspectionCaseCard,
 } from "./ai-response-qa-inspection.js";
+import { NEGATIVE_FACTOR_LABELS } from "./ai-response-qa-quality.js";
 import {
   isQaManualMarkEnabled,
   throwIfQaAborted,
@@ -781,6 +782,7 @@ async function runSingleQaCase({ problem, caseInfo, boardSize, stoneColors }) {
     verdict: quality.verdict,
     qualityScore: quality.score,
     qualityGoal: quality.goal,
+    qaProfile: quality.qaProfile,
     positiveFactors: quality.positives,
     positiveLabels: quality.positiveLabels,
     negativeFactors: quality.negatives,
@@ -834,6 +836,8 @@ export function buildQaAggregateSummary(cases) {
     problem: 0,
     fallbackCount: 0,
     selectedReasonCounts: {},
+    negativeFactorCounts: {},
+    qaProfileCounts: {},
   };
 
   for (const row of rows) {
@@ -850,6 +854,13 @@ export function buildQaAggregateSummary(cases) {
     const reasonKey = row.selectedReason ?? "(none)";
     summary.selectedReasonCounts[reasonKey] =
       (summary.selectedReasonCounts[reasonKey] ?? 0) + 1;
+    const profileKey = row.qaProfile ?? row.qualityGoal ?? "(unknown)";
+    summary.qaProfileCounts[profileKey] =
+      (summary.qaProfileCounts[profileKey] ?? 0) + 1;
+    for (const factor of row.negativeFactors ?? []) {
+      summary.negativeFactorCounts[factor] =
+        (summary.negativeFactorCounts[factor] ?? 0) + 1;
+    }
   }
 
   return summary;
@@ -876,9 +887,26 @@ export function renderQaAggregateSummaryHtml(aggregate, escapeHtml) {
     ? `<ul class="admin-ai-response-qa-reason-stats">${reasonRows}</ul>`
     : `<p class="admin-field-hint">selectedReason 통계 없음</p>`;
 
+  const negativeRows = Object.entries(aggregate.negativeFactorCounts ?? {})
+    .sort((a, b) => b[1] - a[1])
+    .slice(0, 8)
+    .map(
+      ([key, count]) =>
+        `<li>${escapeHtml(NEGATIVE_FACTOR_LABELS[key] ?? key)} <strong>${escapeHtml(String(count))}</strong></li>`,
+    )
+    .join("");
+
+  const negativeBlock = negativeRows
+    ? `<ul class="admin-ai-response-qa-reason-stats">${negativeRows}</ul>`
+    : "";
+
   return `
     <section class="admin-ai-response-qa-aggregate" aria-label="QA 요약">
       <p class="admin-ai-response-qa-aggregate-title">결과 요약</p>
+      <p class="admin-field-hint admin-ai-response-qa-criteria-hint">
+        자동 판정은 <strong>바둑 정답 일치</strong>가 아니라 활로 변화·타깃 근접·reason·fallback 등 휴리스틱입니다.
+        정답 수순 백 수와 같으면 오히려 감점(author_sequence_leak)합니다.
+      </p>
       <dl class="admin-ai-response-qa-aggregate-grid">
         <div><dt>총 케이스</dt><dd>${escapeHtml(String(aggregate.total))}</dd></div>
         <div><dt>정상</dt><dd class="qa-stat-good">${escapeHtml(String(aggregate.good))}</dd></div>
@@ -890,6 +918,14 @@ export function renderQaAggregateSummaryHtml(aggregate, escapeHtml) {
         <summary>selectedReason 통계</summary>
         ${reasonBlock}
       </details>
+      ${
+        negativeBlock
+          ? `<details class="admin-ai-response-qa-reason-stats-wrap">
+        <summary>감점 요인 TOP (자동)</summary>
+        ${negativeBlock}
+      </details>`
+          : ""
+      }
     </section>
   `;
 }

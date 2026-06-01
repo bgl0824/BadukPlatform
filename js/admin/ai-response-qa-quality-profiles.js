@@ -12,6 +12,9 @@ export function resolveQaCategoryProfile(problem) {
   if (category === "장문") {
     return JANGMUN_QA_PROFILE;
   }
+  if (category === "먹여치기") {
+    return MUKYEOCHIGI_QA_PROFILE;
+  }
   return DEFAULT_QA_PROFILE;
 }
 
@@ -154,6 +157,15 @@ export const JANGMUN_QA_PROFILE = {
   },
   qualifyProblem: qualifyJangmunProblem,
   qualifyGood: qualifyJangmunGood,
+};
+
+/** 먹여치기 — 장문과 유사하게 영역·압박 중심 (활로 단일 지표 과민 완화) */
+export const MUKYEOCHIGI_QA_PROFILE = {
+  ...JANGMUN_QA_PROFILE,
+  id: "먹여치기",
+  goal: /** @type {QaRevealGoal} */ ("capture_pressure"),
+  minProblemOverlap: 3,
+  goodScoreThreshold: 50,
 };
 
 /**

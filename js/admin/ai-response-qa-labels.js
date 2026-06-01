@@ -10,6 +10,11 @@ export const SELECTED_REASON_LABELS = {
   connect_white_group: "백 그룹 연결",
   near_last_black: "흑 오답 수 인근",
   region_candidate: "영역 일반 후보",
+  connect_target_groups: "타깃 그룹 연결 (multi)",
+  merge_target_groups: "타깃 그룹 병합",
+  capture_to_survive: "포획 생존",
+  capture_adjacent_black: "인접 흑 포획",
+  create_liberty_by_capture: "포획으로 활로 확보",
   capture_black: "흑 잡기",
   sacrifice_play: "희생·교환",
   snapback_capture: "환격 포획",
@@ -21,6 +26,11 @@ const SURVIVAL_REASONS = new Set([
   "continuous_escape",
   "future_liberty_gain",
   "connect_target_group",
+  "connect_target_groups",
+  "merge_target_groups",
+  "capture_to_survive",
+  "capture_adjacent_black",
+  "create_liberty_by_capture",
 ]);
 
 export function formatSelectedReasonLabel(selectedReason) {

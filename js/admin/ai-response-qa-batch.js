@@ -17,6 +17,7 @@ import {
   endQaSession,
   formatQaEta,
   isQaManualMarkEnabled,
+  resolveQaRunMode,
   throwIfQaAborted,
 } from "./ai-response-qa-session.js";
 import {
@@ -112,7 +113,11 @@ export function renderQaBatchProgressHtml(progress, escapeHtml) {
               }</p>`
             : ""
         }
-        <p class="admin-field-hint">예상 남은 시간: ${escapeHtml(formatQaEta(progress.etaMs))} · KataGo 완료 대기(qaWaitForKatago)</p>
+        <p class="admin-field-hint">
+          예상 남은 시간: ${escapeHtml(formatQaEta(progress.etaMs))}
+          · 모드: ${escapeHtml(progress.qaModeLabel ?? "—")}
+          ${progress.qaWaitForKatago ? " · KataGo 완료 대기" : " · replace_window 허용(빠른)"}
+        </p>
         <button type="button" class="secondary-button admin-ai-response-qa-cancel" data-qa-cancel>중단</button>
       </div>
     </div>
@@ -131,13 +136,16 @@ export async function runAiResponseQaBatch({
   onProgress,
   signal = null,
   waitForKatago = true,
+  qaMode = waitForKatago ? "precise" : "fast",
 }) {
+  const runMode = resolveQaRunMode(qaMode);
+  const resolvedWaitForKatago = runMode.waitForKatago;
+
+  beginQaSession({ qaMode: runMode.id, waitForKatago: resolvedWaitForKatago, signal });
   const normalizedCategory = String(category ?? "").trim();
   if (!normalizedCategory || normalizedCategory === "전체") {
     return { ok: false, error: "카테고리를 하나 선택한 뒤 일괄 미리보기를 실행하세요." };
   }
-
-  beginQaSession({ waitForKatago, signal });
 
   try {
     const targets = collectAiResponseQaBatchTargets({
@@ -185,6 +193,9 @@ export async function runAiResponseQaBatch({
         currentLabel: label,
         currentCaseLabel: null,
         etaMs: null,
+        qaMode: runMode.id,
+        qaModeLabel: runMode.label,
+        qaWaitForKatago: resolvedWaitForKatago,
       });
 
       if (!eligible) {
@@ -221,6 +232,9 @@ export async function runAiResponseQaBatch({
             currentLabel: label,
             currentCaseLabel: `${caseProgress.blackPly ?? "?"}흑 ${caseProgress.candidateMove ?? ""}`,
             etaMs,
+            qaMode: runMode.id,
+            qaModeLabel: runMode.label,
+            qaWaitForKatago: resolvedWaitForKatago,
           });
         },
       });
@@ -255,6 +269,9 @@ export async function runAiResponseQaBatch({
         currentLabel: label,
         currentCaseLabel: null,
         etaMs: avgMs != null ? avgMs * remaining : null,
+        qaMode: runMode.id,
+        qaModeLabel: runMode.label,
+        qaWaitForKatago: resolvedWaitForKatago,
       });
     }
 
@@ -266,6 +283,8 @@ export async function runAiResponseQaBatch({
       ok: true,
       category: normalizedCategory,
       levelGroup,
+      qaMode: runMode.id,
+      qaModeLabel: runMode.label,
       items,
       allCases,
       aggregate,
@@ -415,7 +434,7 @@ export function renderAiResponseQaBatchReportHtml(
   return `
     <div class="admin-ai-response-qa-batch-panel" data-qa-batch-root>
       <header class="admin-ai-response-qa-batch-head">
-        <p class="panel-label">${escapeHtml(category)} AI 응수 일괄 미리보기 · ${escapeHtml(levelGroup ?? "")}</p>
+        <p class="panel-label">${escapeHtml(category)} AI 응수 일괄 미리보기 · ${escapeHtml(levelGroup ?? "")}${report.qaModeLabel ? ` · ${escapeHtml(report.qaModeLabel)}` : ""}</p>
         ${renderQaAggregateSummaryHtml(resolvedAggregate, escapeHtml)}
         <div class="admin-ai-response-qa-toolbar">
           <p class="admin-ai-response-qa-summary">

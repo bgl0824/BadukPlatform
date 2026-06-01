@@ -313,11 +313,20 @@
                 </div>
                 <div class="admin-problems-toolbar-actions">
                   <button
-                    id="admin-ai-response-qa-batch"
+                    id="admin-ai-response-qa-batch-fast"
                     class="secondary-button admin-ai-response-qa-batch-button is-hidden"
                     type="button"
+                    title="replace_window 허용 · fallback 가능 · 속도 우선"
                   >
-                    AI 응수 일괄 미리보기
+                    빠른 QA
+                  </button>
+                  <button
+                    id="admin-ai-response-qa-batch-precise"
+                    class="secondary-button admin-ai-response-qa-batch-button is-hidden"
+                    type="button"
+                    title="KataGo 응답 완료까지 대기"
+                  >
+                    정밀 QA
                   </button>
                   <button
                     id="admin-problem-sort-toggle"

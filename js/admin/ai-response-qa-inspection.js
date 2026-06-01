@@ -2,6 +2,7 @@
  * AI 응수 QA — 검수(미리보기) UI 공통 (자동 판정은 참고용)
  */
 
+import { NEGATIVE_FACTOR_LABELS, POSITIVE_FACTOR_LABELS } from "./ai-response-qa-quality.js";
 import { isQaManualMarkEnabled } from "./ai-response-qa-session.js";
 
 const VERDICT_LABELS = {
@@ -67,10 +68,25 @@ function renderReferenceBlock(row, escapeHtml) {
     ? `<p class="admin-field-hint">타깃 활로: ${escapeHtml(row.targetDiagnostics.libertyChangeLabel ?? "—")}</p>`
     : "";
 
+  const profileLine = row?.qaProfile
+    ? `<p class="admin-field-hint">QA 프로필: ${escapeHtml(String(row.qaProfile))} · goal ${escapeHtml(String(row.qualityGoal ?? "—"))}</p>`
+    : "";
+  const negSummary = (row?.negativeFactors ?? [])
+    .slice(0, 4)
+    .map((key) => NEGATIVE_FACTOR_LABELS[key] ?? key)
+    .join(", ");
+  const posSummary = (row?.positiveFactors ?? [])
+    .slice(0, 4)
+    .map((key) => POSITIVE_FACTOR_LABELS[key] ?? key)
+    .join(", ");
+
   return `
     <details class="admin-ai-response-qa-reference">
       <summary>참고 · 자동 ${escapeHtml(verdictLabel)} ${escapeHtml(String(score))}점</summary>
       <p class="admin-field-hint">자동 판정은 참고용입니다. 상단 요약과 검토·문제 필터를 우선 사용하세요.</p>
+      ${profileLine}
+      ${negSummary ? `<p class="admin-field-hint">감점: ${escapeHtml(negSummary)}</p>` : ""}
+      ${posSummary ? `<p class="admin-field-hint">가점: ${escapeHtml(posSummary)}</p>` : ""}
       ${libertyDetail}
       ${notesHtml}
     </details>

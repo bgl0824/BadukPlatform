@@ -190,15 +190,33 @@ export function evaluateResponseQuality({
       positives.push("extend_atari");
       positives.push("on_target_liberty");
     }
-  } else if (selectedReason === "connect_target_group") {
+  } else if (
+    selectedReason === "connect_target_group" ||
+    selectedReason === "connect_target_groups" ||
+    selectedReason === "merge_target_groups"
+  ) {
     positives.push("connect_target");
+  } else if (
+    selectedReason === "capture_to_survive" ||
+    selectedReason === "capture_adjacent_black" ||
+    selectedReason === "create_liberty_by_capture"
+  ) {
+    positives.push("capture_threat");
+    if (selectedReason === "capture_to_survive") {
+      positives.push("liberty_increase");
+    }
   } else if (
     selectedReason === "continuous_escape" ||
     selectedReason === "future_liberty_gain"
   ) {
     positives.push("escape_line");
   } else if (selectedReason === "region_candidate" || selectedReason === "near_last_black") {
-    if (profile.regionCandidateIsNegative) {
+    const katagoOk = response?.source === "katago" && !response?.usedLocalFallback;
+    const nearTarget =
+      positives.includes("adjacent_target") ||
+      positives.includes("on_target_liberty") ||
+      positives.includes("capture_threat");
+    if (profile.regionCandidateIsNegative && !(katagoOk && nearTarget)) {
       negatives.push("meaningless_region");
     } else {
       positives.push("escape_block_candidate");
@@ -228,7 +246,8 @@ export function evaluateResponseQuality({
       !isSurvivalSelectedReason(selectedReason) &&
       selectedReason !== "forced_extend_atari" &&
       selectedReason !== "capture_black" &&
-      selectedReason !== "capture_black_group"
+      selectedReason !== "capture_black_group" &&
+      !isSurvivalSelectedReason(selectedReason)
     ) {
       negatives.push("style_reason_mismatch");
     }

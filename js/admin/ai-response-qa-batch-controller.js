@@ -4,6 +4,7 @@ import {
   renderAiResponseQaBatchReportHtml,
   runAiResponseQaBatch,
 } from "./ai-response-qa-batch.js";
+import { resolveQaRunMode } from "./ai-response-qa-session.js";
 
 export function createAiResponseQaBatchController({
   elements,
@@ -22,6 +23,7 @@ export function createAiResponseQaBatchController({
   let batchManualMarks = new Set();
   let batchShowMode = "issues";
   let abortController = null;
+  let lastQaMode = "precise";
 
   function isBatchUiVisible() {
     return (
@@ -42,15 +44,24 @@ export function createAiResponseQaBatchController({
     }
   }
 
+  function getBatchButtons() {
+    return [
+      elements.adminAiResponseQaBatchFastButton,
+      elements.adminAiResponseQaBatchPreciseButton,
+    ].filter(Boolean);
+  }
+
   function updateAiResponseQaBatchUi() {
-    const button = elements.adminAiResponseQaBatchButton;
+    const buttons = getBatchButtons();
     const result = elements.adminAiResponseQaBatchResult;
-    if (!button) {
+    if (buttons.length === 0) {
       return;
     }
 
     const visible = isBatchUiVisible();
-    button.classList.toggle("is-hidden", !visible);
+    for (const button of buttons) {
+      button.classList.toggle("is-hidden", !visible);
+    }
 
     if (!visible) {
       return;
@@ -58,11 +69,14 @@ export function createAiResponseQaBatchController({
 
     const category = String(appState.selectedCategory ?? "").trim();
     const disabled = running || !category || category === "전체";
-    button.disabled = disabled;
+    for (const button of buttons) {
+      button.disabled = disabled;
+    }
 
     if (!category || category === "전체") {
-      button.textContent = "AI 응수 일괄 미리보기";
-      button.title = "카테고리를 하나 선택하세요.";
+      for (const button of buttons) {
+        button.title = "카테고리를 하나 선택하세요.";
+      }
       return;
     }
 
@@ -73,10 +87,20 @@ export function createAiResponseQaBatchController({
       boardSize,
     });
     const eligibleCount = targets.filter((entry) => entry.eligible).length;
-    button.textContent = running
-      ? `${category} QA 실행 중…`
-      : `${category} AI 응수 일괄 미리보기`;
-    button.title = `미리보기 가능 ${eligibleCount}문제 (AI 응수 3·5·7수)`;
+    const fast = resolveQaRunMode("fast");
+    const precise = resolveQaRunMode("precise");
+
+    if (elements.adminAiResponseQaBatchFastButton) {
+      elements.adminAiResponseQaBatchFastButton.textContent = running && lastQaMode === "fast"
+        ? "빠른 QA 실행 중…"
+        : "빠른 QA";
+      elements.adminAiResponseQaBatchFastButton.title = `${fast.description} · ${eligibleCount}문제`;
+    }
+    if (elements.adminAiResponseQaBatchPreciseButton) {
+      elements.adminAiResponseQaBatchPreciseButton.textContent =
+        running && lastQaMode === "precise" ? "정밀 QA 실행 중…" : "정밀 QA";
+      elements.adminAiResponseQaBatchPreciseButton.title = `${precise.description} · ${eligibleCount}문제`;
+    }
 
     if (!running && result?.dataset.staleCategory && result.dataset.staleCategory !== category) {
       result.classList.add("is-hidden");
@@ -116,10 +140,13 @@ export function createAiResponseQaBatchController({
     });
   }
 
-  async function handleBatchQa() {
+  async function handleBatchQa(qaMode = "precise") {
     if (!requireAdminMode() || running) {
       return;
     }
+
+    const runMode = resolveQaRunMode(qaMode);
+    lastQaMode = runMode.id;
 
     const category = String(appState.selectedCategory ?? "").trim();
     if (!category || category === "전체") {
@@ -147,13 +174,16 @@ export function createAiResponseQaBatchController({
             caseTotal: 0,
             currentLabel: "준비 중…",
             etaMs: null,
+            qaMode: runMode.id,
+            qaModeLabel: runMode.label,
+            qaWaitForKatago: runMode.waitForKatago,
           },
         },
       );
       bindCancelButton(resultContainer);
     }
 
-    setFeedback(`${category} AI 응수 일괄 미리보기 시작…`, "neutral");
+    setFeedback(`${category} ${runMode.label} 시작…`, "neutral");
 
     try {
       const report = await runAiResponseQaBatch({
@@ -163,7 +193,7 @@ export function createAiResponseQaBatchController({
         boardSize,
         stoneColors,
         signal: abortController.signal,
-        waitForKatago: true,
+        qaMode: runMode.id,
         onProgress: (progress) => {
           if (resultContainer) {
             resultContainer.innerHTML = renderAiResponseQaBatchReportHtml(
@@ -197,7 +227,7 @@ export function createAiResponseQaBatchController({
       }
 
       const { summary } = report;
-      const message = `${category} 미리보기 완료 — ${summary.problems}문제 · ${summary.cases}케이스 · fallback ${summary.fallbackCount}`;
+      const message = `${category} ${report.qaModeLabel ?? runMode.label} 완료 — ${summary.problems}문제 · ${summary.cases}케이스 · 정상 ${summary.good} · fallback ${summary.fallbackCount}`;
       setFeedback(message, "correct");
     } catch (error) {
       console.error("[AI_QA_BATCH] run failed", error);
@@ -215,8 +245,11 @@ export function createAiResponseQaBatchController({
   }
 
   function bindAiResponseQaBatchEvents() {
-    elements.adminAiResponseQaBatchButton?.addEventListener("click", () => {
-      void handleBatchQa();
+    elements.adminAiResponseQaBatchFastButton?.addEventListener("click", () => {
+      void handleBatchQa("fast");
+    });
+    elements.adminAiResponseQaBatchPreciseButton?.addEventListener("click", () => {
+      void handleBatchQa("precise");
     });
   }
 
