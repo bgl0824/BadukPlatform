@@ -534,6 +534,7 @@ function buildTacticalSelection({
   rawCandidates = [],
   katagoBoardXSize = null,
   katagoBoardYSize = null,
+  allowedRegion = null,
 }) {
   if (studentMoveResult === "wrong") {
     return selectWrongRevealKatagoFirstMove({
@@ -546,6 +547,7 @@ function buildTacticalSelection({
       problem,
       katagoBoardXSize,
       katagoBoardYSize,
+      allowedRegion,
     });
   }
 
@@ -653,6 +655,7 @@ function finalizeKatagoSelection({
     rawCandidates,
     katagoBoardXSize,
     katagoBoardYSize,
+    allowedRegion,
   });
 
   logKatagoCandidateSelectionBreakdown({

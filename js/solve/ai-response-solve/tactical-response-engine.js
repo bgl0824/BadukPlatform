@@ -19,6 +19,7 @@ import {
 } from "./tactical-response-styles.js";
 import { formatCoordLabel } from "./answer-sequence.js";
 import { parseGtpCoordinate } from "../ai-response-ux/coordinates.js";
+import { isPointInAllowedRegion } from "./problem-region.js";
 import {
   formatTargetWhiteGroupForLog,
   getTargetLibertyPoints,
@@ -1033,14 +1034,209 @@ function candidatePointKey(candidate) {
   return `${candidate.x},${candidate.y}`;
 }
 
-function resolveWrongRevealMoveSelectionSource(rawRank) {
+function resolveWrongRevealMoveSelectionSource(rawRank, pickMode = null) {
   if (rawRank === 1) {
+    return "katago";
+  }
+  if (pickMode === "katago_full_raw_in_region" && rawRank != null) {
     return "katago";
   }
   if (rawRank != null && rawRank > 1 && rawRank <= WRONG_REVEAL_KATAGO_TOP_N) {
     return "katago_tactical_boost";
   }
   return "tactical_override";
+}
+
+function computeDistanceToTarget(point, targetContext) {
+  if (!point || !targetContext?.stoneKeys?.size) {
+    return null;
+  }
+
+  let minDistance = Infinity;
+  for (const key of targetContext.stoneKeys) {
+    const [x, y] = key.split(",").map(Number);
+    if (!Number.isFinite(x) || !Number.isFinite(y)) {
+      continue;
+    }
+    const distance = Math.max(Math.abs(point.x - x), Math.abs(point.y - y));
+    minDistance = Math.min(minDistance, distance);
+  }
+
+  return minDistance === Infinity ? null : minDistance;
+}
+
+function describeOutsideAllowedRegion(point, allowedRegion) {
+  if (!point || !allowedRegion) {
+    return "missing_region_or_point";
+  }
+  if (point.x < allowedRegion.minX) {
+    return "left_of_region";
+  }
+  if (point.x > allowedRegion.maxX) {
+    return "right_of_region";
+  }
+  if (point.y < allowedRegion.minY) {
+    return "above_region_min_y";
+  }
+  if (point.y > allowedRegion.maxY) {
+    return "below_region_max_y";
+  }
+  return "inside_bbox";
+}
+
+function logKatagoTopRegionDiagnostic({
+  candidate,
+  allowedRegion,
+  regionKeys,
+  targetContext,
+}) {
+  if (!candidate) {
+    return null;
+  }
+
+  const point = { x: candidate.x, y: candidate.y };
+  const inRegionByBBox = allowedRegion
+    ? isPointInAllowedRegion(point, allowedRegion)
+    : null;
+  const inRegionKeys = regionKeys.has(candidatePointKey(candidate));
+  const payload = {
+    move: candidate.move ?? null,
+    point,
+    allowedRegion: allowedRegion ?? null,
+    inRegionByBBox,
+    inRegionKeys,
+    distanceToTarget: computeDistanceToTarget(point, targetContext),
+    outsideReason:
+      inRegionKeys && inRegionByBBox !== false
+        ? null
+        : describeOutsideAllowedRegion(point, allowedRegion),
+  };
+  console.warn("[KatagoRespond] katago top region diagnostic", payload);
+  return payload;
+}
+
+function computeFullRawInRegionScore(rawCandidates, scoredCandidate, targetContext) {
+  const rawIndex = (rawCandidates ?? []).findIndex((entry) =>
+    isSameCandidatePoint(entry, scoredCandidate),
+  );
+  if (rawIndex < 0) {
+    return Number.NEGATIVE_INFINITY;
+  }
+
+  const rankBonus = Math.max(0, rawCandidates.length - rawIndex) * 1000;
+  const distance = computeDistanceToTarget(scoredCandidate, targetContext);
+  const distanceBonus =
+    distance == null ? 0 : Math.max(0, 20 - distance) * 50;
+  const tacticalNudge = Math.min(scoredCandidate.tieScore ?? 0, 150);
+  return rankBonus + distanceBonus + tacticalNudge;
+}
+
+function buildRawInRegionCandidateTrace({
+  rawCandidates,
+  regionKeys,
+  scoredByKey,
+  targetContext,
+  stones,
+  boardSize,
+  stoneColors,
+  katagoBoardXSize,
+  katagoBoardYSize,
+  selectedKey = null,
+}) {
+  const trace = [];
+
+  for (let index = 0; index < rawCandidates.length; index += 1) {
+    const candidate = rawCandidates[index];
+    const key = candidatePointKey(candidate);
+    if (!regionKeys.has(key)) {
+      continue;
+    }
+
+    const rank = index + 1;
+    const scored = scoredByKey.get(key);
+    trace.push({
+      rank,
+      move: candidate.move ?? null,
+      scoreable: Boolean(scored),
+      distanceToTarget: computeDistanceToTarget(
+        { x: candidate.x, y: candidate.y },
+        targetContext,
+      ),
+      policyPrior: candidate.policyPrior ?? null,
+      visits: candidate.visits ?? null,
+      tieScore: scored?.tieScore ?? null,
+      compositeScore: scored
+        ? computeFullRawInRegionScore(rawCandidates, scored, targetContext)
+        : null,
+      selectedCandidate: selectedKey != null && key === selectedKey,
+      scoreableCheck: scored
+        ? null
+        : diagnoseWrongRevealCandidateScoreable({
+            candidate,
+            stones,
+            boardSize,
+            stoneColors,
+            regionKeys,
+            katagoBoardXSize,
+            katagoBoardYSize,
+          }),
+    });
+  }
+
+  return trace;
+}
+
+function resolveFullRawInRegionPick({
+  rawCandidates,
+  regionKeys,
+  scoredByKey,
+  targetContext,
+  topN = WRONG_REVEAL_KATAGO_TOP_N,
+}) {
+  const eligible = [];
+
+  for (let index = topN; index < rawCandidates.length; index += 1) {
+    const rawEntry = rawCandidates[index];
+    const key = candidatePointKey(rawEntry);
+    if (!regionKeys.has(key)) {
+      continue;
+    }
+    const scored = scoredByKey.get(key);
+    if (!scored) {
+      continue;
+    }
+    eligible.push({
+      scored,
+      rank: index + 1,
+      compositeScore: computeFullRawInRegionScore(
+        rawCandidates,
+        scored,
+        targetContext,
+      ),
+    });
+  }
+
+  if (eligible.length === 0) {
+    return {
+      selected: null,
+      pickMode: "no_raw_in_region",
+      rawRank: null,
+    };
+  }
+
+  eligible.sort((a, b) => {
+    if (b.compositeScore !== a.compositeScore) {
+      return b.compositeScore - a.compositeScore;
+    }
+    return a.rank - b.rank;
+  });
+
+  const best = eligible[0];
+  return {
+    selected: best.scored,
+    pickMode: "katago_full_raw_in_region",
+    rawRank: best.rank,
+  };
 }
 
 function katagoFirstRankingScore(rawCandidates, scoredCandidate, topN = WRONG_REVEAL_KATAGO_TOP_N) {
@@ -1361,6 +1557,7 @@ export function selectWrongRevealKatagoFirstMove({
   problem,
   katagoBoardXSize = null,
   katagoBoardYSize = null,
+  allowedRegion = null,
 }) {
   const style = resolveAiResponseStyle(problem);
   const targetContext = resolveTargetWhiteGroup(problem, stones, boardSize, stoneColors);
@@ -1472,6 +1669,16 @@ export function selectWrongRevealKatagoFirstMove({
       })
     : null;
 
+  const katagoTopRegionDiagnostic =
+    rawCandidates[0] && !katagoTopInRegion
+      ? logKatagoTopRegionDiagnostic({
+          candidate: rawCandidates[0],
+          allowedRegion,
+          regionKeys,
+          targetContext,
+        })
+      : null;
+
   const prePickCandidates = buildTopNInRegionTrace(
     rawCandidates,
     regionKeys,
@@ -1498,15 +1705,27 @@ export function selectWrongRevealKatagoFirstMove({
     scoredByKey,
   });
 
-  let selected = strictPick.selected;
-  let pickMode = strictPick.pickMode;
+  let fullRawPick = null;
+  if (!strictPick.selected) {
+    fullRawPick = resolveFullRawInRegionPick({
+      rawCandidates,
+      regionKeys,
+      scoredByKey,
+      targetContext,
+    });
+  }
+
+  let selected = strictPick.selected ?? fullRawPick?.selected ?? null;
+  let pickMode = strictPick.selected
+    ? strictPick.pickMode
+    : fullRawPick?.pickMode ?? strictPick.pickMode;
 
   const boostPool = scoredCandidates.filter((candidate) =>
     findRawKatagoRank(rawCandidates, candidate) != null &&
     findRawKatagoRank(rawCandidates, candidate) <= WRONG_REVEAL_KATAGO_TOP_N,
   );
 
-  if (!katagoTopScored) {
+  if (!katagoTopScored && strictPick.selected) {
     const boosted = maybeApplyTopNTacticalBoost({
       selected,
       pickMode,
@@ -1534,32 +1753,59 @@ export function selectWrongRevealKatagoFirstMove({
 
   const selectedKatagoRankBeforeClamp = findRawKatagoRank(rawCandidates, selected);
   if (
-    selectedKatagoRankBeforeClamp == null ||
-    selectedKatagoRankBeforeClamp > WRONG_REVEAL_KATAGO_TOP_N
+    pickMode !== "katago_full_raw_in_region" &&
+    (selectedKatagoRankBeforeClamp == null ||
+      selectedKatagoRankBeforeClamp > WRONG_REVEAL_KATAGO_TOP_N)
   ) {
-    selected = katagoTopScored ?? strictPick.selected ?? null;
+    selected =
+      katagoTopScored ?? strictPick.selected ?? fullRawPick?.selected ?? null;
     pickMode =
       selected === katagoTopScored
         ? "katago_global_top_hard_clamp"
-        : strictPick.selected
-          ? `${strictPick.pickMode}_hard_clamp`
-          : "no_allowed_katago_candidate";
+        : selected === fullRawPick?.selected
+          ? "katago_full_raw_in_region"
+          : strictPick.selected
+            ? `${strictPick.pickMode}_hard_clamp`
+            : "no_allowed_katago_candidate";
   }
 
+  const selectedKey = selected ? candidatePointKey(selected) : null;
+  const rawInRegionCandidates = buildRawInRegionCandidateTrace({
+    rawCandidates,
+    regionKeys,
+    scoredByKey,
+    targetContext,
+    stones,
+    boardSize,
+    stoneColors,
+    katagoBoardXSize,
+    katagoBoardYSize,
+    selectedKey,
+  });
+  console.warn("[KatagoRespond] raw in-region candidates", rawInRegionCandidates);
+
   const selectedKatagoRank = findRawKatagoRank(rawCandidates, selected);
-  const moveSelectionSource = resolveWrongRevealMoveSelectionSource(selectedKatagoRank);
+  const moveSelectionSource = resolveWrongRevealMoveSelectionSource(
+    selectedKatagoRank,
+    pickMode,
+  );
   const overrideAllowed = moveSelectionSource === "tactical_override";
 
   const decisionTrace = {
     katagoTopInRegion,
     katagoTopScoreable: Boolean(katagoTopScored),
     scoreableCheck: scoreableCheckLog.scoreableCheck,
+    katagoTopRegionDiagnostic,
     prePickCandidates,
+    rawInRegionCandidates,
     strictPickMode: strictPick.pickMode,
     strictPickRank: strictPick.rawRank,
+    fullRawPickMode: fullRawPick?.pickMode ?? null,
+    fullRawPickRank: fullRawPick?.rawRank ?? null,
     selectedKatagoRankBeforeClamp,
     finalSelectedKatagoRank: selectedKatagoRank,
     topNLimit: WRONG_REVEAL_KATAGO_TOP_N,
+    allowedRegion: allowedRegion ?? null,
   };
 
   const selectionMeta = {
