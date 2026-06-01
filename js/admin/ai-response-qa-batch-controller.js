@@ -20,7 +20,8 @@ export function createAiResponseQaBatchController({
   let running = false;
   let lastBatchReport = null;
   let batchManualMarks = new Set();
-  let batchShowMode = "all";
+  let batchShowMode = "issues";
+  let abortController = null;
 
   function isBatchUiVisible() {
     return (
@@ -32,8 +33,9 @@ export function createAiResponseQaBatchController({
 
   function resetBatchSession(category) {
     batchManualMarks = new Set();
-    batchShowMode = "all";
+    batchShowMode = "issues";
     lastBatchReport = null;
+    abortController = null;
     const result = elements.adminAiResponseQaBatchResult;
     if (result) {
       result.dataset.staleCategory = category;
@@ -71,7 +73,9 @@ export function createAiResponseQaBatchController({
       boardSize,
     });
     const eligibleCount = targets.filter((entry) => entry.eligible).length;
-    button.textContent = `${category} AI 응수 일괄 미리보기`;
+    button.textContent = running
+      ? `${category} QA 실행 중…`
+      : `${category} AI 응수 일괄 미리보기`;
     button.title = `미리보기 가능 ${eligibleCount}문제 (AI 응수 3·5·7수)`;
 
     if (!running && result?.dataset.staleCategory && result.dataset.staleCategory !== category) {
@@ -97,6 +101,21 @@ export function createAiResponseQaBatchController({
     });
   }
 
+  function bindCancelButton(container) {
+    if (!container || container.__qaCancelBound) {
+      return;
+    }
+    container.__qaCancelBound = true;
+    container.addEventListener("click", (event) => {
+      const button = event.target.closest("[data-qa-cancel]");
+      if (!button || !container.contains(button)) {
+        return;
+      }
+      abortController?.abort();
+      setFeedback("QA 중단 요청됨…", "neutral");
+    });
+  }
+
   async function handleBatchQa() {
     if (!requireAdminMode() || running) {
       return;
@@ -111,6 +130,7 @@ export function createAiResponseQaBatchController({
     const resultContainer = elements.adminAiResponseQaBatchResult;
     resetBatchSession(category);
     running = true;
+    abortController = new AbortController();
     updateAiResponseQaBatchUi();
 
     if (resultContainer) {
@@ -121,12 +141,16 @@ export function createAiResponseQaBatchController({
         {
           progress: {
             phase: "running",
-            completed: 0,
-            total: 0,
+            problemIndex: 0,
+            problemTotal: 0,
+            completedCases: 0,
+            caseTotal: 0,
             currentLabel: "준비 중…",
+            etaMs: null,
           },
         },
       );
+      bindCancelButton(resultContainer);
     }
 
     setFeedback(`${category} AI 응수 일괄 미리보기 시작…`, "neutral");
@@ -138,6 +162,8 @@ export function createAiResponseQaBatchController({
         levelGroup: getActiveLevelGroup(),
         boardSize,
         stoneColors,
+        signal: abortController.signal,
+        waitForKatago: true,
         onProgress: (progress) => {
           if (resultContainer) {
             resultContainer.innerHTML = renderAiResponseQaBatchReportHtml(
@@ -145,6 +171,7 @@ export function createAiResponseQaBatchController({
               escapeHtml,
               { progress },
             );
+            bindCancelButton(resultContainer);
           }
         },
       });
@@ -152,19 +179,25 @@ export function createAiResponseQaBatchController({
       lastBatchReport = report;
 
       if (resultContainer) {
-        renderBatchResult(resultContainer);
+        if (report.aborted && report.partial) {
+          lastBatchReport = { ...report, ok: true };
+          renderBatchResult(resultContainer);
+        } else if (report.aborted) {
+          resultContainer.innerHTML = renderAiResponseQaBatchReportHtml(report, escapeHtml);
+        } else {
+          renderBatchResult(resultContainer);
+        }
         resultContainer.dataset.staleCategory = category;
         resultContainer.classList.remove("is-hidden");
       }
 
       if (!report.ok) {
-        setFeedback(report.error ?? "AI 응수 일괄 미리보기 실패", "wrong");
+        setFeedback(report.error ?? "AI 응수 일괄 미리보기 실패", report.aborted ? "neutral" : "wrong");
         return;
       }
 
       const { summary } = report;
-      const markedCount = batchManualMarks.size;
-      const message = `${category} 미리보기 완료 — ${summary.problems}문제 · ${summary.cases}케이스 · 수동 표시 ${markedCount}`;
+      const message = `${category} 미리보기 완료 — ${summary.problems}문제 · ${summary.cases}케이스 · fallback ${summary.fallbackCount}`;
       setFeedback(message, "correct");
     } catch (error) {
       console.error("[AI_QA_BATCH] run failed", error);
@@ -176,6 +209,7 @@ export function createAiResponseQaBatchController({
       setFeedback(message, "wrong");
     } finally {
       running = false;
+      abortController = null;
       updateAiResponseQaBatchUi();
     }
   }

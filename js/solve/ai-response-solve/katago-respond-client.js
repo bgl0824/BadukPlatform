@@ -1213,7 +1213,22 @@ async function requestKatagoRespondWrong({
     regionCandidates: [],
   });
 
+  const qaSession =
+    typeof window !== "undefined" ? window.__AI_QA_RUN ?? null : null;
+  const qaWaitForKatago = Boolean(
+    qaSession?.waitForKatago || window.BadukConfig?.qaWaitForKatago === true,
+  );
+  const qaAbortSignal = qaSession?.signal ?? null;
+
   const controller = new AbortController();
+  if (qaAbortSignal) {
+    if (qaAbortSignal.aborted) {
+      controller.abort();
+    } else {
+      qaAbortSignal.addEventListener("abort", () => controller.abort(), { once: true });
+    }
+  }
+
   const katagoTask = (async () => {
     try {
       const { response, data, rawBody } = await fetchKatagoRespondPayload(
@@ -1261,6 +1276,71 @@ async function requestKatagoRespondWrong({
     }
   })();
 
+  const finalizeKatagoWrongResult = (katagoResult) => {
+    if (!katagoResult?.ok) {
+      return null;
+    }
+    katagoResult.usedLocalFallback = false;
+    const selectionBreakdown = buildKatagoCandidateSelectionBreakdown({
+      rawCandidates: katagoResult.rawCandidates,
+      selected:
+        katagoResult.selectedCandidate ??
+        { point: katagoResult.point, move: katagoResult.move },
+      selectedReason: katagoResult.selectedReason,
+      selectionMeta: katagoResult.selectionMeta ?? null,
+    });
+    katagoResult.selectedSource = selectionBreakdown.selectedSource;
+    logKatagoCandidateSelectionBreakdown({
+      rawCandidates: katagoResult.rawCandidates,
+      selected:
+        katagoResult.selectedCandidate ??
+        { point: katagoResult.point, move: katagoResult.move },
+      selectedReason: katagoResult.selectedReason,
+    });
+    console.info("[KatagoRespond] wrong-reveal selected", {
+      ...selectionBreakdown,
+      replaceMs: qaWaitForKatago ? null : replaceMs,
+      qaWaitForKatago,
+      katagoElapsedMs: katagoResult.katagoElapsedMs,
+    });
+    return katagoResult;
+  };
+
+  if (qaWaitForKatago) {
+    const katagoResult = await katagoTask;
+    const finalized = finalizeKatagoWrongResult(katagoResult);
+    if (finalized) {
+      return finalized;
+    }
+    if (immediateFallback.ok) {
+      return formatWrongRevealFallbackResult({
+        fallback: immediateFallback,
+        allowedRegion,
+        requestStart,
+        katagoElapsedMs: Date.now() - requestStart,
+        maxVisits,
+        maxTime,
+        replaceMs,
+        reason: qaAbortSignal?.aborted ? "qa_aborted" : "katago_failed_in_qa_wait",
+        problem,
+        boardSize,
+        stones,
+        stoneColors,
+        lastMove,
+        blackAnswerIndex,
+        currentPly: payload?.currentPly ?? null,
+      });
+    }
+    return {
+      ok: false,
+      needsServer: true,
+      message: qaAbortSignal?.aborted
+        ? "QA 실행이 중단되었습니다."
+        : "AI 응수 서버 연결 필요",
+      aborted: Boolean(qaAbortSignal?.aborted),
+    };
+  }
+
   const raced = await Promise.race([
     katagoTask.then((result) => ({ kind: "katago", result })),
     delay(replaceMs).then(() => ({ kind: "wait" })),
@@ -1296,29 +1376,10 @@ async function requestKatagoRespondWrong({
       });
     }
   } else if (raced.result?.ok) {
-    raced.result.usedLocalFallback = false;
-    const selectionBreakdown = buildKatagoCandidateSelectionBreakdown({
-      rawCandidates: raced.result.rawCandidates,
-      selected:
-        raced.result.selectedCandidate ??
-        { point: raced.result.point, move: raced.result.move },
-      selectedReason: raced.result.selectedReason,
-      selectionMeta: raced.result.selectionMeta ?? null,
-    });
-    raced.result.selectedSource = selectionBreakdown.selectedSource;
-    logKatagoCandidateSelectionBreakdown({
-      rawCandidates: raced.result.rawCandidates,
-      selected:
-        raced.result.selectedCandidate ??
-        { point: raced.result.point, move: raced.result.move },
-      selectedReason: raced.result.selectedReason,
-    });
-    console.info("[KatagoRespond] wrong-reveal selected", {
-      ...selectionBreakdown,
-      replaceMs,
-      katagoElapsedMs: raced.result.katagoElapsedMs,
-    });
-    return raced.result;
+    const finalized = finalizeKatagoWrongResult(raced.result);
+    if (finalized) {
+      return finalized;
+    }
   }
 
   if (immediateFallback.ok) {

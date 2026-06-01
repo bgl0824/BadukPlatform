@@ -87,6 +87,8 @@ const contents = `(function () {
     katagoWrongReplaceMs: ${katagoWrongReplaceMs},
     wrongRevealLimitsTag: ${JSON.stringify(wrongRevealLimitsTag)},
     wrongRevealPolicy: ${JSON.stringify(wrongRevealPolicy)},
+    qaWaitForKatago: false,
+    qaDebugManualMark: false,
     authorWhiteResponseDelayMs: ${authorWhiteResponseDelayMs},
     supabaseUrl: ${JSON.stringify(supabaseUrl)},
     supabaseKey: ${JSON.stringify(supabaseKey)},

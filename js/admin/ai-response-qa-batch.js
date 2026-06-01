@@ -8,11 +8,21 @@ import { getProblemsInCategoryOrder } from "../services/learning-flow-service.js
 import {
   bindQaManualMarkEvents,
   buildQaCaseKey,
-  filterCasesByManualMark,
+  filterCasesForDisplay,
   isCaseManuallyMarked,
   renderQaInspectionCaseCard,
 } from "./ai-response-qa-inspection.js";
 import {
+  beginQaSession,
+  endQaSession,
+  formatQaEta,
+  isQaManualMarkEnabled,
+  throwIfQaAborted,
+} from "./ai-response-qa-session.js";
+import {
+  buildQaAggregateSummary,
+  countQaCasesForProblem,
+  renderQaAggregateSummaryHtml,
   runAiResponseQa,
   validateAiResponseQaProblem,
 } from "./ai-response-qa.js";
@@ -56,6 +66,59 @@ export function collectAiResponseQaBatchTargets({
     });
 }
 
+function estimateBatchCaseTotal(eligibleTargets, boardSize, stoneColors) {
+  let total = 0;
+  for (const target of eligibleTargets) {
+    total += countQaCasesForProblem(target.problem, boardSize, stoneColors);
+  }
+  return total;
+}
+
+/**
+ * @param {object} progress
+ * @param {(value: string) => string} escapeHtml
+ */
+export function renderQaBatchProgressHtml(progress, escapeHtml) {
+  const problemPct =
+    progress.problemTotal > 0
+      ? Math.round((progress.problemIndex / progress.problemTotal) * 100)
+      : 0;
+  const casePct =
+    progress.caseTotal > 0
+      ? Math.round((progress.completedCases / progress.caseTotal) * 100)
+      : 0;
+
+  return `
+    <div class="admin-ai-response-qa-batch-panel" data-qa-progress-root>
+      <div class="admin-ai-response-qa-progress" role="status" aria-live="polite">
+        <p class="admin-ai-response-qa-batch-progress">
+          <strong>문제</strong> ${escapeHtml(String(progress.problemIndex))} / ${escapeHtml(String(progress.problemTotal))}
+          · <strong>응수 케이스</strong> ${escapeHtml(String(progress.completedCases))} / ${escapeHtml(String(progress.caseTotal))}
+        </p>
+        <div class="admin-ai-response-qa-progress-bars">
+          <div class="admin-ai-response-qa-progress-track" title="문제 진행">
+            <div class="admin-ai-response-qa-progress-fill" style="width:${problemPct}%"></div>
+          </div>
+          <div class="admin-ai-response-qa-progress-track" title="응수 케이스 진행">
+            <div class="admin-ai-response-qa-progress-fill admin-ai-response-qa-progress-fill--cases" style="width:${casePct}%"></div>
+          </div>
+        </div>
+        ${
+          progress.currentLabel
+            ? `<p class="admin-field-hint">현재 문제: ${escapeHtml(progress.currentLabel)}${
+                progress.currentCaseLabel
+                  ? ` · 응수 ${escapeHtml(progress.currentCaseLabel)}`
+                  : ""
+              }</p>`
+            : ""
+        }
+        <p class="admin-field-hint">예상 남은 시간: ${escapeHtml(formatQaEta(progress.etaMs))} · KataGo 완료 대기(qaWaitForKatago)</p>
+        <button type="button" class="secondary-button admin-ai-response-qa-cancel" data-qa-cancel>중단</button>
+      </div>
+    </div>
+  `;
+}
+
 /**
  * @param {object} params
  */
@@ -66,117 +129,188 @@ export async function runAiResponseQaBatch({
   boardSize,
   stoneColors,
   onProgress,
+  signal = null,
+  waitForKatago = true,
 }) {
   const normalizedCategory = String(category ?? "").trim();
   if (!normalizedCategory || normalizedCategory === "전체") {
     return { ok: false, error: "카테고리를 하나 선택한 뒤 일괄 미리보기를 실행하세요." };
   }
 
-  const targets = collectAiResponseQaBatchTargets({
-    problems,
-    category: normalizedCategory,
-    levelGroup,
-    boardSize,
-  });
+  beginQaSession({ waitForKatago, signal });
 
-  if (targets.length === 0) {
-    return {
-      ok: false,
-      error: `${normalizedCategory}에 AI 응수형(3·5·7수) 문제가 없습니다.`,
-    };
-  }
-
-  const eligibleTargets = targets.filter((entry) => entry.eligible);
-  if (eligibleTargets.length === 0) {
-    return {
-      ok: false,
-      error: `${normalizedCategory} AI 응수형 문제가 있으나 미리보기 가능한 문제가 없습니다.`,
-      skippedPreview: targets.map((entry) => entry.validation.error).slice(0, 3),
-    };
-  }
-
-  const items = [];
-  let completed = 0;
-
-  for (const target of targets) {
-    const { problem, validation, eligible } = target;
-    const label = formatCategoryProblemLabel(problem, problems);
-    const problemId = problem?.id ?? label;
-
-    onProgress?.({
-      phase: "running",
-      completed,
-      total: targets.length,
-      eligibleTotal: eligibleTargets.length,
-      currentLabel: label,
+  try {
+    const targets = collectAiResponseQaBatchTargets({
+      problems,
+      category: normalizedCategory,
+      levelGroup,
+      boardSize,
     });
 
-    if (!eligible) {
+    if (targets.length === 0) {
+      return {
+        ok: false,
+        error: `${normalizedCategory}에 AI 응수형(3·5·7수) 문제가 없습니다.`,
+      };
+    }
+
+    const eligibleTargets = targets.filter((entry) => entry.eligible);
+    if (eligibleTargets.length === 0) {
+      return {
+        ok: false,
+        error: `${normalizedCategory} AI 응수형 문제가 있으나 미리보기 가능한 문제가 없습니다.`,
+        skippedPreview: targets.map((entry) => entry.validation.error).slice(0, 3),
+      };
+    }
+
+    const caseTotal = estimateBatchCaseTotal(eligibleTargets, boardSize, stoneColors);
+    const items = [];
+    let completedProblems = 0;
+    let completedCases = 0;
+    const batchStartMs = Date.now();
+
+    for (const target of targets) {
+      throwIfQaAborted(signal);
+
+      const { problem, validation, eligible } = target;
+      const label = formatCategoryProblemLabel(problem, problems);
+      const problemId = problem?.id ?? label;
+
+      onProgress?.({
+        phase: "running",
+        problemIndex: completedProblems,
+        problemTotal: targets.length,
+        completedCases,
+        caseTotal,
+        currentLabel: label,
+        currentCaseLabel: null,
+        etaMs: null,
+      });
+
+      if (!eligible) {
+        items.push({
+          problem,
+          problemId,
+          label,
+          skipped: true,
+          skipReason: validation.error,
+          cases: [],
+        });
+        completedProblems += 1;
+        continue;
+      }
+
+      const report = await runAiResponseQa({
+        problem,
+        boardSize,
+        stoneColors,
+        signal,
+        onCaseProgress: (caseProgress) => {
+          const caseIndexInBatch = completedCases + caseProgress.caseIndex;
+          const elapsed = Date.now() - batchStartMs;
+          const avgMs = caseIndexInBatch > 0 ? elapsed / caseIndexInBatch : null;
+          const remaining = caseTotal - caseIndexInBatch;
+          const etaMs = avgMs != null ? avgMs * remaining : null;
+
+          onProgress?.({
+            phase: "running",
+            problemIndex: completedProblems + 1,
+            problemTotal: targets.length,
+            completedCases: caseIndexInBatch,
+            caseTotal,
+            currentLabel: label,
+            currentCaseLabel: `${caseProgress.blackPly ?? "?"}흑 ${caseProgress.candidateMove ?? ""}`,
+            etaMs,
+          });
+        },
+      });
+
+      const cases = report.ok
+        ? attachCaseKeys(report.results, problemId, label)
+        : [];
+
+      completedCases += cases.length;
+
       items.push({
         problem,
         problemId,
         label,
-        skipped: true,
-        skipReason: validation.error,
-        cases: [],
+        skipped: false,
+        report,
+        error: report.ok ? null : report.error,
+        cases,
       });
-      completed += 1;
+
+      completedProblems += 1;
+
+      const elapsed = Date.now() - batchStartMs;
+      const avgMs = completedCases > 0 ? elapsed / completedCases : null;
+      const remaining = caseTotal - completedCases;
       onProgress?.({
         phase: "running",
-        completed,
-        total: targets.length,
-        eligibleTotal: eligibleTargets.length,
+        problemIndex: completedProblems,
+        problemTotal: targets.length,
+        completedCases,
+        caseTotal,
         currentLabel: label,
+        currentCaseLabel: null,
+        etaMs: avgMs != null ? avgMs * remaining : null,
       });
-      continue;
     }
 
-    const report = await runAiResponseQa({
-      problem,
-      boardSize,
-      stoneColors,
-    });
+    const scannedItems = items.filter((item) => !item.skipped);
+    const allCases = scannedItems.flatMap((item) => item.cases ?? []);
+    const aggregate = buildQaAggregateSummary(allCases);
 
-    const cases = report.ok
-      ? attachCaseKeys(report.results, problemId, label)
-      : [];
-
-    items.push({
-      problem,
-      problemId,
-      label,
-      skipped: false,
-      report,
-      error: report.ok ? null : report.error,
-      cases,
-    });
-
-    completed += 1;
-    onProgress?.({
-      phase: "running",
-      completed,
-      total: targets.length,
-      eligibleTotal: eligibleTargets.length,
-      currentLabel: label,
-    });
+    return {
+      ok: true,
+      category: normalizedCategory,
+      levelGroup,
+      items,
+      allCases,
+      aggregate,
+      summary: {
+        problems: scannedItems.length,
+        cases: allCases.length,
+        skipped: items.filter((item) => item.skipped).length,
+        errors: scannedItems.filter((item) => item.error).length,
+        good: aggregate.good,
+        review: aggregate.review,
+        problem: aggregate.problem,
+        fallbackCount: aggregate.fallbackCount,
+      },
+    };
+  } catch (error) {
+    if (error?.code === "QA_ABORTED" || error?.name === "QaAbortedError") {
+      const scannedItems = items.filter((item) => !item.skipped);
+      const allCases = scannedItems.flatMap((item) => item.cases ?? []);
+      const aggregate = buildQaAggregateSummary(allCases);
+      return {
+        ok: false,
+        aborted: true,
+        partial: allCases.length > 0,
+        category: normalizedCategory,
+        levelGroup,
+        items,
+        allCases,
+        aggregate,
+        error: error.message ?? "QA 실행이 중단되었습니다.",
+        summary: {
+          problems: scannedItems.length,
+          cases: allCases.length,
+          skipped: items.filter((item) => item.skipped).length,
+          errors: scannedItems.filter((item) => item.error).length,
+          good: aggregate.good,
+          review: aggregate.review,
+          problem: aggregate.problem,
+          fallbackCount: aggregate.fallbackCount,
+        },
+      };
+    }
+    throw error;
+  } finally {
+    endQaSession();
   }
-
-  const scannedItems = items.filter((item) => !item.skipped);
-  const allCases = scannedItems.flatMap((item) => item.cases ?? []);
-
-  return {
-    ok: true,
-    category: normalizedCategory,
-    levelGroup,
-    items,
-    allCases,
-    summary: {
-      problems: scannedItems.length,
-      cases: allCases.length,
-      skipped: items.filter((item) => item.skipped).length,
-      errors: scannedItems.filter((item) => item.error).length,
-    },
-  };
 }
 
 function renderBatchProblemGroup(item, escapeHtml, manualMarks, showMode) {
@@ -189,10 +323,12 @@ function renderBatchProblemGroup(item, escapeHtml, manualMarks, showMode) {
     `;
   }
 
-  const cases = filterCasesByManualMark(item.cases ?? [], manualMarks, showMode);
-  const markedInProblem = countMarkedCases(item.cases ?? [], manualMarks);
+  const cases = filterCasesForDisplay(item.cases ?? [], { showMode, manualMarks });
+  const markedInProblem = isQaManualMarkEnabled()
+    ? countMarkedCases(item.cases ?? [], manualMarks)
+    : 0;
 
-  if (showMode === "marked" && cases.length === 0) {
+  if (showMode !== "all" && cases.length === 0) {
     return "";
   }
 
@@ -212,12 +348,14 @@ function renderBatchProblemGroup(item, escapeHtml, manualMarks, showMode) {
     ? `<p class="admin-ai-response-qa-error">${escapeHtml(item.error)}</p>`
     : "";
 
+  const manualSuffix = isQaManualMarkEnabled() ? ` · 수동 ${markedInProblem}` : "";
+
   return `
-    <details class="admin-ai-response-qa-batch-problem" open>
+    <details class="admin-ai-response-qa-batch-problem">
       <summary>
         ${escapeHtml(item.label)}
         · ${(item.cases ?? []).length}케이스
-        · 수동 ${markedInProblem}
+        ${manualSuffix}
       </summary>
       ${errorNote}
       <div class="admin-ai-response-qa-inspection-cards">${cards}</div>
@@ -228,35 +366,31 @@ function renderBatchProblemGroup(item, escapeHtml, manualMarks, showMode) {
 /**
  * @param {object} report
  * @param {(value: string) => string} escapeHtml
- * @param {{ progress?: object|null, showMode?: 'all'|'marked', manualMarks?: Set<string> }} [options]
+ * @param {{ progress?: object|null, showMode?: 'all'|'issues'|'marked', manualMarks?: Set<string> }} [options]
  */
 export function renderAiResponseQaBatchReportHtml(
   report,
   escapeHtml,
-  { progress = null, showMode = "all", manualMarks = new Set() } = {},
+  { progress = null, showMode = "issues", manualMarks = new Set() } = {},
 ) {
   if (progress?.phase === "running") {
-    return `
-      <div class="admin-ai-response-qa-batch-panel">
-        <p class="admin-ai-response-qa-batch-progress">
-          수집 중… <strong>${escapeHtml(String(progress.completed))}</strong> / ${escapeHtml(String(progress.total))} 문제
-        </p>
-        ${
-          progress.currentLabel
-            ? `<p class="admin-field-hint">현재: ${escapeHtml(progress.currentLabel)}</p>`
-            : ""
-        }
-        <p class="admin-field-hint">순차 실행 · DB/저장 변경 없음 · 자동 판정은 참고용</p>
-      </div>
-    `;
+    return renderQaBatchProgressHtml(progress, escapeHtml);
+  }
+
+  if (report?.aborted) {
+    return `<p class="admin-ai-response-qa-error">${escapeHtml(report.error ?? "QA 실행이 중단되었습니다.")}</p>`;
   }
 
   if (!report?.ok) {
     return `<p class="admin-ai-response-qa-error">${escapeHtml(report?.error ?? "일괄 미리보기 실패")}</p>`;
   }
 
-  const { summary, category, levelGroup, items = [], allCases = [] } = report;
-  const markedCount = countMarkedCases(allCases, manualMarks);
+  const { summary, category, levelGroup, items = [], allCases = [], aggregate } = report;
+  const resolvedAggregate = aggregate ?? buildQaAggregateSummary(allCases);
+  const markedCount = isQaManualMarkEnabled()
+    ? countMarkedCases(allCases, manualMarks)
+    : 0;
+  const issueCount = allCases.filter((row) => row.verdict !== "good").length;
   const skippedNote =
     summary.skipped > 0
       ? `<p class="admin-field-hint">스킵 ${summary.skipped}문제 (1수·수순 미완성 등)</p>`
@@ -269,27 +403,34 @@ export function renderAiResponseQaBatchReportHtml(
 
   const emptyMessage =
     showMode === "marked" && markedCount === 0
-      ? `<p class="admin-field-hint">수동 표시된 케이스가 없습니다. 각 응수 카드에서 「문제 있음으로 표시」를 체크하세요.</p>`
-      : "";
+      ? `<p class="admin-field-hint">수동 표시된 케이스가 없습니다. (디버그 모드)</p>`
+      : showMode === "issues" && issueCount === 0
+        ? `<p class="admin-field-hint">검토·문제 케이스가 없습니다. 전체 보기로 전환하세요.</p>`
+        : "";
+
+  const manualFilterOption = isQaManualMarkEnabled()
+    ? `<option value="marked"${showMode === "marked" ? " selected" : ""}>수동 표시 (${markedCount})</option>`
+    : "";
 
   return `
     <div class="admin-ai-response-qa-batch-panel" data-qa-batch-root>
       <header class="admin-ai-response-qa-batch-head">
         <p class="panel-label">${escapeHtml(category)} AI 응수 일괄 미리보기 · ${escapeHtml(levelGroup ?? "")}</p>
+        ${renderQaAggregateSummaryHtml(resolvedAggregate, escapeHtml)}
         <div class="admin-ai-response-qa-toolbar">
           <p class="admin-ai-response-qa-summary">
-            문제 ${summary.problems} · 응수 케이스 ${summary.cases} · 수동 표시 ${markedCount}
+            문제 ${summary.problems} · 응수 ${summary.cases}건 · 카드 표시 ${showMode === "all" ? summary.cases : issueCount}건
           </p>
           <label class="admin-ai-response-qa-filter">
             표시:
             <select data-qa-batch-show-mode>
-              <option value="all"${showMode === "all" ? " selected" : ""}>전체</option>
-              <option value="marked"${showMode === "marked" ? " selected" : ""}>수동 표시 (${markedCount})</option>
+              <option value="issues"${showMode === "issues" ? " selected" : ""}>검토·문제만 (${issueCount})</option>
+              <option value="all"${showMode === "all" ? " selected" : ""}>전체 (${summary.cases})</option>
+              ${manualFilterOption}
             </select>
           </label>
         </div>
         ${skippedNote}
-        <p class="admin-field-hint">응수 결과를 모아 검수합니다. 자동 판정(정상/검토/문제)은 각 카드 「참고」에만 표시됩니다.</p>
       </header>
       ${emptyMessage}
       <div class="admin-ai-response-qa-batch-groups">${groups}</div>
@@ -309,7 +450,7 @@ export function bindAiResponseQaBatchReport(container, report, escapeHtml, optio
   }
 
   const manualMarks = options.manualMarks ?? new Set();
-  let showMode = options.showMode ?? "all";
+  let showMode = options.showMode ?? "issues";
 
   const rerender = () => {
     showMode = container.__qaBatchShowMode ?? showMode;
@@ -322,10 +463,12 @@ export function bindAiResponseQaBatchReport(container, report, escapeHtml, optio
 
   container.__qaBatchShowMode = showMode;
 
-  bindQaManualMarkEvents(container, {
-    manualMarks,
-    rerender,
-  });
+  if (isQaManualMarkEnabled()) {
+    bindQaManualMarkEvents(container, {
+      manualMarks,
+      rerender,
+    });
+  }
 
   if (!container.__qaBatchShowModeBound) {
     container.__qaBatchShowModeBound = true;
@@ -334,8 +477,12 @@ export function bindAiResponseQaBatchReport(container, report, escapeHtml, optio
       if (!select || !container.contains(select)) {
         return;
       }
-      container.__qaBatchShowMode = select.value === "marked" ? "marked" : "all";
-      container.__qaManualRerender?.();
+      const value = select.value;
+      container.__qaBatchShowMode =
+        value === "all" ? "all" : value === "marked" ? "marked" : "issues";
+      container.__qaManualRerender?.() ?? rerender();
     });
   }
+
+  container.__qaManualRerender = rerender;
 }

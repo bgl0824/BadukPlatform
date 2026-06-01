@@ -2,6 +2,8 @@
  * AI 응수 QA — 검수(미리보기) UI 공통 (자동 판정은 참고용)
  */
 
+import { isQaManualMarkEnabled } from "./ai-response-qa-session.js";
+
 const VERDICT_LABELS = {
   good: "정상",
   review: "검토",
@@ -68,7 +70,7 @@ function renderReferenceBlock(row, escapeHtml) {
   return `
     <details class="admin-ai-response-qa-reference">
       <summary>참고 · 자동 ${escapeHtml(verdictLabel)} ${escapeHtml(String(score))}점</summary>
-      <p class="admin-field-hint">자동 판정은 참고용입니다. 최종 판단은 「문제 있음으로 표시」를 사용하세요.</p>
+      <p class="admin-field-hint">자동 판정은 참고용입니다. 상단 요약과 검토·문제 필터를 우선 사용하세요.</p>
       ${libertyDetail}
       ${notesHtml}
     </details>
@@ -93,12 +95,17 @@ export function renderQaInspectionCaseCard({
     ? `<p class="admin-ai-response-qa-inspection-line"><span>문제</span> <strong>${escapeHtml(problemLabel)}</strong></p>`
     : "";
 
-  return `
-    <article class="admin-ai-response-qa-inspection-card${manualMarked ? " is-manually-marked" : ""}" data-qa-case-key="${escapeHtml(caseKey)}">
+  const manualMarkHtml = isQaManualMarkEnabled()
+    ? `
       <label class="admin-ai-response-qa-manual-mark">
         <input type="checkbox" data-qa-manual-mark="${escapeHtml(caseKey)}"${manualMarked ? " checked" : ""} />
-        문제 있음으로 표시
-      </label>
+        문제 있음으로 표시 (디버그)
+      </label>`
+    : "";
+
+  return `
+    <article class="admin-ai-response-qa-inspection-card${manualMarked ? " is-manually-marked" : ""}" data-qa-case-key="${escapeHtml(caseKey)}">
+      ${manualMarkHtml}
       <div class="admin-ai-response-qa-inspection-body">
         <div class="admin-ai-response-qa-inspection-preview">${previewHtml}</div>
         <div class="admin-ai-response-qa-inspection-fields">
@@ -183,4 +190,18 @@ export function filterCasesByManualMark(cases, manualMarks, showMode) {
   }
   const markSet = manualMarks instanceof Set ? manualMarks : new Set(manualMarks);
   return cases.filter((row) => markSet.has(row.caseKey));
+}
+
+/**
+ * @param {object[]} cases
+ * @param {{ showMode?: 'all'|'issues'|'marked', manualMarks?: Set<string> }} options
+ */
+export function filterCasesForDisplay(cases, { showMode = "issues", manualMarks = null } = {}) {
+  if (showMode === "marked") {
+    return filterCasesByManualMark(cases, manualMarks, "marked");
+  }
+  if (showMode === "all") {
+    return cases;
+  }
+  return (cases ?? []).filter((row) => row.verdict !== "good");
 }

@@ -4947,6 +4947,89 @@ h2 {
   font-weight: 700;
 }
 
+.admin-ai-response-qa-progress-bars {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  margin: 8px 0 10px;
+}
+
+.admin-ai-response-qa-progress-track {
+  height: 8px;
+  border-radius: 999px;
+  background: rgba(0, 0, 0, 0.08);
+  overflow: hidden;
+}
+
+.admin-ai-response-qa-progress-fill {
+  height: 100%;
+  background: #2f6fed;
+  transition: width 0.25s ease;
+}
+
+.admin-ai-response-qa-progress-fill--cases {
+  background: #0d9488;
+}
+
+.admin-ai-response-qa-cancel {
+  margin-top: 8px;
+}
+
+.admin-ai-response-qa-aggregate {
+  margin: 10px 0 12px;
+  padding: 10px 12px;
+  border-radius: 8px;
+  background: #fff;
+  border: 1px solid rgba(0, 0, 0, 0.1);
+}
+
+.admin-ai-response-qa-aggregate-title {
+  margin: 0 0 8px;
+  font-weight: 800;
+  font-size: 14px;
+}
+
+.admin-ai-response-qa-aggregate-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(88px, 1fr));
+  gap: 8px 12px;
+  margin: 0;
+}
+
+.admin-ai-response-qa-aggregate-grid dt {
+  margin: 0;
+  font-size: 11px;
+  color: #666;
+}
+
+.admin-ai-response-qa-aggregate-grid dd {
+  margin: 2px 0 0;
+  font-size: 16px;
+  font-weight: 700;
+}
+
+.admin-ai-response-qa-aggregate-grid .qa-stat-good {
+  color: #1a7f37;
+}
+
+.admin-ai-response-qa-aggregate-grid .qa-stat-review {
+  color: #b8860b;
+}
+
+.admin-ai-response-qa-aggregate-grid .qa-stat-problem {
+  color: #b94a48;
+}
+
+.admin-ai-response-qa-reason-stats-wrap {
+  margin-top: 8px;
+  font-size: 13px;
+}
+
+.admin-ai-response-qa-reason-stats {
+  margin: 6px 0 0;
+  padding-left: 18px;
+}
+
 .admin-ai-response-qa-batch-head {
   margin-bottom: 10px;
 }

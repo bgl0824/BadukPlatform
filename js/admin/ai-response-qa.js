@@ -47,10 +47,14 @@ import {
 import {
   bindQaManualMarkEvents,
   buildQaCaseKey,
-  filterCasesByManualMark,
+  filterCasesForDisplay,
   isCaseManuallyMarked,
   renderQaInspectionCaseCard,
 } from "./ai-response-qa-inspection.js";
+import {
+  isQaManualMarkEnabled,
+  throwIfQaAborted,
+} from "./ai-response-qa-session.js";
 
 const QA_ANSWER_MOVE_COUNTS = [3, 5, 7];
 const MIN_WRONG_CANDIDATES = 5;
@@ -819,9 +823,98 @@ function summarizeQaResults(results) {
 }
 
 /**
+ * @param {object[]} cases
+ */
+export function buildQaAggregateSummary(cases) {
+  const rows = cases ?? [];
+  const summary = {
+    total: rows.length,
+    good: 0,
+    review: 0,
+    problem: 0,
+    fallbackCount: 0,
+    selectedReasonCounts: {},
+  };
+
+  for (const row of rows) {
+    if (row.verdict === "good") {
+      summary.good += 1;
+    } else if (row.verdict === "review") {
+      summary.review += 1;
+    } else {
+      summary.problem += 1;
+    }
+    if (row.usedFallback) {
+      summary.fallbackCount += 1;
+    }
+    const reasonKey = row.selectedReason ?? "(none)";
+    summary.selectedReasonCounts[reasonKey] =
+      (summary.selectedReasonCounts[reasonKey] ?? 0) + 1;
+  }
+
+  return summary;
+}
+
+/**
+ * @param {object} aggregate
+ * @param {(value: string) => string} escapeHtml
+ */
+export function renderQaAggregateSummaryHtml(aggregate, escapeHtml) {
+  if (!aggregate) {
+    return "";
+  }
+
+  const reasonRows = Object.entries(aggregate.selectedReasonCounts ?? {})
+    .sort((a, b) => b[1] - a[1])
+    .map(
+      ([reason, count]) =>
+        `<li><code>${escapeHtml(reason)}</code> <strong>${escapeHtml(String(count))}</strong></li>`,
+    )
+    .join("");
+
+  const reasonBlock = reasonRows
+    ? `<ul class="admin-ai-response-qa-reason-stats">${reasonRows}</ul>`
+    : `<p class="admin-field-hint">selectedReason 통계 없음</p>`;
+
+  return `
+    <section class="admin-ai-response-qa-aggregate" aria-label="QA 요약">
+      <p class="admin-ai-response-qa-aggregate-title">결과 요약</p>
+      <dl class="admin-ai-response-qa-aggregate-grid">
+        <div><dt>총 케이스</dt><dd>${escapeHtml(String(aggregate.total))}</dd></div>
+        <div><dt>정상</dt><dd class="qa-stat-good">${escapeHtml(String(aggregate.good))}</dd></div>
+        <div><dt>검토</dt><dd class="qa-stat-review">${escapeHtml(String(aggregate.review))}</dd></div>
+        <div><dt>문제</dt><dd class="qa-stat-problem">${escapeHtml(String(aggregate.problem))}</dd></div>
+        <div><dt>fallback</dt><dd>${escapeHtml(String(aggregate.fallbackCount))}</dd></div>
+      </dl>
+      <details class="admin-ai-response-qa-reason-stats-wrap">
+        <summary>selectedReason 통계</summary>
+        ${reasonBlock}
+      </details>
+    </section>
+  `;
+}
+
+export function countQaCasesForProblem(problem, boardSize, stoneColors) {
+  const validation = validateAiResponseQaProblem(problem, boardSize);
+  if (!validation.ok) {
+    return 0;
+  }
+  const qaProblem = cloneProblemForQa(problem);
+  syncTargetWhiteGroupOnProblem(qaProblem, boardSize);
+  return collectQaCases(qaProblem, boardSize, stoneColors).length;
+}
+
+/**
  * @param {object} params
  */
-export async function runAiResponseQa({ problem, boardSize, stoneColors }) {
+export async function runAiResponseQa({
+  problem,
+  boardSize,
+  stoneColors,
+  signal = null,
+  onCaseProgress = null,
+}) {
+  throwIfQaAborted(signal);
   const validation = validateAiResponseQaProblem(problem, boardSize);
   if (!validation.ok) {
     return { ok: false, error: validation.error };
@@ -839,7 +932,15 @@ export async function runAiResponseQa({ problem, boardSize, stoneColors }) {
   }
 
   const results = [];
-  for (const caseInfo of cases) {
+  for (let index = 0; index < cases.length; index += 1) {
+    throwIfQaAborted(signal);
+    const caseInfo = cases[index];
+    onCaseProgress?.({
+      caseIndex: index + 1,
+      caseTotal: cases.length,
+      candidateMove: formatCoordLabel(caseInfo.wrongPoint),
+      blackPly: caseInfo.scenario?.blackPlyLabel ?? null,
+    });
     const row = await runSingleQaCase({
       problem: qaProblem,
       caseInfo,
@@ -853,11 +954,14 @@ export async function runAiResponseQa({ problem, boardSize, stoneColors }) {
   const summary = summarizeQaResults(results);
   const problemId = qaProblem?.id ?? qaProblem?.title ?? "draft";
 
+  const aggregate = buildQaAggregateSummary(results);
+
   return {
     ok: true,
     problemId,
     results: attachCaseKeys(results, problemId),
     summary,
+    aggregate,
     caseCount: cases.length,
     answerMoveCount: validation.answerMoveCount,
   };
@@ -871,7 +975,7 @@ export async function runAiResponseQa({ problem, boardSize, stoneColors }) {
 export function renderAiResponseQaReportHtml(
   report,
   escapeHtml,
-  { showMode = "all", scopeId = null, manualMarks = null } = {},
+  { showMode = "issues", scopeId = null, manualMarks = null } = {},
 ) {
   if (!report.ok) {
     return `<p class="admin-ai-response-qa-error">${escapeHtml(report.error ?? "점검 실패")}</p>`;
@@ -880,8 +984,14 @@ export function renderAiResponseQaReportHtml(
   const resolvedScopeId = scopeId ?? report.problemId ?? "single";
   const marks = manualMarks ?? getScopeManualMarks(resolvedScopeId);
   const allResults = report.results ?? [];
-  const visibleResults = filterCasesByManualMark(allResults, marks, showMode);
-  const markedCount = countManualMarksForCases(marks, allResults);
+  const visibleResults = filterCasesForDisplay(allResults, { showMode, manualMarks: marks });
+  const markedCount = isQaManualMarkEnabled()
+    ? countManualMarksForCases(marks, allResults)
+    : 0;
+  const aggregateHtml = renderQaAggregateSummaryHtml(
+    report.aggregate ?? buildQaAggregateSummary(allResults),
+    escapeHtml,
+  );
 
   const rows = visibleResults
     .map((row) =>
@@ -907,14 +1017,19 @@ export function renderAiResponseQaReportHtml(
         <label class="admin-ai-response-qa-filter">
           표시:
           <select data-qa-show-mode>
+            <option value="issues"${showMode === "issues" ? " selected" : ""}>검토·문제만 (${allResults.filter((row) => row.verdict !== "good").length})</option>
             <option value="all"${showMode === "all" ? " selected" : ""}>전체 (${allResults.length})</option>
-            <option value="marked"${showMode === "marked" ? " selected" : ""}>수동 표시 (${markedCount})</option>
+            ${
+              isQaManualMarkEnabled()
+                ? `<option value="marked"${showMode === "marked" ? " selected" : ""}>수동 표시 (${markedCount})</option>`
+                : ""
+            }
           </select>
         </label>
       </div>
+      ${aggregateHtml}
       <p class="admin-ai-response-qa-summary">
-        응수 케이스 ${allResults.length}건 · 수동 표시 ${markedCount}건
-        <span class="admin-field-hint">자동 판정은 각 카드 「참고」에만 표시됩니다.</span>
+        카드 ${visibleResults.length}건 표시 (전체 ${allResults.length}건)
       </p>
       ${emptyMessage}
       <div class="admin-ai-response-qa-inspection-cards">${rows}</div>
@@ -936,7 +1051,7 @@ export function bindAiResponseQaReport(container, report, escapeHtml, options = 
 
   const scopeId = options.scopeId ?? report.problemId ?? "single";
   const manualMarks = getScopeManualMarks(scopeId);
-  let showMode = options.showMode ?? "all";
+  let showMode = options.showMode ?? "issues";
 
   const rerender = () => {
     showMode = container.__qaShowMode ?? showMode;
@@ -965,7 +1080,9 @@ export function bindAiResponseQaReport(container, report, escapeHtml, options = 
       if (!select || !container.contains(select)) {
         return;
       }
-      container.__qaShowMode = select.value === "marked" ? "marked" : "all";
+      const value = select.value;
+      container.__qaShowMode =
+        value === "all" ? "all" : value === "marked" ? "marked" : "issues";
       container.__qaSingleRerender?.();
     });
   }

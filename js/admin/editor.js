@@ -442,19 +442,27 @@ export function createAdminEditorController({
         return;
       }
 
-      const report = await qaModule.runAiResponseQa({
-        problem: adminState.draft,
-        boardSize: BOARD_SIZE,
-        stoneColors: { black: STONE.black, white: STONE.white },
-      });
+      const { beginQaSession, endQaSession } = await import("./ai-response-qa-session.js");
+      beginQaSession({ waitForKatago: true });
+
+      let report;
+      try {
+        report = await qaModule.runAiResponseQa({
+          problem: adminState.draft,
+          boardSize: BOARD_SIZE,
+          stoneColors: { black: STONE.black, white: STONE.white },
+        });
+      } finally {
+        endQaSession();
+      }
 
       if (qaResult) {
         qaResult.innerHTML = qaModule.renderAiResponseQaReportHtml(report, escapeHtml, {
-          showMode: "all",
+          showMode: "issues",
           scopeId: report.problemId,
         });
         qaModule.bindAiResponseQaReport(qaResult, report, escapeHtml, {
-          showMode: "all",
+          showMode: "issues",
           scopeId: report.problemId,
         });
         qaResult.classList.remove("is-hidden");
@@ -467,7 +475,10 @@ export function createAdminEditorController({
       }
 
       const { caseCount } = report;
-      const message = `AI 응수 미리보기 완료 — ${caseCount}건 · 수동 표시로 검수하세요`;
+      const agg = report.aggregate;
+      const message = agg
+        ? `AI 응수 미리보기 완료 — ${caseCount}건 (정상 ${agg.good} · 검토 ${agg.review} · 문제 ${agg.problem})`
+        : `AI 응수 미리보기 완료 — ${caseCount}건`;
       setAdminEditorStatus(message, "correct");
       setFeedback(message, "correct");
     } catch (error) {
