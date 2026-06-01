@@ -4,6 +4,7 @@
 
 import { formatCoordLabel } from "./answer-sequence.js";
 import { computeAllowedRegion } from "./problem-region.js";
+import { auditKatagoStonesParity } from "./board-state-audit.js";
 
 function safeJson(value) {
   try {
@@ -82,6 +83,17 @@ export function logWrongRevealRequestContext(channel, params) {
     allowedRegion,
     studentMoveResult: "wrong",
     recentMoves: playedMoves.slice(-6).map((move) => `${move.color}:${formatCoordLabel(move)}`),
+  });
+
+  auditKatagoStonesParity({
+    channel: `parity:${channel}`,
+    boardSize,
+    stoneColors,
+    initialStones,
+    playedMoves,
+    liveStones: stones,
+    lastBlackMove,
+    probeMoves: lastBlackMove ? [formatCoordLabel(lastBlackMove)] : [],
   });
 }
 

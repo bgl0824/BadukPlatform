@@ -86,6 +86,19 @@ const katagoClient = readProjectFile("js/solve/ai-response-solve/katago-respond-
 const tacticalEngine = readProjectFile("js/solve/ai-response-solve/tactical-response-engine.js");
 const katagoCore = readProjectFile("api/lib/katago-respond-core.js");
 const katagoRespondApi = readProjectFile("api/katago/respond.js");
+const boardStateAudit = readProjectFile("js/solve/ai-response-solve/board-state-audit.js");
+
+for (const needle of [
+  "export function auditKatagoStonesParity",
+  "export function buildBoardStateHash",
+  "[KatagoRespond] stones parity audit",
+  "katagoReplayMatchesPayload",
+  "lastBlackMoveCapture",
+]) {
+  if (!boardStateAudit.includes(needle)) {
+    throw new Error(`board-state-audit.js missing ${needle}`);
+  }
+}
 
 for (const needle of [
   "katagoWrongMaxVisits: 24",
@@ -114,6 +127,7 @@ for (const needle of [
   "upstream HTTP error detail",
   "requestBoardSize",
   "replace window expired before KataGo finished",
+  "auditKatagoStonesParity",
 ]) {
   if (!katagoClient.includes(needle)) {
     throw new Error(`katago-respond-client.js missing ${needle}`);
@@ -129,6 +143,8 @@ for (const needle of [
   "[KatagoRespond] raw in-region candidates",
   "katago_full_raw_in_region",
   "export function diagnoseWrongRevealCandidateScoreable",
+  "boardStateHash",
+  "import { buildBoardStateHash } from \"./board-state-audit.js\"",
   "parsedX",
   "coordMismatch",
   "formatScoreableCheckForLog",
@@ -145,6 +161,8 @@ for (const needle of [
   "const WRONG_REVEAL_MAX_TIME = 0.45",
   "katagoBoardXSize: boardSize",
   "produceKatagoRespond",
+  "boardInputAudit",
+  "buildKatagoInputAudit",
 ]) {
   if (!katagoCore.includes(needle)) {
     throw new Error(`katago-respond-core.js missing ${needle}`);

@@ -15,6 +15,10 @@ import {
   isPointInAllowedRegion,
 } from "./problem-region.js";
 import {
+  auditKatagoStonesParity,
+  buildBoardStateHash,
+} from "./board-state-audit.js";
+import {
   logKatagoRespondFailure,
   logKatagoRespondSuccess,
 } from "./respond-diagnostics.js";
@@ -643,6 +647,8 @@ function finalizeKatagoSelection({
   maxTime,
   katagoBoardXSize = null,
   katagoBoardYSize = null,
+  initialStones = [],
+  playedMoves = [],
 }) {
   const education = buildTacticalSelection({
     regionCandidates,
@@ -664,6 +670,28 @@ function finalizeKatagoSelection({
     selectedReason: education.selectedReason,
     selectionMeta: education.selectionMeta ?? null,
   });
+
+  if (studentMoveResult === "wrong") {
+    const scoreableHash =
+      education.selectionMeta?.scoreableCheck?.boardStateHash ??
+      education.selectionMeta?.decisionTrace?.scoreableCheck?.boardStateHash ??
+      buildBoardStateHash(stones);
+    auditKatagoStonesParity({
+      channel: "scoreableCheck",
+      boardSize,
+      stoneColors,
+      initialStones,
+      playedMoves,
+      liveStones: stones,
+      lastBlackMove: lastMove,
+      scoreableBoardStateHash: scoreableHash,
+      probeMoves: [
+        education.selectionMeta?.katagoTopMove,
+        education.selectionMeta?.selectedMove,
+        rawCandidates[0]?.move,
+      ].filter(Boolean),
+    });
+  }
 
   const selected = education.selected;
   const style = education.aiResponseStyle ?? education.style ?? resolveAiResponseStyle(problem);
@@ -911,6 +939,8 @@ async function processKatagoRespondResponse({
   katagoElapsedMs,
   maxVisits,
   maxTime,
+  initialStones = [],
+  playedMoves = [],
 }) {
   if (!response.ok) {
     const errorDetail = logKatagoUpstreamHttpErrorDetail({
@@ -967,6 +997,19 @@ async function processKatagoRespondResponse({
     allowedRegion,
   });
 
+  if (studentMoveResult === "wrong") {
+    auditKatagoStonesParity({
+      channel: "katagoResponse",
+      boardSize,
+      stoneColors,
+      initialStones,
+      playedMoves,
+      liveStones: stones,
+      lastBlackMove: lastMove,
+      probeMoves: rawCandidates.slice(0, 5).map((candidate) => candidate.move),
+    });
+  }
+
   if (regionCandidates.length === 0) {
     return { ok: false, emptyRegion: true, rawCandidates, totalCandidates };
   }
@@ -989,6 +1032,8 @@ async function processKatagoRespondResponse({
     maxTime,
     katagoBoardXSize,
     katagoBoardYSize,
+    initialStones,
+    playedMoves,
   });
 
   return finalized ? { ok: true, result: finalized } : { ok: false, emptyRegion: true };
@@ -1010,6 +1055,8 @@ async function requestKatagoRespondWrong({
   maxVisits,
   maxTime,
   replaceMs,
+  initialStones = [],
+  playedMoves = [],
 }) {
   const immediateFallback = selectWrongRevealLocalFallback({
     region: allowedRegion,
@@ -1051,6 +1098,8 @@ async function requestKatagoRespondWrong({
         katagoElapsedMs,
         maxVisits,
         maxTime,
+        initialStones,
+        playedMoves,
       });
 
       if (processed.ok && processed.result) {
@@ -1270,6 +1319,16 @@ export async function requestKatagoRespond({
 
   if (isWrongReveal) {
     logWrongRevealLimitsResolved({ maxVisits, maxTime, replaceMs });
+    auditKatagoStonesParity({
+      channel: "requestStart",
+      boardSize,
+      stoneColors,
+      initialStones,
+      playedMoves,
+      liveStones: stones,
+      lastBlackMove: lastMove,
+      probeMoves: [formatCoordLabel(lastMove)],
+    });
   }
 
   if (isWrongReveal) {
@@ -1286,6 +1345,8 @@ export async function requestKatagoRespond({
       maxVisits,
       maxTime,
       replaceMs,
+      initialStones,
+      playedMoves,
     });
   }
 
@@ -1445,6 +1506,8 @@ export async function requestKatagoRespond({
       maxTime,
       katagoBoardXSize,
       katagoBoardYSize,
+      initialStones,
+      playedMoves,
     });
 
     if (finalized) {

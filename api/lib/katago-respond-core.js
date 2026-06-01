@@ -10,6 +10,36 @@ const WRONG_REVEAL_MAX_VISITS = 24;
 const WRONG_REVEAL_MAX_TIME = 0.45;
 const MIN_KATAGO_CANDIDATES = 30;
 
+function buildBoardStateHash(stones) {
+  return [...(stones ?? [])]
+    .sort(
+      (a, b) =>
+        a.y - b.y ||
+        a.x - b.x ||
+        String(a.color).localeCompare(String(b.color)),
+    )
+    .map((stone) => `${stone.x},${stone.y},${stone.color}`)
+    .join("|");
+}
+
+function buildKatagoInputAudit(frontendPayload) {
+  const initialStones = frontendPayload?.initialStones ?? [];
+  const payloadStones = frontendPayload?.stones ?? [];
+  const moves = frontendPayload?.moves ?? [];
+  return {
+    payloadStonesHash: buildBoardStateHash(payloadStones),
+    initialStonesHash: buildBoardStateHash(initialStones),
+    payloadStonesCount: payloadStones.length,
+    initialStonesCount: initialStones.length,
+    moveCount: moves.length,
+    moveLabels: moves.map(
+      (entry) =>
+        `${entry?.color ?? "?"}:${entry?.move ?? entry?.x != null ? `${entry.x},${entry.y}` : "?"}`,
+    ),
+    note: "goban upstream uses initialStones+moves only; payload.stones is diagnostic",
+  };
+}
+
 function isWrongRevealRequest(frontendPayload) {
   return frontendPayload?.studentMoveResult === "wrong";
 }
@@ -477,6 +507,7 @@ async function requestKatagoAnalysis(frontendPayload) {
     maxTime: katagoPayload.overrideSettings?.maxTime ?? katagoPayload.maxTime,
     includePolicy: katagoPayload.includePolicy,
     moveCount: katagoPayload.moves?.length ?? 0,
+    boardInputAudit: buildKatagoInputAudit(frontendPayload),
   });
 
   const katagoStarted = Date.now();

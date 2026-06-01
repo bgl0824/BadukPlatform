@@ -20,6 +20,7 @@ import {
 import { formatCoordLabel } from "./answer-sequence.js";
 import { parseGtpCoordinate } from "../ai-response-ux/coordinates.js";
 import { isPointInAllowedRegion } from "./problem-region.js";
+import { buildBoardStateHash } from "./board-state-audit.js";
 import {
   formatTargetWhiteGroupForLog,
   getTargetLibertyPoints,
@@ -1249,13 +1250,6 @@ function katagoFirstRankingScore(rawCandidates, scoredCandidate, topN = WRONG_RE
   const orderBonus = Math.max(0, topN - rawIndex) * 1000;
   const tacticalNudge = Math.min(scoredCandidate.tieScore ?? 0, 150);
   return orderBonus + tacticalNudge;
-}
-
-function buildBoardStateHash(stones) {
-  return [...(stones ?? [])]
-    .sort((a, b) => a.y - b.y || a.x - b.x || String(a.color).localeCompare(String(b.color)))
-    .map((stone) => `${stone.x},${stone.y},${stone.color}`)
-    .join("|");
 }
 
 /**

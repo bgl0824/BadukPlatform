@@ -1,6 +1,6 @@
 import { isValidBoardPoint } from "../../game/board-point-validation.js";
 import { AI_RESPONSE_SOLVE_MESSAGES } from "./constants.js";
-import { getExpectedAuthorWhite } from "./answer-sequence.js";
+import { getExpectedAuthorWhite, formatCoordLabel } from "./answer-sequence.js";
 import { isCorrectBlackMove } from "./black-sequence.js";
 import { logAiResponseSolveContext, shouldUseAiResponseSolve } from "../../game/problem-mode.js";
 import {
@@ -130,7 +130,7 @@ export function createAiResponseSolveEngine({
     const isCorrect = isCorrectBlackMove(point, expected);
 
     boardController.addStone(userMove);
-    removeCapturedStonesAfterMove(userMove);
+    const wrongBlackCapturedCount = removeCapturedStonesAfterMove(userMove);
     session.playedMoves.push(userMove);
     advancePlyAfterBlack(session);
 
@@ -138,6 +138,11 @@ export function createAiResponseSolveEngine({
 
     if (!isCorrect) {
       recordWrongMove(problem, userMove);
+      console.warn("[AI_RESPONSE] wrong black move capture", {
+        move: formatCoordLabel(userMove),
+        capturedCount: wrongBlackCapturedCount,
+        stonesAfterCount: boardController.getStones().length,
+      });
       await revealWrongWithWhite(problem, session, userMove);
       return;
     }
