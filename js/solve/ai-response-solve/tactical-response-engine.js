@@ -21,6 +21,7 @@ import { formatCoordLabel } from "./answer-sequence.js";
 import { parseGtpCoordinate } from "../ai-response-ux/coordinates.js";
 import { isPointInAllowedRegion } from "./problem-region.js";
 import { buildBoardStateHash } from "./board-state-audit.js";
+import { collectCaptureToSurviveCandidates } from "./capture-to-survive-candidates.js";
 import {
   formatTargetWhiteGroupForLog,
   getTargetLibertyPoints,
@@ -48,6 +49,9 @@ const REASON_PRIORITY = {
 
 /** 오답 대응 — internal reason 키 기준 (정렬용) */
 const WRONG_REVEAL_INTERNAL_PRIORITY = {
+  capture_to_survive: 8,
+  create_liberty_by_capture: 7,
+  capture_adjacent_black: 7,
   extend_atari: 6,
   continuous_escape: 5,
   future_liberty_gain: 4,
@@ -64,6 +68,9 @@ const WRONG_REVEAL_INTERNAL_PRIORITY = {
 
 const WRONG_REVEAL_REASON_LABEL = {
   extend_atari: "forced_extend_atari",
+  capture_to_survive: "capture_to_survive",
+  create_liberty_by_capture: "create_liberty_by_capture",
+  capture_adjacent_black: "capture_adjacent_black",
   continuous_escape: "continuous_escape",
   future_liberty_gain: "future_liberty_gain",
   connect_target_group: "connect_target_group",
@@ -81,10 +88,19 @@ const WRONG_REVEAL_REASON_LABEL = {
 const FORBIDDEN_WRONG_REVEAL_REASONS = new Set(["sacrifice_play"]);
 
 const TARGET_SURVIVAL_PRIMARY_REASONS = new Set([
+  "capture_to_survive",
+  "create_liberty_by_capture",
+  "capture_adjacent_black",
   "extend_atari",
   "continuous_escape",
   "future_liberty_gain",
   "connect_target_group",
+]);
+
+const CAPTURE_TO_SURVIVE_SOURCES = new Set([
+  "capture_to_survive",
+  "capture_adjacent_black",
+  "create_liberty_by_capture",
 ]);
 
 function manhattanDistance(a, b) {
@@ -493,11 +509,6 @@ function scoreWrongRevealWithTarget({
 
   const inTargetCrisis = targetContext.minLiberties <= 1;
 
-  if (isMoveOnTargetAtariLiberty(moveKey, targetContext)) {
-    signals.extend_atari = inTargetCrisis ? 80000 : 2500;
-    reasons.push("extend_atari");
-  }
-
   const targetAfter = measureTargetGroupAfterMove(
     problem,
     afterStones,
@@ -506,6 +517,34 @@ function scoreWrongRevealWithTarget({
     targetContext,
   );
   const targetGain = targetAfter?.libertyGain ?? 0;
+
+  const capturedCount = countCaptures(stones, afterStones, stoneColors.black);
+  if (capturedCount > 0) {
+    const touchesTarget = isMoveAdjacentToTargetGroup(
+      point,
+      targetContext,
+      stones,
+      boardSize,
+    );
+
+    if (inTargetCrisis && targetGain > 0) {
+      signals.capture_to_survive = 120000 + targetGain * 2000 + capturedCount * 500;
+      reasons.push("capture_to_survive");
+    } else if (targetGain > 0) {
+      signals.create_liberty_by_capture = 90000 + targetGain * 1500;
+      reasons.push("create_liberty_by_capture");
+    } else if (touchesTarget || CAPTURE_TO_SURVIVE_SOURCES.has(candidate.source)) {
+      signals.capture_adjacent_black = inTargetCrisis ? 75000 : 3500;
+      reasons.push("capture_adjacent_black");
+    }
+  }
+
+  if (isMoveOnTargetAtariLiberty(moveKey, targetContext)) {
+    if (!reasons.includes("capture_to_survive")) {
+      signals.extend_atari = inTargetCrisis ? 80000 : 2500;
+      reasons.push("extend_atari");
+    }
+  }
   candidateFutureLiberties = targetAfter?.minLiberties ?? candidateFutureLiberties;
 
   const hadTargetNeighbor = isMoveAdjacentToTargetGroup(
@@ -984,6 +1023,155 @@ function scoreForcedTargetLibertyMoves({
   return { liberties, attempts };
 }
 
+function mergeCaptureCandidatesForCrisis(
+  regionCandidates,
+  targetContext,
+  stones,
+  boardSize,
+  stoneColors,
+  problem,
+) {
+  const { candidates: generated } = collectCaptureToSurviveCandidates({
+    targetContext,
+    stones,
+    boardSize,
+    stoneColors,
+    problem,
+  });
+  const merged = [...generated];
+  const seen = new Set(merged.map((candidate) => `${candidate.x},${candidate.y}`));
+  for (const candidate of regionCandidates ?? []) {
+    const key = `${candidate.x},${candidate.y}`;
+    if (seen.has(key)) {
+      continue;
+    }
+    seen.add(key);
+    merged.push(candidate);
+  }
+  return merged;
+}
+
+function tryPickCaptureToSurviveOverForcedLiberty({
+  targetContext,
+  stones,
+  boardSize,
+  stoneColors,
+  lastBlackMove,
+  style,
+  problem,
+  regionCandidates,
+  forcedLibertyPoint,
+}) {
+  const merged = mergeCaptureCandidatesForCrisis(
+    regionCandidates,
+    targetContext,
+    stones,
+    boardSize,
+    stoneColors,
+    problem,
+  );
+  const captureAttempts = [];
+  const beneficial = [];
+
+  for (const candidate of merged) {
+    const isCaptureCandidate =
+      CAPTURE_TO_SURVIVE_SOURCES.has(candidate.source) || candidate.captureMeta;
+    if (!isCaptureCandidate) {
+      continue;
+    }
+
+    const scored = scoreCandidate({
+      candidate,
+      stones,
+      boardSize,
+      stoneColors,
+      lastBlackMove,
+      style,
+      responseMode: "wrong_reveal",
+      problem,
+      targetContext,
+    });
+
+    const meta = candidate.captureMeta ?? null;
+    const libertyGain =
+      meta?.libertyGainAfterCapture ??
+      (scored?.candidateFutureLiberties != null
+        ? scored.candidateFutureLiberties - targetContext.minLiberties
+        : 0);
+    const targetLibertiesAfterMove =
+      meta?.targetLibertiesAfterMove ?? scored?.candidateFutureLiberties ?? null;
+
+    if (!scored) {
+      captureAttempts.push({
+        move: candidate.move ?? formatCoordLabel(candidate),
+        legal: false,
+        rejectReason: "illegal_placement",
+        capturedBlackStones: meta?.capturedBlackStones ?? [],
+        libertyGainAfterCapture: libertyGain,
+        targetLibertiesAfterMove: targetLibertiesAfterMove,
+        beneficialForSurvival: false,
+      });
+      continue;
+    }
+
+    const beneficialForSurvival =
+      libertyGain > 0 || (targetLibertiesAfterMove ?? 0) >= 2;
+
+    captureAttempts.push({
+      move: scored.move ?? formatCoordLabel(candidate),
+      legal: true,
+      source: candidate.source ?? meta?.source ?? null,
+      capturedBlackStones: meta?.capturedBlackStones ?? [],
+      libertyGainAfterCapture: libertyGain,
+      targetLibertiesAfterMove: targetLibertiesAfterMove,
+      beneficialForSurvival,
+      totalScore: scored.totalScore,
+      primaryReason: scored.primaryReason,
+      selectedReason: scored.selectedReason,
+    });
+
+    if (
+      beneficialForSurvival &&
+      (libertyGain > 0 || (targetLibertiesAfterMove ?? 0) >= 2)
+    ) {
+      beneficial.push({ scored, meta });
+    }
+  }
+
+  if (beneficial.length === 0) {
+    return {
+      picked: null,
+      diagnostics: {
+        captureToSurviveAttempts: captureAttempts,
+        captureRejectReason: "no_beneficial_capture_with_liberty_gain",
+        selectedOverForcedLiberty: false,
+      },
+    };
+  }
+
+  beneficial.sort((a, b) => b.scored.totalScore - a.scored.totalScore);
+  const best = beneficial[0].scored;
+  best.selectedReason = mapWrongRevealReason(best.primaryReason);
+  best.totalScore = 100_000_001;
+
+  const forcedKey = forcedLibertyPoint ? pointKey(forcedLibertyPoint) : null;
+  const selectedOverForcedLiberty = Boolean(
+    forcedKey && best.point && pointKey(best.point) !== forcedKey,
+  );
+
+  return {
+    picked: best,
+    diagnostics: {
+      forcedExtendMove: forcedLibertyPoint ? formatCoordLabel(forcedLibertyPoint) : null,
+      forcedRejectReason: null,
+      forcedPickMode: "capture_to_survive_override",
+      captureToSurviveAttempts: captureAttempts,
+      selectedOverForcedLiberty,
+      pickedCaptureMeta: beneficial[0].meta,
+    },
+  };
+}
+
 function tryPickForcedTargetLiberty({
   targetContext,
   stones,
@@ -992,6 +1180,7 @@ function tryPickForcedTargetLiberty({
   lastBlackMove,
   style,
   problem,
+  regionCandidates = [],
 }) {
   if (!targetContext) {
     return { picked: null, diagnostics: { forcedRejectReason: "no_target_context" } };
@@ -1044,6 +1233,28 @@ function tryPickForcedTargetLiberty({
   }
 
   if (liberties.length === 1) {
+    const captureOverride = tryPickCaptureToSurviveOverForcedLiberty({
+      targetContext,
+      stones,
+      boardSize,
+      stoneColors,
+      lastBlackMove,
+      style,
+      problem,
+      regionCandidates,
+      forcedLibertyPoint: liberties[0],
+    });
+    if (captureOverride.picked) {
+      return {
+        picked: captureOverride.picked,
+        diagnostics: {
+          ...captureOverride.diagnostics,
+          libertyAttempts: attempts,
+          deferredForcedLiberty: forcedExtendMove,
+        },
+      };
+    }
+
     const forced = legal[0];
     forced.primaryReason = "extend_atari";
     forced.selectedReason = "forced_extend_atari";
@@ -1055,6 +1266,9 @@ function tryPickForcedTargetLiberty({
         forcedRejectReason: null,
         forcedPickMode: "unique_liberty",
         libertyAttempts: attempts,
+        captureToSurviveAttempts: captureOverride.diagnostics.captureToSurviveAttempts,
+        captureRejectReason: captureOverride.diagnostics.captureRejectReason,
+        selectedOverForcedLiberty: false,
       },
     };
   }
@@ -1233,6 +1447,7 @@ export function selectTacticalWhiteMove({
       lastBlackMove,
       style,
       problem,
+      regionCandidates: mergedCandidates,
     });
 
     pickDiagnostics = { ...forced.diagnostics };

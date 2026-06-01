@@ -195,9 +195,23 @@ for (const needle of [
   "[KatagoRespond] goal-first forced liberty diagnostic",
   "[KatagoRespond] goal-first final selection",
   "[KatagoRespond] goal-first selected liberty",
+  "[KatagoRespond] goal-first capture candidates",
+  "[KatagoRespond] goal-first capture selection",
 ]) {
   if (!goalFirstAudit.includes(needle)) {
     throw new Error(`goal-first-selection-audit.js missing ${needle}`);
+  }
+}
+
+const captureSurvive = readProjectFile("js/solve/ai-response-solve/capture-to-survive-candidates.js");
+for (const needle of [
+  "export function collectCaptureToSurviveCandidates",
+  "capture_to_survive",
+  "capture_adjacent_black",
+  "create_liberty_by_capture",
+]) {
+  if (!captureSurvive.includes(needle)) {
+    throw new Error(`capture-to-survive-candidates.js missing ${needle}`);
   }
 }
 

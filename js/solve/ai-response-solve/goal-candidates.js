@@ -3,6 +3,7 @@ import { getNeighborPoints, getStoneAtPoint, isOnBoard, pointKey } from "../../g
 import { formatCoordLabel } from "./answer-sequence.js";
 import { isPointInAllowedRegion } from "./problem-region.js";
 import { getTargetLibertyPoints, isMoveAdjacentToTargetGroup } from "./target-white-group.js";
+import { collectCaptureToSurviveCandidates } from "./capture-to-survive-candidates.js";
 import { buildNearLastBlackCandidates } from "./wrong-response-fallback.js";
 
 function toCandidate(point, source) {
@@ -159,6 +160,7 @@ export function generateGoalCandidates({
   boardSize,
   lastBlackMove,
   stoneColors,
+  problem = null,
   tracePoint = null,
 }) {
   if (problemGoal !== "target_survival") {
@@ -218,7 +220,17 @@ export function generateGoalCandidates({
     }),
   );
 
+  const { candidates: captureCandidates, captureDiagnostics } =
+    collectCaptureToSurviveCandidates({
+      targetContext,
+      stones,
+      boardSize,
+      stoneColors,
+      problem,
+    });
+
   const merged = mergeCandidates([
+    captureCandidates,
     targetLiberties,
     targetAdjacent,
     connectPoints,
@@ -247,6 +259,12 @@ export function generateGoalCandidates({
     if (nearLastBlack.some((candidate) => `${candidate.x},${candidate.y}` === traceKey)) {
       sourcePoolsForTrace.push("near_last_black");
     }
+    if (captureCandidates.some((candidate) => `${candidate.x},${candidate.y}` === traceKey)) {
+      sourcePoolsForTrace.push(
+        captureCandidates.find((candidate) => `${candidate.x},${candidate.y}` === traceKey)
+          ?.source ?? "capture_to_survive",
+      );
+    }
   }
 
   return {
@@ -254,6 +272,8 @@ export function generateGoalCandidates({
     meta: {
       sources: [...sourceSet],
       targetLibertyLabels: targetLiberties.map((candidate) => candidate.move),
+      captureCandidateCount: captureCandidates.length,
+      captureDiagnostics,
       mergedCount: merged.length,
       rejectReason: candidates.length === 0 ? "no_legal_goal_candidates" : null,
       trace: buildStageTraceForPoint({

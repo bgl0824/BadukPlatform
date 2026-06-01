@@ -147,19 +147,37 @@ export function logGoalFirstSelectionAudit({
 
   const scoredKeys = new Set(scoredCandidates.map((c) => candidateKey(c)).filter(Boolean));
 
+  const capturePool = (goalMeta?.captureDiagnostics ?? []).map((row) => ({
+    move: row.move,
+    source: row.source,
+    capturedBlackStones: row.capturedBlackStones,
+    libertyGainAfterCapture: row.libertyGainAfterCapture,
+    targetLibertiesAfterMove: row.targetLibertiesAfterMove,
+    beneficialForSurvival: row.beneficialForSurvival,
+  }));
+  console.warn("[KatagoRespond] goal-first capture candidates", {
+    count: capturePool.length,
+    candidates: capturePool,
+  });
+
   console.warn("[KatagoRespond] goal-first candidate pool", {
     count: goalCandidates.length,
     sources: goalMeta?.sources ?? [],
+    captureCandidateCount: goalMeta?.captureCandidateCount ?? capturePool.length,
     mergedCount: goalMeta?.mergedCount ?? null,
     moves: goalCandidates.map((candidate) => {
       const key = candidateKey(candidate);
       const rankMeta = rankByKey.get(key) ?? {};
+      const captureMeta = candidate.captureMeta ?? null;
       return {
         move: candidate.move ?? formatCoordLabel(candidate),
         source: candidate.source ?? rankMeta.source ?? null,
         katagoRank: rankMeta.katagoRank ?? null,
         rankBonus: rankMeta.rankBonus ?? null,
         enteredTacticalScore: scoredKeys.has(key),
+        capturedBlackStones: captureMeta?.capturedBlackStones ?? null,
+        libertyGainAfterCapture: captureMeta?.libertyGainAfterCapture ?? null,
+        targetLibertiesAfterMove: captureMeta?.targetLibertiesAfterMove ?? null,
       };
     }),
   });
@@ -190,12 +208,22 @@ export function logGoalFirstSelectionAudit({
     });
   }
 
+  const captureAttempts = pickDiagnostics?.captureToSurviveAttempts ?? [];
+  console.warn("[KatagoRespond] goal-first capture selection", {
+    captureRejectReason: pickDiagnostics?.captureRejectReason ?? null,
+    selectedOverForcedLiberty: pickDiagnostics?.selectedOverForcedLiberty ?? false,
+    deferredForcedLiberty: pickDiagnostics?.deferredForcedLiberty ?? null,
+    pickedCaptureMeta: pickDiagnostics?.pickedCaptureMeta ?? null,
+    attempts: captureAttempts,
+  });
+
   const forced = {
     forcedExtendMove: pickDiagnostics?.forcedExtendMove ?? null,
     forcedRejectReason: pickDiagnostics?.forcedRejectReason ?? null,
     forcedPickMode: pickDiagnostics?.forcedPickMode ?? null,
     pickMode: pickDiagnostics?.pickMode ?? null,
     nearLastBlackRejectedBecause: pickDiagnostics?.nearLastBlackRejectedBecause ?? null,
+    captureToSurviveAttempts: captureAttempts,
     libertyAttempts: (pickDiagnostics?.libertyAttempts ?? []).map((attempt) => ({
       move: attempt.move,
       legal: attempt.legal,
@@ -207,10 +235,12 @@ export function logGoalFirstSelectionAudit({
   };
   console.warn("[KatagoRespond] goal-first forced liberty diagnostic", forced);
 
+  const captureOverride = pickDiagnostics?.forcedPickMode === "capture_to_survive_override";
   const forcedOverride = Boolean(
     pickDiagnostics?.forcedPickMode &&
       !pickDiagnostics?.forcedRejectReason &&
-      selected,
+      selected &&
+      !captureOverride,
   );
   const poolWouldPick = poolWinner?.move ?? null;
   const selectedMove = selected?.move ?? null;
@@ -220,10 +250,14 @@ export function logGoalFirstSelectionAudit({
     selectedMove,
     selectedSource,
     selectedReason: selectedReason ?? education?.selectedReason ?? null,
-    selectionPath: forcedOverride
-      ? "forced_target_liberty_override"
-      : pickDiagnostics?.pickMode ?? "goal_scored_best",
+    selectionPath: captureOverride
+      ? "capture_to_survive_override"
+      : forcedOverride
+        ? "forced_target_liberty_override"
+        : pickDiagnostics?.pickMode ?? "goal_scored_best",
+    captureOverride,
     forcedOverride,
+    selectedOverForcedLiberty: pickDiagnostics?.selectedOverForcedLiberty ?? false,
     forcedPickMode: pickDiagnostics?.forcedPickMode ?? null,
     poolWinnerWithoutForced: poolWouldPick,
     poolWinnerScore: poolWinner?.totalScore ?? null,
