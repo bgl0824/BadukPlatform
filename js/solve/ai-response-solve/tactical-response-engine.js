@@ -1312,17 +1312,24 @@ function buildRawInRegionCandidateTrace({
 
     const rank = index + 1;
     const scored = scoredByKey.get(key);
-    const targetImpact = scored
-      ? targetImpactGate?.evaluate(scored) ??
-        evaluateWrongRevealTargetImpact({
-          scored,
-          stones,
-          boardSize,
-          stoneColors,
-          targetContext,
-          problem,
-        })
-      : null;
+    const impactSubject =
+      scored ??
+      ({
+        x: candidate.x,
+        y: candidate.y,
+        move: candidate.move ?? null,
+        point: { x: candidate.x, y: candidate.y },
+      });
+    const targetImpact =
+      targetImpactGate?.evaluate(impactSubject) ??
+      evaluateWrongRevealTargetImpact({
+        scored: impactSubject,
+        stones,
+        boardSize,
+        stoneColors,
+        targetContext,
+        problem,
+      });
     trace.push({
       rank,
       move: candidate.move ?? null,
@@ -1356,6 +1363,49 @@ function buildRawInRegionCandidateTrace({
   }
 
   return trace;
+}
+
+function logRawInRegionCandidateSummary(rawInRegionCandidates, { pickMode = null } = {}) {
+  const rows = (rawInRegionCandidates ?? []).map((entry) => ({
+    move: entry.move ?? null,
+    rank: entry.rank ?? null,
+    scoreable: Boolean(entry.scoreable),
+    hasTargetImpact: Boolean(entry.hasTargetImpact),
+    targetImpactReasons: entry.targetImpactReasons ?? [],
+  }));
+
+  const total = rows.length;
+  const noTargetImpactCount = rows.filter((row) => !row.hasTargetImpact).length;
+  const emptyImpactReasonsCount = rows.filter(
+    (row) => (row.targetImpactReasons ?? []).length === 0,
+  ).length;
+  const allNoTargetImpact = total > 0 && noTargetImpactCount === total;
+  const allEmptyImpactReasons = total > 0 && emptyImpactReasonsCount === total;
+  const unscoreableCount = rows.filter((row) => !row.scoreable).length;
+  const scoreableNoImpactCount = rows.filter(
+    (row) => row.scoreable && !row.hasTargetImpact,
+  ).length;
+
+  console.warn("[KatagoRespond] raw in-region candidate summary", {
+    count: total,
+    pickMode,
+    allNoTargetImpact,
+    allEmptyImpactReasons,
+    noTargetImpactCount,
+    emptyImpactReasonsCount,
+    unscoreableCount,
+    scoreableNoImpactCount,
+  });
+
+  rows.forEach((row) => {
+    console.warn("[KatagoRespond] raw in-region candidate row", row);
+  });
+
+  return {
+    rows,
+    allNoTargetImpact,
+    allEmptyImpactReasons,
+  };
 }
 
 function resolveFullRawInRegionPick({
@@ -2013,6 +2063,9 @@ export function selectWrongRevealKatagoFirstMove({
     problem,
     targetImpactGate,
   });
+  const rawInRegionSummary = logRawInRegionCandidateSummary(rawInRegionCandidates, {
+    pickMode,
+  });
   console.warn("[KatagoRespond] raw in-region candidates", rawInRegionCandidates);
 
   const selectedKatagoRank = findRawKatagoRank(rawCandidates, selected);
@@ -2032,6 +2085,7 @@ export function selectWrongRevealKatagoFirstMove({
     katagoTopRegionDiagnostic,
     prePickCandidates,
     rawInRegionCandidates,
+    rawInRegionSummary,
     targetImpactRequired: targetImpactGate.required,
     selectedTargetImpact,
     strictPickMode: strictPick.pickMode,
