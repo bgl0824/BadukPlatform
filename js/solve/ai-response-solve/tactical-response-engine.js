@@ -201,6 +201,161 @@ function candidateHasSacrificePlay(scored) {
   );
 }
 
+function minChebyshevDistanceToTargetGroup(point, targetContext) {
+  if (!point || !targetContext?.stoneKeys?.size) {
+    return null;
+  }
+
+  let minDistance = Infinity;
+  for (const key of targetContext.stoneKeys) {
+    const [x, y] = key.split(":").map(Number);
+    if (!Number.isFinite(x) || !Number.isFinite(y)) {
+      continue;
+    }
+    const distance = Math.max(Math.abs(point.x - x), Math.abs(point.y - y));
+    minDistance = Math.min(minDistance, distance);
+  }
+
+  return minDistance === Infinity ? null : minDistance;
+}
+
+/**
+ * wrong reveal: KataGo 후보가 target_white_group에 실제 영향을 주는지 판정
+ */
+export function evaluateWrongRevealTargetImpact({
+  scored,
+  stones,
+  boardSize,
+  stoneColors,
+  targetContext,
+  problem,
+}) {
+  if (!targetContext) {
+    return {
+      hasTargetImpact: false,
+      impactReasons: [],
+      noTargetContext: true,
+    };
+  }
+
+  const point =
+    scored?.point ??
+    (Number.isInteger(scored?.x) && Number.isInteger(scored?.y)
+      ? { x: scored.x, y: scored.y }
+      : null);
+  if (!point) {
+    return {
+      hasTargetImpact: false,
+      impactReasons: [],
+      noTargetContext: false,
+    };
+  }
+
+  const moveKey = pointKey(point);
+  const afterStones = simulateWhiteMove(stones, point, boardSize, stoneColors);
+  if (!afterStones) {
+    return {
+      hasTargetImpact: false,
+      impactReasons: ["illegal_placement"],
+      noTargetContext: false,
+    };
+  }
+
+  const impactReasons = [];
+  const targetLibertyKeys = new Set(
+    getTargetLibertyPoints(targetContext, stones, boardSize).map((liberty) =>
+      pointKey(liberty),
+    ),
+  );
+
+  if (targetLibertyKeys.has(moveKey)) {
+    impactReasons.push("on_target_liberty");
+  }
+
+  if (isMoveOnTargetAtariLiberty(moveKey, targetContext)) {
+    impactReasons.push("resolve_target_atari");
+  }
+
+  const targetAfter = measureTargetGroupAfterMove(
+    problem,
+    afterStones,
+    boardSize,
+    stoneColors,
+    targetContext,
+  );
+  if ((targetAfter?.libertyGain ?? 0) > 0) {
+    impactReasons.push("target_liberty_gain");
+  }
+
+  if (isMoveAdjacentToTargetGroup(point, targetContext, stones, boardSize)) {
+    const placed = getStoneAtPoint(afterStones, point);
+    if (placed) {
+      const ownGroup = collectConnectedGroup(afterStones, placed, boardSize);
+      const connectsTarget = ownGroup.some((stone) =>
+        targetContext.stoneKeys.has(pointKey(stone)),
+      );
+      if (connectsTarget) {
+        impactReasons.push("connect_target_group");
+      }
+    }
+  }
+
+  const distanceToTarget = minChebyshevDistanceToTargetGroup(point, targetContext);
+  if (distanceToTarget != null && distanceToTarget >= 1 && distanceToTarget <= 2) {
+    impactReasons.push("adjacent_target_1_2");
+  }
+
+  const capturedCount = countCaptures(stones, afterStones, stoneColors.black);
+  if (capturedCount > 0) {
+    impactReasons.push("capture_black");
+  }
+  if (putsEnemyInAtari(afterStones, point, boardSize, stoneColors)) {
+    impactReasons.push("enemy_atari");
+  }
+
+  const uniqueReasons = [...new Set(impactReasons)];
+
+  return {
+    hasTargetImpact: uniqueReasons.length > 0,
+    impactReasons: uniqueReasons,
+    noTargetContext: false,
+    targetLibertyGain: targetAfter?.libertyGain ?? 0,
+    distanceToTarget,
+  };
+}
+
+function createWrongRevealTargetImpactGate({
+  stones,
+  boardSize,
+  stoneColors,
+  targetContext,
+  problem,
+}) {
+  const evaluate = (scored) =>
+    evaluateWrongRevealTargetImpact({
+      scored,
+      stones,
+      boardSize,
+      stoneColors,
+      targetContext,
+      problem,
+    });
+
+  return {
+    required: Boolean(targetContext),
+    accepts: (scored) => {
+      if (!scored) {
+        return false;
+      }
+      if (!targetContext) {
+        return false;
+      }
+      return evaluate(scored).hasTargetImpact;
+    },
+    evaluate,
+  };
+}
+
 function scoreWrongRevealWithTarget({
   candidate,
   stones,
@@ -1143,6 +1298,8 @@ function buildRawInRegionCandidateTrace({
   katagoBoardXSize,
   katagoBoardYSize,
   selectedKey = null,
+  problem = null,
+  targetImpactGate = null,
 }) {
   const trace = [];
 
@@ -1155,10 +1312,23 @@ function buildRawInRegionCandidateTrace({
 
     const rank = index + 1;
     const scored = scoredByKey.get(key);
+    const targetImpact = scored
+      ? targetImpactGate?.evaluate(scored) ??
+        evaluateWrongRevealTargetImpact({
+          scored,
+          stones,
+          boardSize,
+          stoneColors,
+          targetContext,
+          problem,
+        })
+      : null;
     trace.push({
       rank,
       move: candidate.move ?? null,
       scoreable: Boolean(scored),
+      hasTargetImpact: targetImpact?.hasTargetImpact ?? false,
+      targetImpactReasons: targetImpact?.impactReasons ?? [],
       distanceToTarget: computeDistanceToTarget(
         { x: candidate.x, y: candidate.y },
         targetContext,
@@ -1166,6 +1336,7 @@ function buildRawInRegionCandidateTrace({
       policyPrior: candidate.policyPrior ?? null,
       visits: candidate.visits ?? null,
       tieScore: scored?.tieScore ?? null,
+      selectedReason: scored?.selectedReason ?? null,
       compositeScore: scored
         ? computeFullRawInRegionScore(rawCandidates, scored, targetContext)
         : null,
@@ -1193,6 +1364,7 @@ function resolveFullRawInRegionPick({
   scoredByKey,
   targetContext,
   topN = WRONG_REVEAL_KATAGO_TOP_N,
+  acceptCandidate = null,
 }) {
   const eligible = [];
 
@@ -1204,6 +1376,9 @@ function resolveFullRawInRegionPick({
     }
     const scored = scoredByKey.get(key);
     if (!scored) {
+      continue;
+    }
+    if (acceptCandidate && !acceptCandidate(scored)) {
       continue;
     }
     eligible.push({
@@ -1220,7 +1395,7 @@ function resolveFullRawInRegionPick({
   if (eligible.length === 0) {
     return {
       selected: null,
-      pickMode: "no_raw_in_region",
+      pickMode: acceptCandidate ? "no_raw_in_region_target_impact" : "no_raw_in_region",
       rawRank: null,
     };
   }
@@ -1407,7 +1582,12 @@ function buildRegionCandidateKeys(katagoRegionCandidates) {
   return new Set((katagoRegionCandidates ?? []).map((candidate) => candidatePointKey(candidate)));
 }
 
-function tryPickScoredKatagoCandidate(rawEntry, regionKeys, scoredByKey) {
+function tryPickScoredKatagoCandidate(
+  rawEntry,
+  regionKeys,
+  scoredByKey,
+  acceptCandidate = null,
+) {
   if (!rawEntry) {
     return null;
   }
@@ -1415,7 +1595,14 @@ function tryPickScoredKatagoCandidate(rawEntry, regionKeys, scoredByKey) {
   if (!regionKeys.has(key)) {
     return null;
   }
-  return scoredByKey.get(key) ?? null;
+  const scored = scoredByKey.get(key) ?? null;
+  if (!scored) {
+    return null;
+  }
+  if (acceptCandidate && !acceptCandidate(scored)) {
+    return null;
+  }
+  return scored;
 }
 
 function buildTopNInRegionTrace(
@@ -1449,6 +1636,7 @@ function resolveStrictKatagoPick({
   regionKeys,
   scoredByKey,
   topN = WRONG_REVEAL_KATAGO_TOP_N,
+  acceptCandidate = null,
 }) {
   const katagoTopEntry = rawCandidates[0] ?? null;
   const katagoTopInRegion = katagoTopEntry
@@ -1458,6 +1646,7 @@ function resolveStrictKatagoPick({
     katagoTopEntry,
     regionKeys,
     scoredByKey,
+    acceptCandidate,
   );
 
   if (katagoTopScored) {
@@ -1475,6 +1664,7 @@ function resolveStrictKatagoPick({
       rawCandidates[index],
       regionKeys,
       scoredByKey,
+      acceptCandidate,
     );
     if (scored) {
       return {
@@ -1627,6 +1817,20 @@ export function selectWrongRevealKatagoFirstMove({
     )
     .filter(Boolean);
   const scoredByKey = buildScoredCandidateMap(scoredCandidates);
+  const targetImpactGate = createWrongRevealTargetImpactGate({
+    stones,
+    boardSize,
+    stoneColors,
+    targetContext,
+    problem,
+  });
+  const acceptTargetImpactCandidate = targetImpactGate.accepts.bind(targetImpactGate);
+
+  if (!targetContext) {
+    console.warn("[KatagoRespond] wrong reveal katago-first — no target context", {
+      problemId: problem?.id ?? null,
+    });
+  }
 
   const scoreableDiagnostics = {};
   for (
@@ -1685,6 +1889,7 @@ export function selectWrongRevealKatagoFirstMove({
     rawCandidates[0],
     regionKeys,
     scoredByKey,
+    acceptTargetImpactCandidate,
   );
 
   const scoreableCheckLog = logKatagoTopScoreableCheck({
@@ -1697,6 +1902,7 @@ export function selectWrongRevealKatagoFirstMove({
     rawCandidates,
     regionKeys,
     scoredByKey,
+    acceptCandidate: acceptTargetImpactCandidate,
   });
 
   let fullRawPick = null;
@@ -1706,6 +1912,7 @@ export function selectWrongRevealKatagoFirstMove({
       regionKeys,
       scoredByKey,
       targetContext,
+      acceptCandidate: acceptTargetImpactCandidate,
     });
   }
 
@@ -1714,9 +1921,11 @@ export function selectWrongRevealKatagoFirstMove({
     ? strictPick.pickMode
     : fullRawPick?.pickMode ?? strictPick.pickMode;
 
-  const boostPool = scoredCandidates.filter((candidate) =>
-    findRawKatagoRank(rawCandidates, candidate) != null &&
-    findRawKatagoRank(rawCandidates, candidate) <= WRONG_REVEAL_KATAGO_TOP_N,
+  const boostPool = scoredCandidates.filter(
+    (candidate) =>
+      findRawKatagoRank(rawCandidates, candidate) != null &&
+      findRawKatagoRank(rawCandidates, candidate) <= WRONG_REVEAL_KATAGO_TOP_N &&
+      acceptTargetImpactCandidate(candidate),
   );
 
   if (!katagoTopScored && strictPick.selected) {
@@ -1729,6 +1938,13 @@ export function selectWrongRevealKatagoFirstMove({
     });
     selected = boosted.selected;
     pickMode = boosted.pickMode;
+    if (selected && !acceptTargetImpactCandidate(selected)) {
+      selected =
+        strictPick.selected && acceptTargetImpactCandidate(strictPick.selected)
+          ? strictPick.selected
+          : null;
+      pickMode = selected ? strictPick.pickMode : "no_target_impact";
+    }
   }
 
   if (
@@ -1740,27 +1956,46 @@ export function selectWrongRevealKatagoFirstMove({
         (candidate) =>
           candidate !== selected &&
           !isForbiddenWrongRevealReason(candidate.selectedReason, style),
-      ) ?? katagoTopScored ?? strictPick.selected;
-    selected = alternate ?? selected;
-    pickMode = "forbidden_reason_repick";
+      ) ??
+      (katagoTopScored && acceptTargetImpactCandidate(katagoTopScored)
+        ? katagoTopScored
+        : null) ??
+      (strictPick.selected && acceptTargetImpactCandidate(strictPick.selected)
+        ? strictPick.selected
+        : null);
+    selected = alternate ?? null;
+    pickMode = selected ? "forbidden_reason_repick" : "no_target_impact";
+  }
+
+  if (selected && !acceptTargetImpactCandidate(selected)) {
+    selected = null;
+    pickMode = "no_target_impact";
   }
 
   const selectedKatagoRankBeforeClamp = findRawKatagoRank(rawCandidates, selected);
   if (
+    selected &&
     pickMode !== "katago_full_raw_in_region" &&
     (selectedKatagoRankBeforeClamp == null ||
       selectedKatagoRankBeforeClamp > WRONG_REVEAL_KATAGO_TOP_N)
   ) {
     selected =
-      katagoTopScored ?? strictPick.selected ?? fullRawPick?.selected ?? null;
-    pickMode =
-      selected === katagoTopScored
+      (katagoTopScored && acceptTargetImpactCandidate(katagoTopScored)
+        ? katagoTopScored
+        : null) ??
+      (strictPick.selected && acceptTargetImpactCandidate(strictPick.selected)
+        ? strictPick.selected
+        : null) ??
+      (fullRawPick?.selected && acceptTargetImpactCandidate(fullRawPick.selected)
+        ? fullRawPick.selected
+        : null);
+    pickMode = selected
+      ? selected === katagoTopScored
         ? "katago_global_top_hard_clamp"
         : selected === fullRawPick?.selected
           ? "katago_full_raw_in_region"
-          : strictPick.selected
-            ? `${strictPick.pickMode}_hard_clamp`
-            : "no_allowed_katago_candidate";
+          : `${strictPick.pickMode}_hard_clamp`
+      : "no_target_impact";
   }
 
   const selectedKey = selected ? candidatePointKey(selected) : null;
@@ -1775,10 +2010,15 @@ export function selectWrongRevealKatagoFirstMove({
     katagoBoardXSize,
     katagoBoardYSize,
     selectedKey,
+    problem,
+    targetImpactGate,
   });
   console.warn("[KatagoRespond] raw in-region candidates", rawInRegionCandidates);
 
   const selectedKatagoRank = findRawKatagoRank(rawCandidates, selected);
+  const selectedTargetImpact = selected
+    ? targetImpactGate.evaluate(selected)
+    : null;
   const moveSelectionSource = resolveWrongRevealMoveSelectionSource(
     selectedKatagoRank,
     pickMode,
@@ -1792,6 +2032,8 @@ export function selectWrongRevealKatagoFirstMove({
     katagoTopRegionDiagnostic,
     prePickCandidates,
     rawInRegionCandidates,
+    targetImpactRequired: targetImpactGate.required,
+    selectedTargetImpact,
     strictPickMode: strictPick.pickMode,
     strictPickRank: strictPick.rawRank,
     fullRawPickMode: fullRawPick?.pickMode ?? null,
@@ -1816,6 +2058,8 @@ export function selectWrongRevealKatagoFirstMove({
     katagoTopScoreable: Boolean(katagoTopScored),
     scoreableCheck: scoreableCheckLog.scoreableCheck,
     strictPickMode: strictPick.pickMode,
+    targetImpactRequired: targetImpactGate.required,
+    selectedTargetImpact,
     decisionTrace,
   };
 
