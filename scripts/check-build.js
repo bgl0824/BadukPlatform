@@ -87,6 +87,7 @@ const tacticalEngine = readProjectFile("js/solve/ai-response-solve/tactical-resp
 const katagoCore = readProjectFile("api/lib/katago-respond-core.js");
 const katagoRespondApi = readProjectFile("api/katago/respond.js");
 const boardStateAudit = readProjectFile("js/solve/ai-response-solve/board-state-audit.js");
+const wrongRevealAudit = readProjectFile("js/solve/ai-response-solve/wrong-reveal-candidate-audit.js");
 
 for (const needle of [
   "export function auditKatagoStonesParity",
@@ -128,6 +129,7 @@ for (const needle of [
   "requestBoardSize",
   "replace window expired before KataGo finished",
   "auditKatagoStonesParity",
+  "auditWrongRevealCandidatePools",
 ]) {
   if (!katagoClient.includes(needle)) {
     throw new Error(`katago-respond-client.js missing ${needle}`);
@@ -148,6 +150,7 @@ for (const needle of [
   "[KatagoRespond] raw in-region candidate summary",
   "[KatagoRespond] raw in-region candidate row",
   "export function evaluateWrongRevealTargetImpact",
+  "export function explainWrongRevealTargetImpactChecks",
   "no_target_impact",
   "no_raw_in_region_target_impact",
   "targetImpactRequired",
@@ -163,6 +166,23 @@ for (const needle of [
 ]) {
   if (!tacticalEngine.includes(needle)) {
     throw new Error(`tactical-response-engine.js missing ${needle}`);
+  }
+}
+
+for (const needle of [
+  "export function auditWrongRevealCandidatePools",
+  "expectedMoveAudit",
+  "inLocalTacticalMerged",
+  "final selection explanation",
+  "author_white_sequence",
+  "[KatagoRespond] wrong reveal candidate pools",
+  "[KatagoRespond] pool katago row",
+  "[KatagoRespond] pool targetImpact row",
+  "[KatagoRespond] pool localTactical row",
+  "[KatagoRespond] expected move audit",
+]) {
+  if (!wrongRevealAudit.includes(needle)) {
+    throw new Error(`wrong-reveal-candidate-audit.js missing ${needle}`);
   }
 }
 

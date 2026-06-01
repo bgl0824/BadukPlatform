@@ -18,6 +18,7 @@ import {
   auditKatagoStonesParity,
   buildBoardStateHash,
 } from "./board-state-audit.js";
+import { auditWrongRevealCandidatePools } from "./wrong-reveal-candidate-audit.js";
 import {
   logKatagoRespondFailure,
   logKatagoRespondSuccess,
@@ -579,6 +580,11 @@ function tryWrongRevealLocalFallback({
   maxVisits,
   maxTime,
   reason,
+  blackAnswerIndex = 0,
+  rawCandidates = [],
+  katagoSelection = null,
+  katagoBoardXSize = null,
+  katagoBoardYSize = null,
 }) {
   const fallback = selectWrongRevealLocalFallback({
     region: allowedRegion,
@@ -591,6 +597,21 @@ function tryWrongRevealLocalFallback({
   });
 
   if (!fallback.ok) {
+    auditWrongRevealCandidatePools({
+      problem,
+      boardSize,
+      stones,
+      stoneColors,
+      lastMove,
+      allowedRegion,
+      blackAnswerIndex,
+      rawCandidates,
+      regionCandidates,
+      katagoSelection,
+      fallbackResult: { reason, selectedSource: null, move: null, selectedReason: null },
+      katagoBoardXSize,
+      katagoBoardYSize,
+    });
     return null;
   }
 
@@ -600,6 +621,30 @@ function tryWrongRevealLocalFallback({
     selectedSource: SELECTED_SOURCE_LOCAL_TACTICAL,
     katagoElapsedMs,
     selectedReason: fallback.selectedReason,
+    move: fallback.move,
+  });
+
+  const fallbackResult = {
+    reason,
+    move: fallback.move,
+    selectedReason: fallback.selectedReason,
+    selectedSource: SELECTED_SOURCE_LOCAL_TACTICAL,
+  };
+
+  auditWrongRevealCandidatePools({
+    problem,
+    boardSize,
+    stones,
+    stoneColors,
+    lastMove,
+    allowedRegion,
+    blackAnswerIndex,
+    rawCandidates,
+    regionCandidates,
+    katagoSelection,
+    fallbackResult,
+    katagoBoardXSize,
+    katagoBoardYSize,
   });
   logKatagoRespondTiming({
     requestStart,
@@ -649,6 +694,7 @@ function finalizeKatagoSelection({
   katagoBoardYSize = null,
   initialStones = [],
   playedMoves = [],
+  blackAnswerIndex = 0,
 }) {
   const education = buildTacticalSelection({
     regionCandidates,
@@ -695,6 +741,24 @@ function finalizeKatagoSelection({
 
   const selected = education.selected;
   const style = education.aiResponseStyle ?? education.style ?? resolveAiResponseStyle(problem);
+  const fallbackAuditBase = {
+    allowedRegion,
+    stones,
+    boardSize,
+    stoneColors,
+    lastMove,
+    problem,
+    regionCandidates,
+    requestStart,
+    katagoElapsedMs,
+    maxVisits,
+    maxTime,
+    blackAnswerIndex,
+    rawCandidates,
+    katagoSelection: education,
+    katagoBoardXSize,
+    katagoBoardYSize,
+  };
 
   if (
     selected?.point &&
@@ -706,17 +770,7 @@ function finalizeKatagoSelection({
       rejected: selected.move,
     });
     return tryWrongRevealLocalFallback({
-      allowedRegion,
-      stones,
-      boardSize,
-      stoneColors,
-      lastMove,
-      problem,
-      regionCandidates,
-      requestStart,
-      katagoElapsedMs,
-      maxVisits,
-      maxTime,
+      ...fallbackAuditBase,
       reason: "forbidden_sacrifice_play",
     });
   }
@@ -724,18 +778,8 @@ function finalizeKatagoSelection({
   if (!selected?.point) {
     if (studentMoveResult === "wrong") {
       return tryWrongRevealLocalFallback({
-        allowedRegion,
-        stones,
-        boardSize,
-        stoneColors,
-        lastMove,
-        problem,
-        regionCandidates,
-        requestStart,
-        katagoElapsedMs,
-        maxVisits,
-        maxTime,
-        reason: "no_tactical_pick",
+        ...fallbackAuditBase,
+        reason: education.selectionMeta?.pickMode ?? "no_tactical_pick",
       });
     }
     return null;
@@ -748,17 +792,7 @@ function finalizeKatagoSelection({
     });
     if (studentMoveResult === "wrong") {
       return tryWrongRevealLocalFallback({
-        allowedRegion,
-        stones,
-        boardSize,
-        stoneColors,
-        lastMove,
-        problem,
-        regionCandidates,
-        requestStart,
-        katagoElapsedMs,
-        maxVisits,
-        maxTime,
+        ...fallbackAuditBase,
         reason: "selected_out_of_region",
       });
     }
@@ -815,6 +849,25 @@ function finalizeKatagoSelection({
     katagoElapsedMs,
     totalElapsedMs,
   });
+
+  if (studentMoveResult === "wrong") {
+    auditWrongRevealCandidatePools({
+      problem,
+      boardSize,
+      stones,
+      stoneColors,
+      lastMove,
+      allowedRegion,
+      blackAnswerIndex,
+      rawCandidates,
+      regionCandidates,
+      katagoSelection: education,
+      fallbackResult: null,
+      katagoBoardXSize,
+      katagoBoardYSize,
+    });
+  }
+
   return success;
 }
 
@@ -827,6 +880,17 @@ function formatWrongRevealFallbackResult({
   maxTime,
   replaceMs,
   reason,
+  problem,
+  boardSize,
+  stones,
+  stoneColors,
+  lastMove,
+  blackAnswerIndex = 0,
+  rawCandidates = [],
+  regionCandidates = [],
+  katagoSelection = null,
+  katagoBoardXSize = null,
+  katagoBoardYSize = null,
 }) {
   const totalElapsedMs = Date.now() - requestStart;
   console.warn("[KatagoRespond] wrong-reveal using local tactical", {
@@ -845,6 +909,30 @@ function formatWrongRevealFallbackResult({
     move: fallback.move,
     totalElapsedMs,
   });
+
+  const fallbackResult = {
+    reason,
+    move: fallback.move,
+    selectedReason: fallback.selectedReason,
+    selectedSource: SELECTED_SOURCE_LOCAL_TACTICAL,
+  };
+
+  auditWrongRevealCandidatePools({
+    problem,
+    boardSize,
+    stones,
+    stoneColors,
+    lastMove,
+    allowedRegion,
+    blackAnswerIndex,
+    rawCandidates,
+    regionCandidates,
+    katagoSelection,
+    fallbackResult,
+    katagoBoardXSize,
+    katagoBoardYSize,
+  });
+
   logKatagoRespondTiming({
     requestStart,
     katagoElapsedMs,
@@ -941,6 +1029,7 @@ async function processKatagoRespondResponse({
   maxTime,
   initialStones = [],
   playedMoves = [],
+  blackAnswerIndex = 0,
 }) {
   if (!response.ok) {
     const errorDetail = logKatagoUpstreamHttpErrorDetail({
@@ -1034,6 +1123,7 @@ async function processKatagoRespondResponse({
     katagoBoardYSize,
     initialStones,
     playedMoves,
+    blackAnswerIndex,
   });
 
   return finalized ? { ok: true, result: finalized } : { ok: false, emptyRegion: true };
@@ -1057,6 +1147,7 @@ async function requestKatagoRespondWrong({
   replaceMs,
   initialStones = [],
   playedMoves = [],
+  blackAnswerIndex = 0,
 }) {
   const immediateFallback = selectWrongRevealLocalFallback({
     region: allowedRegion,
@@ -1100,6 +1191,7 @@ async function requestKatagoRespondWrong({
         maxTime,
         initialStones,
         playedMoves,
+        blackAnswerIndex,
       });
 
       if (processed.ok && processed.result) {
@@ -1139,6 +1231,12 @@ async function requestKatagoRespondWrong({
         maxTime,
         replaceMs,
         reason: "replace_window_expired",
+        problem,
+        boardSize,
+        stones,
+        stoneColors,
+        lastMove,
+        blackAnswerIndex,
       });
     }
   } else if (raced.result?.ok) {
@@ -1177,6 +1275,17 @@ async function requestKatagoRespondWrong({
       maxTime,
       replaceMs,
       reason: raced.kind === "katago" ? "katago_rejected" : "no_katago",
+      problem,
+      boardSize,
+      stones,
+      stoneColors,
+      lastMove,
+      blackAnswerIndex,
+      rawCandidates: raced.result?.rawCandidates ?? [],
+      regionCandidates: raced.result?.regionCandidates ?? [],
+      katagoSelection: raced.result?.selectionMeta
+        ? { selectionMeta: raced.result.selectionMeta, scoredCandidates: raced.result.scoredCandidates }
+        : null,
     });
   }
 
@@ -1244,6 +1353,7 @@ export async function requestKatagoRespond({
   stoneColors,
   studentMoveResult,
   currentPly,
+  blackAnswerIndex = 0,
 }) {
   if (!isKatagoRespondApiEnabled()) {
     return { ok: false, disabled: true, needsServer: true };
@@ -1347,6 +1457,7 @@ export async function requestKatagoRespond({
       replaceMs,
       initialStones,
       playedMoves,
+      blackAnswerIndex,
     });
   }
 

@@ -64,6 +64,7 @@ export function buildWrongRevealResolveContext({
     stoneColors,
     studentMoveResult: "wrong",
     currentPly,
+    blackAnswerIndex,
   };
 
   return {

@@ -302,6 +302,12 @@ export function getExpectedAuthorWhite(session) {
   return null;
 }
 
+/** 오답 응수 QA: 정답 루트 제작자 백 수 (기대 응수 기준) */
+export function getExpectedWrongRevealAuthorWhite(problem, blackAnswerIndex, boardSize = 19) {
+  const { fullSequence } = resolveAnswerSequenceConfig(problem, boardSize);
+  return getExpectedAuthorWhite({ blackAnswerIndex, fullSequence });
+}
+
 export function getNextSequenceColor(currentLength) {
   return currentLength % 2 === 0 ? COLOR_BLACK : COLOR_WHITE;
 }

@@ -295,6 +295,7 @@ export function createAiResponseSolveEngine({
       stoneColors,
       studentMoveResult: "wrong",
       currentPly: session.currentPly,
+      blackAnswerIndex: session.blackAnswerIndex,
     });
 
     console.log("[AI_RESPONSE] KataGo white (wrong route)", {

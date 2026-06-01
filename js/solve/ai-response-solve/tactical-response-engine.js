@@ -324,6 +324,123 @@ export function evaluateWrongRevealTargetImpact({
   };
 }
 
+/**
+ * targetImpact 각 조건별 pass/fail (기대 수·탈락 원인 진단용)
+ */
+export function explainWrongRevealTargetImpactChecks({
+  scored,
+  stones,
+  boardSize,
+  stoneColors,
+  targetContext,
+  problem,
+}) {
+  const summary = evaluateWrongRevealTargetImpact({
+    scored,
+    stones,
+    boardSize,
+    stoneColors,
+    targetContext,
+    problem,
+  });
+
+  const point =
+    scored?.point ??
+    (Number.isInteger(scored?.x) && Number.isInteger(scored?.y)
+      ? { x: scored.x, y: scored.y }
+      : null);
+  if (!point || !targetContext) {
+    return {
+      ...summary,
+      move: scored?.move ?? null,
+      checks: {},
+    };
+  }
+
+  const moveKey = pointKey(point);
+  const afterStones = simulateWhiteMove(stones, point, boardSize, stoneColors);
+  const targetLibertyKeys = new Set(
+    getTargetLibertyPoints(targetContext, stones, boardSize).map((liberty) =>
+      pointKey(liberty),
+    ),
+  );
+  const targetAfter = afterStones
+    ? measureTargetGroupAfterMove(
+        problem,
+        afterStones,
+        boardSize,
+        stoneColors,
+        targetContext,
+      )
+    : null;
+  const adjacentBefore = isMoveAdjacentToTargetGroup(
+    point,
+    targetContext,
+    stones,
+    boardSize,
+  );
+  let connectsTarget = false;
+  if (afterStones) {
+    const placed = getStoneAtPoint(afterStones, point);
+    if (placed) {
+      const ownGroup = collectConnectedGroup(afterStones, placed, boardSize);
+      connectsTarget = ownGroup.some((stone) =>
+        targetContext.stoneKeys.has(pointKey(stone)),
+      );
+    }
+  }
+
+  const distanceToTarget = minChebyshevDistanceToTargetGroup(point, targetContext);
+  const capturedCount = afterStones
+    ? countCaptures(stones, afterStones, stoneColors.black)
+    : 0;
+  const enemyAtari = afterStones
+    ? putsEnemyInAtari(afterStones, point, boardSize, stoneColors)
+    : false;
+
+  return {
+    ...summary,
+    move: scored?.move ?? formatCoordLabel(point),
+    checks: {
+      on_target_liberty: {
+        pass: targetLibertyKeys.has(moveKey),
+        moveKey,
+        targetLibertyLabels: [...targetLibertyKeys].map(pointKeyToCoordLabel),
+      },
+      resolve_target_atari: {
+        pass: isMoveOnTargetAtariLiberty(moveKey, targetContext),
+        atariLibertyKeys: [...(targetContext.atariLibertyKeys ?? [])].map(
+          pointKeyToCoordLabel,
+        ),
+      },
+      target_liberty_gain: {
+        pass: (targetAfter?.libertyGain ?? 0) > 0,
+        before: targetContext.minLiberties,
+        after: targetAfter?.minLiberties ?? null,
+        gain: targetAfter?.libertyGain ?? 0,
+      },
+      connect_target_group: {
+        pass: connectsTarget,
+        adjacentBefore,
+      },
+      adjacent_target_1_2: {
+        pass: distanceToTarget != null && distanceToTarget >= 1 && distanceToTarget <= 2,
+        distanceToTarget,
+      },
+      capture_black: {
+        pass: capturedCount > 0,
+        capturedCount,
+      },
+      enemy_atari: {
+        pass: enemyAtari,
+      },
+      legal_placement: {
+        pass: Boolean(afterStones),
+      },
+    },
+  };
+}
+
 function createWrongRevealTargetImpactGate({
   stones,
   boardSize,
@@ -1173,6 +1290,7 @@ export function selectTacticalWhiteMove({
     scoredCandidates,
     selected,
     selectedReason: selected?.selectedReason ?? null,
+    pickDiagnostics: responseMode === "wrong_reveal" ? pickDiagnostics : null,
   };
 }
 

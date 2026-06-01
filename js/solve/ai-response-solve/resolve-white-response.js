@@ -20,6 +20,7 @@ export async function resolveWhiteResponse({
   stoneColors,
   studentMoveResult,
   currentPly,
+  blackAnswerIndex = 0,
 }) {
   if (!isKatagoRespondApiEnabled()) {
     console.warn("[AI_RESPONSE] katagoRespondApiEnabled=false — server required");
@@ -54,6 +55,7 @@ export async function resolveWhiteResponse({
     stoneColors,
     studentMoveResult,
     currentPly,
+    blackAnswerIndex,
   });
 
   if (
