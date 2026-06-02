@@ -109,6 +109,46 @@ export const academyElements = {
 
   studentLearningDetailOpenReview: document.querySelector("#student-learning-detail-open-review"),
 
+  studentAcademyProfileModal: document.querySelector("#student-academy-profile-modal"),
+
+  studentAcademyProfileTitle: document.querySelector("#student-academy-profile-title"),
+
+  studentAcademyProfileMeta: document.querySelector("#student-academy-profile-meta"),
+
+  studentAcademyProfileSections: document.querySelector("#student-academy-profile-sections"),
+
+  closeStudentAcademyProfileModal: document.querySelector("#close-student-academy-profile-modal"),
+
+  studentOfficialGradeModal: document.querySelector("#student-official-grade-modal"),
+
+  studentOfficialGradeTitle: document.querySelector("#student-official-grade-title"),
+
+  studentOfficialGradeMeta: document.querySelector("#student-official-grade-meta"),
+
+  studentOfficialGradeForm: document.querySelector("#student-official-grade-form"),
+
+  studentOfficialGradeCode: document.querySelector("#student-official-grade-code"),
+
+  studentOfficialGradeAcquiredAt: document.querySelector("#student-official-grade-acquired-at"),
+
+  studentOfficialGradeSource: document.querySelector("#student-official-grade-source"),
+
+  closeStudentOfficialGradeModal: document.querySelector("#close-student-official-grade-modal"),
+
+  cancelStudentOfficialGrade: document.querySelector("#cancel-student-official-grade"),
+
+  studentGrowthReportModal: document.querySelector("#student-growth-report-modal"),
+
+  studentGrowthReportTitle: document.querySelector("#student-growth-report-title"),
+
+  studentGrowthReportMeta: document.querySelector("#student-growth-report-meta"),
+
+  studentGrowthReportCard: document.querySelector("#student-growth-report-card"),
+
+  closeStudentGrowthReportModal: document.querySelector("#close-student-growth-report-modal"),
+
+  copyStudentGrowthReportButton: document.querySelector("#copy-student-growth-report"),
+
   createTeacherCodeButton: document.querySelector("#create-teacher-code"),
 
   createStudentCodeButton: document.querySelector("#create-student-code"),

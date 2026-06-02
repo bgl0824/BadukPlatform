@@ -8,7 +8,6 @@ import {
   upsertStudentProgressBatchToSupabase,
   upsertStudentProgressToSupabase,
 } from "./student-progress-persistence-service.js";
-
 const PROGRESS = DEBUG_CHANNELS.progress;
 
 const STUDENT_PROGRESS_STORAGE_KEY = "BADUK_STUDENT_PROGRESS";
@@ -364,7 +363,7 @@ export function getStudentProgressSummary(userId, totalProblemCount = 0) {
   const recentProgress = progressList[0];
 
   return {
-    level: "급수 미정",
+    level: "입문",
     progressRate,
     totalProblemCount,
     solvedProblemCount,

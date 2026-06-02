@@ -557,7 +557,7 @@
             type="button"
             data-academy-section="students"
           >
-            원생관리
+            원생 관리
           </button>
           <button class="academy-submenu-button" type="button" data-academy-section="invites">
             초대코드
@@ -573,12 +573,12 @@
           id="academy-students-panel"
           class="academy-section-panel academy-member-panel"
           data-academy-section-panel="students"
-          aria-label="원생 학습 관리"
+          aria-label="원생 프로필 관리"
         >
           <div>
-            <p class="eyebrow">Student Learning</p>
-            <h3 id="academy-students-title">원생 운영 현황</h3>
-            <p id="academy-students-description">담당 배정과 진도 요약 중심의 운영 관리 카드입니다. 학습 분석은 학습관리 메뉴를 이용해 주세요.</p>
+            <p class="eyebrow">Student Profile</p>
+            <h3 id="academy-students-title">원생 관리</h3>
+            <p id="academy-students-description">학생 프로필·성장리포트 등 원생 운영·학부모 전달 메뉴입니다.</p>
           </div>
           <div id="student-management-toolbar" class="student-management-toolbar">
             <label>
@@ -586,10 +586,9 @@
               <input id="student-name-search" type="search" placeholder="학생 이름" autocomplete="off" />
             </label>
             <label>
-              급수
+              과정
               <select id="student-level-filter">
                 <option value="all">전체</option>
-                <option value="급수 미정">급수 미정</option>
               </select>
             </label>
             <label>
@@ -788,7 +787,7 @@
           <nav
             id="student-learning-detail-level-nav"
             class="student-learning-detail-level-nav"
-            aria-label="급수 선택"
+            aria-label="과정 선택"
             role="tablist"
           ></nav>
           <div
@@ -827,6 +826,114 @@
             </button>
           </div>
           <div id="student-review-list" class="student-review-list"></div>
+        </div>
+      </div>
+      <div
+        id="student-academy-profile-modal"
+        class="answer-modal student-academy-profile-modal is-hidden"
+        role="dialog"
+        aria-live="polite"
+        aria-modal="true"
+        aria-labelledby="student-academy-profile-title"
+      >
+        <div class="answer-modal-card student-academy-profile-modal-card">
+          <button
+            id="close-student-academy-profile-modal"
+            class="auth-close"
+            type="button"
+            aria-label="학생 프로필 닫기"
+          >
+            ×
+          </button>
+          <header class="student-academy-profile-header">
+            <p class="eyebrow">Student Profile</p>
+            <h2 id="student-academy-profile-title">학생 프로필</h2>
+            <p id="student-academy-profile-meta" class="student-academy-profile-meta"></p>
+          </header>
+          <div
+            id="student-academy-profile-sections"
+            class="student-academy-profile-sections"
+            aria-live="polite"
+          ></div>
+        </div>
+      </div>
+      <div
+        id="student-official-grade-modal"
+        class="answer-modal student-official-grade-modal is-hidden"
+        role="dialog"
+        aria-live="polite"
+        aria-modal="true"
+        aria-labelledby="student-official-grade-title"
+      >
+        <div class="answer-modal-card student-official-grade-modal-card">
+          <button
+            id="close-student-official-grade-modal"
+            class="auth-close"
+            type="button"
+            aria-label="실제 급수 닫기"
+          >
+            ×
+          </button>
+          <header class="student-official-grade-header">
+            <p class="eyebrow">Official Grade</p>
+            <h2 id="student-official-grade-title">실제 급수 등록</h2>
+            <p id="student-official-grade-meta" class="student-official-grade-meta"></p>
+          </header>
+          <form id="student-official-grade-form" class="student-official-grade-form">
+            <label>
+              실제 급수
+              <select id="student-official-grade-code" name="grade_code" required></select>
+            </label>
+            <label>
+              취득일
+              <input id="student-official-grade-acquired-at" name="acquired_at" type="date" required />
+            </label>
+            <label>
+              급수 출처
+              <select id="student-official-grade-source" name="grade_source" required></select>
+            </label>
+            <footer class="student-official-grade-form-footer">
+              <button id="cancel-student-official-grade" class="ghost-button" type="button">
+                취소
+              </button>
+              <button class="primary-button" type="submit">저장</button>
+            </footer>
+          </form>
+        </div>
+      </div>
+      <div
+        id="student-growth-report-modal"
+        class="answer-modal student-growth-report-modal is-hidden"
+        role="dialog"
+        aria-live="polite"
+        aria-modal="true"
+        aria-labelledby="student-growth-report-title"
+      >
+        <div class="answer-modal-card student-growth-report-modal-card">
+          <button
+            id="close-student-growth-report-modal"
+            class="auth-close"
+            type="button"
+            aria-label="성장리포트 닫기"
+          >
+            ×
+          </button>
+          <header class="student-growth-report-header">
+            <p class="eyebrow">Growth Report</p>
+            <h2 id="student-growth-report-title">성장리포트</h2>
+            <p id="student-growth-report-meta" class="student-growth-report-meta"></p>
+          </header>
+          <div id="student-growth-report-card" class="student-growth-report-card" aria-live="polite"></div>
+          <footer class="student-growth-report-footer">
+            <button
+              id="copy-student-growth-report"
+              class="secondary-button"
+              type="button"
+            >
+              텍스트 복사
+            </button>
+            <p class="student-growth-report-footer-note">카드 영역을 캡처해 학부모에게 전달할 수 있습니다.</p>
+          </footer>
         </div>
       </div>
       <div id="account-settings-modal" class="auth-modal is-hidden" role="dialog" aria-modal="true" aria-labelledby="account-settings-title">

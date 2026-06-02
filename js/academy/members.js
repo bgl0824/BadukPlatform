@@ -51,12 +51,32 @@ import { normalizeLevelGroup } from "../services/level-group-service.js";
 import { getCategoryProblemNumberForProblem } from "../services/category-problem-number.js";
 import { getTotalWrongCount } from "../services/review-service.js";
 import {
+  buildStudentGrowthReport,
+  formatStudentGrowthReportPlainText,
+} from "../services/student-growth-report-service.js";
+import {
+  buildStudentAcademyProfileView,
+  getStudentAcademyCardSummary,
+} from "../services/student-academy-profile-service.js";
+import { getStudentLearningDiagnostics } from "../services/student-learning-diagnostics-service.js";
+import {
+  fetchStudentOfficialGrade,
+  upsertStudentOfficialGrade,
+} from "../services/student-official-grade-service.js";
+import {
+  getOfficialGradeSourceSelectOptions,
+} from "../services/official-grade-source-service.js";
+import {
+  getGradeLevelSelectOptions,
+} from "../services/grade-level-service.js";
+import { getStudentCurriculumOverview } from "../services/student-curriculum-progress-service.js";
+import { DEFAULT_LEVEL_GROUP, LEVEL_GROUPS } from "../services/level-group-service.js";
+import {
   ensureStudentProgressHydratedForViewer,
   getAttempts,
   getLatestAttempt,
   getProgressStatus,
   getStudentProgressByUserId,
-  getStudentProgressSummary,
   hydrateStudentProgressCache,
   isReviewArchived,
   isReviewDeleted,
@@ -112,7 +132,23 @@ export function createAcademyMemberController({
     showArchived: false,
   };
 
+  const activeGrowthReportState = {
+    studentId: null,
+    report: null,
+  };
+
+  const activeAcademyProfileState = {
+    studentId: null,
+    profile: null,
+  };
+
+  const activeOfficialGradeFormState = {
+    studentId: null,
+    mode: "register",
+  };
+
   function bindAcademyMemberEvents() {
+    populateStudentLevelGroupFilter();
     elements.studentNameSearch?.addEventListener("input", () => {
       studentListState.nameQuery = normalizeSearchValue(elements.studentNameSearch.value);
       refreshAcademyMemberView();
@@ -152,6 +188,18 @@ export function createAcademyMemberController({
       const reviewButton = event.target.closest("[data-review-student-id]");
       if (reviewButton) {
         openStudentReviewModal(reviewButton.dataset.reviewStudentId);
+        return;
+      }
+
+      const growthReportButton = event.target.closest("[data-growth-report-student-id]");
+      if (growthReportButton) {
+        void openStudentGrowthReportModal(growthReportButton.dataset.growthReportStudentId);
+        return;
+      }
+
+      const profileButton = event.target.closest("[data-student-profile-id]");
+      if (profileButton) {
+        void openStudentAcademyProfileModal(profileButton.dataset.studentProfileId);
         return;
       }
 
@@ -216,6 +264,40 @@ export function createAcademyMemberController({
       }
       closeStudentLearningDetailModal();
       openStudentReviewModal(studentId);
+    });
+    elements.closeStudentAcademyProfileModal?.addEventListener("click", closeStudentAcademyProfileModal);
+    elements.studentAcademyProfileModal?.addEventListener("click", (event) => {
+      if (event.target === elements.studentAcademyProfileModal) {
+        closeStudentAcademyProfileModal();
+        return;
+      }
+
+      const officialGradeAction = event.target.closest("[data-official-grade-action]");
+      if (officialGradeAction) {
+        const studentId = activeAcademyProfileState.studentId;
+        if (!studentId) {
+          return;
+        }
+        openOfficialGradeFormModal(studentId, {
+          mode: officialGradeAction.dataset.officialGradeAction,
+          grade: activeAcademyProfileState.profile?.officialGrade ?? null,
+        });
+      }
+    });
+    elements.closeStudentOfficialGradeModal?.addEventListener("click", closeOfficialGradeFormModal);
+    elements.cancelStudentOfficialGrade?.addEventListener("click", closeOfficialGradeFormModal);
+    elements.studentOfficialGradeForm?.addEventListener("submit", handleOfficialGradeFormSubmit);
+    elements.studentOfficialGradeModal?.addEventListener("click", (event) => {
+      if (event.target === elements.studentOfficialGradeModal) {
+        closeOfficialGradeFormModal();
+      }
+    });
+    elements.closeStudentGrowthReportModal?.addEventListener("click", closeStudentGrowthReportModal);
+    elements.copyStudentGrowthReportButton?.addEventListener("click", handleCopyGrowthReport);
+    elements.studentGrowthReportModal?.addEventListener("click", (event) => {
+      if (event.target === elements.studentGrowthReportModal) {
+        closeStudentGrowthReportModal();
+      }
     });
     elements.studentLearningDetailModal?.addEventListener("click", (event) => {
       if (event.target === elements.studentLearningDetailModal) {
@@ -529,14 +611,14 @@ export function createAcademyMemberController({
     if (isStudentsView || isLearningStudentsView) {
       if (elements.academyStudentsTitle) {
         elements.academyStudentsTitle.textContent = isLearningStudentsView
-          ? "학생 학습관리"
-          : "원생 운영 현황";
+          ? "복습·진단"
+          : "원생 관리";
       }
 
       if (elements.academyStudentsDescription) {
         elements.academyStudentsDescription.textContent = isLearningStudentsView
-          ? "학생별 진도, 오답노트, 학습 상세를 확인하는 학습 분석 메뉴입니다."
-          : "담당 배정·진도 요약 중심의 운영 카드입니다. 학습 분석은 학습관리 메뉴를 이용해 주세요.";
+          ? "오답노트, 복습 필요 문제, 학습 상세 등 풀이·복습 진단 메뉴입니다."
+          : "학생 프로필·성장리포트 등 원생 운영·학부모 전달 메뉴입니다.";
       }
 
       const studentCardActions = getStudentCardActionPermissions(currentUser);
@@ -948,7 +1030,6 @@ export function createAcademyMemberController({
   ) {
     const actions =
       studentCardActions ?? getStudentCardActionPermissions(getCurrentUser());
-    const progress = getStudentProgress(member);
     const assignedTeacherName = getTeacherDisplayName(member.assignedTeacherId, teacherMembers);
     const isInactive = !isActiveMember(member);
     const statusLabel = isInactive ? "비활성" : "활성";
@@ -956,20 +1037,32 @@ export function createAcademyMemberController({
     const cardVariant = isLearningCard ? "learning" : "operations";
     const canShowDetails = isLearningCard && actions.canViewDetails;
     const canShowWrongNotes = isLearningCard && actions.canViewWrongNotes;
+    const canShowAcademyProfile = !isLearningCard && actions.canViewDetails;
     const showLearningActions = canShowDetails || canShowWrongNotes;
+    const showAcademyActions = canShowAcademyProfile;
+    const cardMetrics = isLearningCard
+      ? renderLearningCardMetrics(getStudentLearningDiagnostics(member.userId))
+      : renderAcademyCardMetrics(
+          getStudentAcademyCardSummary(member.userId, getProblems()),
+          assignedTeacherName,
+        );
 
     return `
       <article class="academy-member-card academy-student-card academy-student-card--summary academy-student-card--${cardVariant}${isInactive ? " is-inactive-member" : ""}" data-student-id="${escapeHtml(member.userId)}">
         <div class="student-card-header student-card-header--compact">
           <div>
             <strong>${escapeHtml(member.name || member.username)}</strong>
-            <p class="student-assigned-teacher">담당: ${escapeHtml(assignedTeacherName)}</p>
+            ${
+              isLearningCard
+                ? ""
+                : `<p class="student-assigned-teacher">담당: ${escapeHtml(assignedTeacherName)}</p>`
+            }
           </div>
           <span class="member-status-badge">${statusLabel}</span>
         </div>
         ${canAssignTeacher && cardMode === "operations" && !isInactive ? renderAssignTeacherSelect(member, teacherMembers) : ""}
-        <dl class="student-progress-summary student-progress-summary--summary">
-          ${renderStudentSummaryMetrics(progress, { includeLevel: isLearningCard })}
+        <dl class="student-progress-summary student-progress-summary--summary student-progress-summary--${cardVariant}">
+          ${cardMetrics}
         </dl>
         ${
           showLearningActions
@@ -979,34 +1072,73 @@ export function createAcademyMemberController({
               })
             : ""
         }
+        ${showAcademyActions ? renderStudentAcademyActionButtons(member) : ""}
       </article>
     `;
   }
 
-  function renderStudentSummaryMetrics(progress, { includeLevel = false } = {}) {
-    const rows = [
-      `
-        <div>
-          <dt>진도율</dt>
-          <dd>${progress.progressRate}% · ${progress.solvedProblemCount}/${progress.totalProblemCount}문제</dd>
-        </div>
-        <div>
-          <dt>최근 학습</dt>
-          <dd>${escapeHtml(progress.recentCategory)}</dd>
-        </div>
-      `,
-    ];
-
-    if (includeLevel) {
-      rows.push(`
-        <div>
-          <dt>급수</dt>
-          <dd>${escapeHtml(progress.level)}</dd>
-        </div>
-      `);
+  function formatRecentActivityLabel(activityAt) {
+    if (!activityAt) {
+      return "기록 없음";
     }
 
-    return rows.join("");
+    if (typeof formatDateTime === "function") {
+      return formatDateTime(activityAt);
+    }
+
+    const parsed = new Date(activityAt);
+    if (Number.isNaN(parsed.getTime())) {
+      return "기록 없음";
+    }
+
+    return parsed.toLocaleDateString("ko-KR");
+  }
+
+  function renderLearningCardMetrics(diagnostics) {
+    const wrongNoteCount = Number(diagnostics.wrongNoteCount ?? 0);
+    const reviewNeededCount = Number(diagnostics.reviewNeededCount ?? 0);
+    const wrongNoteClass = wrongNoteCount > 0 ? " is-attention" : "";
+    const reviewNeededClass = reviewNeededCount > 0 ? " is-attention" : "";
+
+    return `
+      <div>
+        <dt>오답노트</dt>
+        <dd class="student-card-metric-value${wrongNoteClass}">${wrongNoteCount}문제</dd>
+      </div>
+      <div>
+        <dt>복습 필요</dt>
+        <dd class="student-card-metric-value${reviewNeededClass}">${reviewNeededCount}문제</dd>
+      </div>
+      <div>
+        <dt>최근 학습일</dt>
+        <dd>${escapeHtml(formatRecentActivityLabel(diagnostics.recentActivityAt))}</dd>
+      </div>
+      <div>
+        <dt>최근 학습</dt>
+        <dd>${escapeHtml(diagnostics.recentCategory ?? "기록 없음")}</dd>
+      </div>
+    `;
+  }
+
+  function renderAcademyCardMetrics(summary, assignedTeacherName) {
+    return `
+      <div>
+        <dt>현재 과정</dt>
+        <dd>${escapeHtml(summary.activeLevelGroup)} · ${summary.activeLevelGroupPercent}% <span class="student-curriculum-status-tag">${escapeHtml(summary.statusLabel)}</span></dd>
+      </div>
+      <div>
+        <dt>참고 예상급수</dt>
+        <dd>${escapeHtml(summary.projectedGradeLabel)}</dd>
+      </div>
+      <div>
+        <dt>담당 선생</dt>
+        <dd>${escapeHtml(assignedTeacherName)}</dd>
+      </div>
+      <div>
+        <dt>최근 학습</dt>
+        <dd>${escapeHtml(summary.recentCategory ?? "기록 없음")}</dd>
+      </div>
+    `;
   }
 
   function renderStudentLearningActionButtons(
@@ -1030,7 +1162,7 @@ export function createAcademyMemberController({
           type="button"
           data-learning-detail-student-id="${escapeHtml(member.userId)}"
         >
-          상세
+          학습 상세
         </button>
       `);
     }
@@ -1050,6 +1182,31 @@ export function createAcademyMemberController({
     return `
       <div class="student-card-actions student-card-actions--split">
         ${buttons.join("")}
+      </div>
+    `;
+  }
+
+  function renderStudentAcademyActionButtons(member) {
+    if (!isActiveMember(member)) {
+      return "";
+    }
+
+    return `
+      <div class="student-card-actions student-card-actions--split student-card-actions--academy">
+        <button
+          class="secondary-button student-profile-button"
+          type="button"
+          data-student-profile-id="${escapeHtml(member.userId)}"
+        >
+          학생 프로필
+        </button>
+        <button
+          class="secondary-button student-growth-report-button"
+          type="button"
+          data-growth-report-student-id="${escapeHtml(member.userId)}"
+        >
+          성장리포트
+        </button>
       </div>
     `;
   }
@@ -1821,7 +1978,12 @@ export function createAcademyMemberController({
 
   function getStudentProgressPlaceholder() {
     return {
-      level: "급수 미정",
+      level: "입문",
+      activeLevelGroup: "입문",
+      activeLevelGroupPercent: 0,
+      activeLevelGroupStatus: "not_started",
+      activeLevelGroupStatusLabel: "시작 전",
+      levelGroups: [],
       progressRate: 0,
       totalProblemCount: 0,
       solvedProblemCount: 0,
@@ -1836,7 +1998,30 @@ export function createAcademyMemberController({
       return getStudentProgressPlaceholder();
     }
 
-    return getStudentProgressSummary(member.userId, getTotalProblemCount());
+    return getStudentCurriculumOverview(member.userId, getProblems());
+  }
+
+  function populateStudentLevelGroupFilter() {
+    const select = elements.studentLevelFilter;
+    if (!select) {
+      return;
+    }
+
+    const previousValue = studentListState.level || select.value || "all";
+    select.innerHTML = [
+      `<option value="all">전체</option>`,
+      ...LEVEL_GROUPS.map(
+        (levelGroup) => `<option value="${escapeHtml(levelGroup)}">${escapeHtml(levelGroup)}</option>`,
+      ),
+    ].join("");
+
+    if ([...select.options].some((option) => option.value === previousValue)) {
+      select.value = previousValue;
+      studentListState.level = previousValue;
+    } else {
+      select.value = "all";
+      studentListState.level = "all";
+    }
   }
 
   function getVisibleStudentMembers(studentMembers, teacherMembers = []) {
@@ -1848,7 +2033,8 @@ export function createAcademyMemberController({
       .filter(({ member, progress }) => {
         const name = normalizeSearchValue(member.name || member.username);
         const matchesName = !studentListState.nameQuery || name.includes(studentListState.nameQuery);
-        const matchesLevel = studentListState.level === "all" || progress.level === studentListState.level;
+        const matchesLevel =
+          studentListState.level === "all" || progress.activeLevelGroup === studentListState.level;
 
         return matchesName && matchesLevel;
       })
@@ -1857,19 +2043,21 @@ export function createAcademyMemberController({
   }
 
   function compareStudentMembers(left, right) {
-    const leftMember = left.member;
-    const rightMember = right.member;
+    const leftMember = left.member ?? left;
+    const rightMember = right.member ?? right;
+    const leftProgress = getStudentProgress(leftMember);
+    const rightProgress = getStudentProgress(rightMember);
 
     if (studentListState.sortOrder === "joined-desc") {
       return new Date(rightMember.joinedAt).getTime() - new Date(leftMember.joinedAt).getTime();
     }
 
     if (studentListState.sortOrder === "progress-asc") {
-      return left.progress.progressRate - right.progress.progressRate;
+      return leftProgress.progressRate - rightProgress.progressRate;
     }
 
     if (studentListState.sortOrder === "progress-desc") {
-      return right.progress.progressRate - left.progress.progressRate;
+      return rightProgress.progressRate - leftProgress.progressRate;
     }
 
     return getStudentDisplayName(leftMember).localeCompare(getStudentDisplayName(rightMember), "ko");
@@ -1893,7 +2081,7 @@ export function createAcademyMemberController({
       return null;
     }
 
-    const preferred = normalizeLevelGroup(progress?.level);
+    const preferred = normalizeLevelGroup(progress?.activeLevelGroup ?? progress?.level);
     if (sections.some((section) => section.levelGroup === preferred)) {
       return preferred;
     }
@@ -1901,14 +2089,60 @@ export function createAcademyMemberController({
     return sections[0].levelGroup;
   }
 
+  function findLevelGroupProgress(progress, levelGroup) {
+    return (progress?.levelGroups ?? []).find((row) => row.levelGroup === levelGroup) ?? null;
+  }
+
+  function renderCurriculumProgressOverview(progress) {
+    const levelGroups = progress?.levelGroups ?? [];
+    const activeLevelGroup = progress?.activeLevelGroup ?? DEFAULT_LEVEL_GROUP;
+
+    if (!levelGroups.length) {
+      return `<p class="student-curriculum-overview-empty">표시할 과정 문제가 없습니다.</p>`;
+    }
+
+    return `
+      <section class="student-curriculum-overview" aria-label="과정 진행도">
+        <h3 class="student-curriculum-overview-title">과정 진행도</h3>
+        <ul class="student-curriculum-overview-list">
+          ${levelGroups
+            .map((row) => {
+              const isActive = row.levelGroup === activeLevelGroup;
+              return `
+                <li class="student-curriculum-overview-item is-${escapeHtml(row.status)}${isActive ? " is-active-level" : ""}">
+                  <div class="student-curriculum-overview-head">
+                    <strong>${escapeHtml(row.levelGroup)}</strong>
+                    <span>${escapeHtml(row.statusLabel)} · ${row.percent}%</span>
+                  </div>
+                  <div class="student-curriculum-overview-bar" role="presentation">
+                    <span class="student-curriculum-overview-bar-fill" style="width: ${Math.min(100, Math.max(0, row.percent))}%"></span>
+                  </div>
+                  <p class="student-curriculum-overview-meta">${row.solved}/${row.total}문제 · 카테고리 ${row.completedCategories}/${row.categoryCount} 완료</p>
+                </li>
+              `;
+            })
+            .join("")}
+        </ul>
+      </section>
+    `;
+  }
+
   function renderLearningDetailLevelNav(sections, activeLevelTab) {
     if (!sections.length) {
       return "";
     }
 
+    const progress =
+      activeLearningDetailState.studentId
+        ? getStudentProgress(findRenderedStudent(activeLearningDetailState.studentId))
+        : null;
+
     return sections
       .map((section) => {
         const isActive = section.levelGroup === activeLevelTab;
+        const levelProgress = findLevelGroupProgress(progress, section.levelGroup);
+        const percentLabel =
+          levelProgress != null ? `${levelProgress.percent}%` : `${section.rows.length}카테고리`;
         return `
           <button
             id="learning-level-tab-${escapeHtml(section.levelGroup)}"
@@ -1919,25 +2153,34 @@ export function createAcademyMemberController({
             data-learning-level-tab="${escapeHtml(section.levelGroup)}"
           >
             ${escapeHtml(section.levelGroup)}
-            <span class="student-learning-level-chip-count">${section.rows.length}</span>
+            <span class="student-learning-level-chip-meta">${escapeHtml(percentLabel)}</span>
           </button>
         `;
       })
       .join("");
   }
 
-  function renderLearningDetailLevelBody(section) {
+  function renderLearningDetailLevelBody(section, progress) {
     if (!section) {
-      return `<p class="student-learning-detail-empty">선택한 급수에 표시할 카테고리가 없습니다.</p>`;
+      return `<p class="student-learning-detail-empty">선택한 과정에 표시할 카테고리가 없습니다.</p>`;
     }
 
+    const levelProgress = findLevelGroupProgress(progress, section.levelGroup);
+    const levelSummary = levelProgress
+      ? `<p class="student-learning-level-summary">${escapeHtml(levelProgress.statusLabel)} · ${levelProgress.percent}% · ${levelProgress.solved}/${levelProgress.total}문제</p>`
+      : "";
+
     if (!section.rows.length) {
-      return `<p class="student-learning-detail-empty">${escapeHtml(section.levelGroup)} 과정 학습 기록이 없습니다.</p>`;
+      return `
+        ${levelSummary}
+        <p class="student-learning-detail-empty">${escapeHtml(section.levelGroup)} 과정에서 아직 학습한 카테고리가 없습니다.</p>
+      `;
     }
 
     return `
       <section class="student-learning-level-panel" data-level-group="${escapeHtml(section.levelGroup)}">
         <p class="student-learning-level-panel-meta">${escapeHtml(section.description)}</p>
+        ${levelSummary}
         <ul class="student-category-detail-list">
           ${section.rows.map((row) => renderCategoryDetailRow(row)).join("")}
         </ul>
@@ -1966,7 +2209,8 @@ export function createAcademyMemberController({
       }
       if (elements.studentLearningDetailBody) {
         elements.studentLearningDetailBody.innerHTML =
-          `<p class="student-learning-detail-empty">아직 학습 기록이 없습니다.</p>`;
+          renderCurriculumProgressOverview(progress) +
+          `<p class="student-learning-detail-empty">카테고리별 학습 기록이 아직 없습니다. 위 과정 진행도를 참고해 주세요.</p>`;
       }
       return;
     }
@@ -1990,7 +2234,8 @@ export function createAcademyMemberController({
     }
 
     if (elements.studentLearningDetailBody) {
-      elements.studentLearningDetailBody.innerHTML = renderLearningDetailLevelBody(activeSection);
+      elements.studentLearningDetailBody.innerHTML =
+        renderCurriculumProgressOverview(progress) + renderLearningDetailLevelBody(activeSection, progress);
       elements.studentLearningDetailBody.setAttribute(
         "aria-labelledby",
         `learning-level-tab-${activeLearningDetailState.activeLevelTab}`,
@@ -2039,7 +2284,8 @@ export function createAcademyMemberController({
     }
 
     if (elements.studentLearningDetailMeta) {
-      elements.studentLearningDetailMeta.textContent = `담당 ${getTeacherDisplayName(student.assignedTeacherId, teacherMembers)} · 진도 ${progress.progressRate}% · ${progress.level}`;
+      elements.studentLearningDetailMeta.textContent =
+        `담당 ${getTeacherDisplayName(student.assignedTeacherId, teacherMembers)} · 현재 과정 ${progress.activeLevelGroup} ${progress.activeLevelGroupPercent}% (${progress.activeLevelGroupStatusLabel})`;
     }
 
     if (elements.studentLearningDetailOpenReview) {
@@ -2129,6 +2375,408 @@ export function createAcademyMemberController({
     activeReviewState.showArchived = false;
     syncArchivedReviewToggle();
     elements.studentReviewModal?.classList.add("is-hidden");
+  }
+
+  function renderGrowthReportCategoryList(items, emptyLabel) {
+    if (!items?.length) {
+      return `<li class="student-growth-report-empty-item">${escapeHtml(emptyLabel)}</li>`;
+    }
+
+    return items
+      .map((row) => {
+        const repeatLabel =
+          row.repeatWrongCount != null && row.repeatWrongCount > 0
+            ? ` · 반복 오답 ${row.repeatWrongCount}개`
+            : "";
+        return `<li><strong>${escapeHtml(row.categoryName)}</strong> ${row.solved}/${row.total} (${row.completionPercent}%)${escapeHtml(repeatLabel)}</li>`;
+      })
+      .join("");
+  }
+
+  function renderStudentGrowthReportCard(report) {
+    if (!report) {
+      return `<p class="student-growth-report-empty">리포트를 생성하지 못했습니다.</p>`;
+    }
+
+    const generatedDate = report.generatedAt?.slice(0, 10) ?? "";
+    const projectedBlock = report.projectedGrade.projectedGradeLabel
+      ? `
+        <p class="student-growth-report-grade">${escapeHtml(report.projectedGrade.projectedGradeLabel)} <span class="student-growth-report-grade-tag">참고</span></p>
+        <p class="student-growth-report-grade-basis">${escapeHtml(report.projectedGrade.basisSummary)}</p>
+      `
+      : `<p class="student-growth-report-grade-basis">${escapeHtml(report.projectedGrade.basisSummary)}</p>`;
+
+    return `
+      <article class="student-growth-report-sheet">
+        <header class="student-growth-report-sheet-head">
+          <p class="student-growth-report-sheet-eyebrow">바둑 학습 성장리포트</p>
+          <h3>${escapeHtml(report.studentName || "학생")}</h3>
+          <p class="student-growth-report-sheet-date">기준일 ${escapeHtml(generatedDate)}</p>
+        </header>
+
+        <section class="student-growth-report-section">
+          <h4>1. 과정 진행</h4>
+          <ul class="student-growth-report-metrics">
+            <li><span>현재 과정</span><strong>${escapeHtml(report.curriculumProgress.activeLevelGroup)} (${escapeHtml(report.curriculumProgress.activeLevelGroupStatusLabel)})</strong></li>
+            <li><span>완료율</span><strong>${report.curriculumProgress.completionPercent}% · ${report.curriculumProgress.solvedCount}/${report.curriculumProgress.totalCount}문제</strong></li>
+            <li><span>${escapeHtml(report.curriculumProgress.recentWindowLabel)}</span><strong>새로 완료 ${report.curriculumProgress.recentSolvedCount}문제</strong></li>
+          </ul>
+        </section>
+
+        <section class="student-growth-report-section">
+          <h4>2. 카테고리 분석</h4>
+          <div class="student-growth-report-subsection">
+            <p class="student-growth-report-subtitle">잘하는 유형</p>
+            <ul class="student-growth-report-list">${renderGrowthReportCategoryList(report.categoryAnalysis.strengths, "아직 판단할 기록이 부족합니다.")}</ul>
+          </div>
+          <div class="student-growth-report-subsection">
+            <p class="student-growth-report-subtitle">보완 유형</p>
+            <ul class="student-growth-report-list">${renderGrowthReportCategoryList(report.categoryAnalysis.weaknesses, "뚜렷한 보완 유형이 없습니다.")}</ul>
+          </div>
+          <div class="student-growth-report-subsection">
+            <p class="student-growth-report-subtitle">추천 학습</p>
+            <p class="student-growth-report-recommendation">${
+              report.categoryAnalysis.recommended
+                ? `<strong>${escapeHtml(report.categoryAnalysis.recommended.categoryName)}</strong> · ${escapeHtml(report.categoryAnalysis.recommended.reason)}`
+                : "현재 과정에서 이어서 학습할 카테고리를 확인해 주세요."
+            }</p>
+          </div>
+        </section>
+
+        <section class="student-growth-report-section">
+          <h4>3. 복습 습관</h4>
+          <ul class="student-growth-report-metrics">
+            <li><span>오답노트 문제</span><strong>${report.reviewHabits.wrongNoteCount}개</strong></li>
+            <li><span>복습 완료</span><strong>${report.reviewHabits.reviewResolvedCount}개</strong></li>
+            <li><span>반복 오답</span><strong>${report.reviewHabits.repeatWrongCount}개</strong></li>
+          </ul>
+          <p class="student-growth-report-parent-line">${escapeHtml(report.reviewHabits.parentSentence)}</p>
+        </section>
+
+        <section class="student-growth-report-section">
+          <h4>4. 예상 급수</h4>
+          ${projectedBlock}
+          <p class="student-growth-report-disclaimer">${escapeHtml(report.projectedGrade.disclaimer)}</p>
+        </section>
+      </article>
+    `;
+  }
+
+  async function openStudentGrowthReportModal(studentId) {
+    const student = findRenderedStudent(studentId);
+    if (!student) {
+      return;
+    }
+
+    await hydrateStudentProgressCache(studentId);
+
+    const report = buildStudentGrowthReport(studentId, getProblems(), {
+      studentName: getMemberDisplayName(student),
+    });
+
+    activeGrowthReportState.studentId = studentId;
+    activeGrowthReportState.report = report;
+
+    if (elements.studentGrowthReportTitle) {
+      elements.studentGrowthReportTitle.textContent = `${getMemberDisplayName(student)} · 성장리포트`;
+    }
+
+    if (elements.studentGrowthReportMeta) {
+      elements.studentGrowthReportMeta.textContent =
+        `현재 과정 ${report.curriculumProgress.activeLevelGroup} · ${report.curriculumProgress.recentWindowLabel} 기준 · 학부모 전달용`;
+    }
+
+    if (elements.studentGrowthReportCard) {
+      elements.studentGrowthReportCard.innerHTML = renderStudentGrowthReportCard(report);
+    }
+
+    elements.studentGrowthReportModal?.classList.remove("is-hidden");
+  }
+
+  function renderAcademyProfileHubSection({ title, value, note = "", status = "" }) {
+    const statusClassMap = {
+      unregistered: "is-empty",
+      pending: "is-pending",
+      empty: "is-empty",
+    };
+    const statusClass = status ? ` ${statusClassMap[status] ?? `is-${status}`}` : "";
+
+    return `
+      <section class="student-academy-profile-section">
+        <h3>${escapeHtml(title)}</h3>
+        <p class="student-academy-profile-section-value${statusClass}">${escapeHtml(value)}</p>
+        ${note ? `<p class="student-academy-profile-section-note">${escapeHtml(note)}</p>` : ""}
+      </section>
+    `;
+  }
+
+  function formatAcquiredDateLabel(acquiredAt) {
+    if (!acquiredAt) {
+      return "";
+    }
+
+    if (typeof formatDateTime === "function") {
+      return formatDateTime(`${acquiredAt}T00:00:00`);
+    }
+
+    const parsed = new Date(`${acquiredAt}T00:00:00`);
+    if (Number.isNaN(parsed.getTime())) {
+      return acquiredAt;
+    }
+
+    return parsed.toLocaleDateString("ko-KR");
+  }
+
+  function populateOfficialGradeFormSelects() {
+    if (elements.studentOfficialGradeCode && !elements.studentOfficialGradeCode.dataset.ready) {
+      elements.studentOfficialGradeCode.innerHTML = getGradeLevelSelectOptions({
+        includeUnassigned: false,
+      })
+        .map(
+          (option) =>
+            `<option value="${escapeHtml(option.value)}">${escapeHtml(option.label)}</option>`,
+        )
+        .join("");
+      elements.studentOfficialGradeCode.dataset.ready = "true";
+    }
+
+    if (elements.studentOfficialGradeSource && !elements.studentOfficialGradeSource.dataset.ready) {
+      elements.studentOfficialGradeSource.innerHTML = getOfficialGradeSourceSelectOptions()
+        .map(
+          (option) =>
+            `<option value="${escapeHtml(option.value)}">${escapeHtml(option.label)}</option>`,
+        )
+        .join("");
+      elements.studentOfficialGradeSource.dataset.ready = "true";
+    }
+  }
+
+  function renderOfficialGradeProfileSection(officialGrade) {
+    if (officialGrade?.status === "registered") {
+      return `
+        <section class="student-academy-profile-section student-academy-profile-section--official-grade">
+          <div class="student-academy-profile-section-head">
+            <h3>실제 급수</h3>
+            <button
+              class="ghost-button student-official-grade-action-button"
+              type="button"
+              data-official-grade-action="edit"
+            >
+              수정
+            </button>
+          </div>
+          <p class="student-academy-profile-section-value">${escapeHtml(officialGrade.gradeLabel)}</p>
+          <p class="student-academy-profile-section-note">
+            ${escapeHtml(officialGrade.gradeSourceLabel)} · 취득 ${escapeHtml(formatAcquiredDateLabel(officialGrade.acquiredAt))}
+          </p>
+        </section>
+      `;
+    }
+
+    return `
+      <section class="student-academy-profile-section student-academy-profile-section--official-grade">
+        <div class="student-academy-profile-section-head">
+          <h3>실제 급수</h3>
+          <button
+            class="secondary-button student-official-grade-action-button"
+            type="button"
+            data-official-grade-action="register"
+          >
+            등록
+          </button>
+        </div>
+        <p class="student-academy-profile-section-value is-empty">미등록</p>
+        <p class="student-academy-profile-section-note">공식 실제 급수를 등록해 주세요.</p>
+      </section>
+    `;
+  }
+
+  async function loadAcademyProfileView(studentId, studentName) {
+    const academyId = getAcademyId();
+    const officialGrade = academyId
+      ? await fetchStudentOfficialGrade(academyId, studentId)
+      : null;
+
+    return buildStudentAcademyProfileView({
+      studentName,
+      officialGrade,
+    });
+  }
+
+  async function refreshAcademyProfileSections(studentId) {
+    const student = findRenderedStudent(studentId);
+    if (!student || !elements.studentAcademyProfileSections) {
+      return;
+    }
+
+    const profile = await loadAcademyProfileView(studentId, getMemberDisplayName(student));
+    activeAcademyProfileState.profile = profile;
+    elements.studentAcademyProfileSections.innerHTML = renderAcademyProfileHub(profile);
+  }
+
+  function openOfficialGradeFormModal(studentId, { mode = "register", grade = null } = {}) {
+    const student = findRenderedStudent(studentId);
+    if (!student) {
+      return;
+    }
+
+    populateOfficialGradeFormSelects();
+
+    activeOfficialGradeFormState.studentId = studentId;
+    activeOfficialGradeFormState.mode = mode === "edit" ? "edit" : "register";
+
+    if (elements.studentOfficialGradeTitle) {
+      elements.studentOfficialGradeTitle.textContent =
+        activeOfficialGradeFormState.mode === "edit" ? "실제 급수 수정" : "실제 급수 등록";
+    }
+
+    if (elements.studentOfficialGradeMeta) {
+      elements.studentOfficialGradeMeta.textContent = `${getMemberDisplayName(student)} · 공식 급수`;
+    }
+
+    if (elements.studentOfficialGradeCode) {
+      elements.studentOfficialGradeCode.value =
+        grade?.status === "registered" ? grade.gradeCode : getGradeLevelSelectOptions({ includeUnassigned: false })[0]?.value ?? "";
+    }
+
+    if (elements.studentOfficialGradeAcquiredAt) {
+      elements.studentOfficialGradeAcquiredAt.value =
+        grade?.status === "registered" ? grade.acquiredAt : new Date().toISOString().slice(0, 10);
+    }
+
+    if (elements.studentOfficialGradeSource) {
+      elements.studentOfficialGradeSource.value =
+        grade?.status === "registered"
+          ? grade.gradeSource
+          : getOfficialGradeSourceSelectOptions()[0]?.value ?? "kba";
+    }
+
+    elements.studentOfficialGradeModal?.classList.remove("is-hidden");
+  }
+
+  function closeOfficialGradeFormModal() {
+    activeOfficialGradeFormState.studentId = null;
+    activeOfficialGradeFormState.mode = "register";
+    elements.studentOfficialGradeForm?.reset();
+    elements.studentOfficialGradeModal?.classList.add("is-hidden");
+  }
+
+  async function handleOfficialGradeFormSubmit(event) {
+    event.preventDefault();
+
+    const studentId = activeOfficialGradeFormState.studentId;
+    const academyId = getAcademyId();
+    if (!studentId || !academyId) {
+      window.alert("학생 또는 학원 정보를 확인할 수 없습니다.");
+      return;
+    }
+
+    const result = await upsertStudentOfficialGrade(academyId, studentId, {
+      gradeCode: elements.studentOfficialGradeCode?.value ?? "",
+      acquiredAt: elements.studentOfficialGradeAcquiredAt?.value ?? "",
+      gradeSource: elements.studentOfficialGradeSource?.value ?? "",
+    });
+
+    if (!result.ok) {
+      window.alert(result.message ?? "실제 급수를 저장하지 못했습니다.");
+      return;
+    }
+
+    closeOfficialGradeFormModal();
+    await refreshAcademyProfileSections(studentId);
+  }
+
+  function renderAcademyProfileHub(profile) {
+    return `
+      <nav class="student-academy-profile-hub" aria-label="학생 운영 정보">
+        <p class="student-academy-profile-hub-intro">학생 카드에 표시된 과정·예상급수·담당 선생 정보는 목록에서 확인할 수 있습니다. 아래는 운영 전용 정보입니다.</p>
+        ${renderOfficialGradeProfileSection(profile.officialGrade)}
+        ${renderAcademyProfileHubSection({
+          title: "승급심사",
+          value: profile.promotionReview.label,
+          note: profile.promotionReview.note,
+          status: profile.promotionReview.status,
+        })}
+        ${renderAcademyProfileHubSection({
+          title: "상담 기록",
+          value: profile.consultation.label,
+          note: profile.consultation.note,
+          status: profile.consultation.status,
+        })}
+        ${renderAcademyProfileHubSection({
+          title: "학부모 전달 이력",
+          value: profile.parentDeliveryHistory.label,
+          note: profile.parentDeliveryHistory.note,
+          status: profile.parentDeliveryHistory.status,
+        })}
+        ${renderAcademyProfileHubSection({
+          title: "출결",
+          value: profile.attendance.label,
+          note: profile.attendance.note,
+          status: profile.attendance.status,
+        })}
+        ${renderAcademyProfileHubSection({
+          title: "결제·수강료",
+          value: profile.paymentStatus.label,
+          note: profile.paymentStatus.note,
+          status: profile.paymentStatus.status,
+        })}
+      </nav>
+    `;
+  }
+
+  async function openStudentAcademyProfileModal(studentId) {
+    const student = findRenderedStudent(studentId);
+    if (!student) {
+      return;
+    }
+
+    const profile = await loadAcademyProfileView(studentId, getMemberDisplayName(student));
+
+    activeAcademyProfileState.studentId = studentId;
+    activeAcademyProfileState.profile = profile;
+
+    if (elements.studentAcademyProfileTitle) {
+      elements.studentAcademyProfileTitle.textContent = `${getMemberDisplayName(student)} · 학생 프로필`;
+    }
+
+    if (elements.studentAcademyProfileMeta) {
+      elements.studentAcademyProfileMeta.textContent = "학원 운영 정보 · 승급·상담·전달 이력";
+    }
+
+    if (elements.studentAcademyProfileSections) {
+      elements.studentAcademyProfileSections.innerHTML = renderAcademyProfileHub(profile);
+    }
+
+    elements.studentAcademyProfileModal?.classList.remove("is-hidden");
+  }
+
+  function closeStudentAcademyProfileModal() {
+    activeAcademyProfileState.studentId = null;
+    activeAcademyProfileState.profile = null;
+    elements.studentAcademyProfileModal?.classList.add("is-hidden");
+  }
+
+  function closeStudentGrowthReportModal() {
+    activeGrowthReportState.studentId = null;
+    activeGrowthReportState.report = null;
+    elements.studentGrowthReportModal?.classList.add("is-hidden");
+  }
+
+  async function handleCopyGrowthReport() {
+    const report = activeGrowthReportState.report;
+    if (!report) {
+      return;
+    }
+
+    const text = formatStudentGrowthReportPlainText(report);
+    try {
+      await navigator.clipboard.writeText(text);
+      window.alert("성장리포트 텍스트를 복사했습니다.");
+    } catch (error) {
+      console.warn("Failed to copy growth report.", error);
+      window.prompt("아래 텍스트를 복사해 주세요.", text);
+    }
   }
 
   function syncArchivedReviewToggle() {

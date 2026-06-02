@@ -204,12 +204,12 @@ export function createAcademyView({
       learning: {
         eyebrow: "Learning",
         title: "학습관리",
-        description: "학생 목록과 오답노트, 풀이 기록을 확인하는 메뉴입니다.",
+        description: "오답노트, 복습 필요 문제, 학습 상세 등 풀이·복습 진단 메뉴입니다.",
       },
       academy: {
         eyebrow: "Academy",
         title: "학원관리",
-        description: "원생 학습, 초대코드, 선생님·학생 계정을 탭별로 운영합니다.",
+        description: "학생 프로필·성장리포트 등 원생 운영·학부모 전달 메뉴입니다.",
       },
       attendance: {
         eyebrow: "Attendance",
