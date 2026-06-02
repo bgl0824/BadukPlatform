@@ -7,6 +7,7 @@ import {
   normalizeOfficialGradeSource,
 } from "./official-grade-source-service.js";
 import {
+  fetchStudentOfficialGradeForStudentFromSupabase,
   fetchStudentOfficialGradeFromSupabase,
   upsertStudentOfficialGradeToSupabase,
 } from "./student-official-grade-persistence-service.js";
@@ -36,6 +37,11 @@ function writeOfficialGradeCache(grade) {
 function readOfficialGradeFromCache(academyId, studentUserId) {
   const cache = readOfficialGradesCache();
   return cache[cacheKey(academyId, studentUserId)] ?? null;
+}
+
+function findOfficialGradeByStudentFromCache(studentUserId) {
+  const cache = readOfficialGradesCache();
+  return Object.values(cache).find((row) => row?.studentUserId === studentUserId) ?? null;
 }
 
 export function enrichOfficialGradeRecord(grade) {
@@ -92,12 +98,14 @@ export function validateOfficialGradeInput(input) {
 }
 
 export async function fetchStudentOfficialGrade(academyId, studentUserId) {
-  if (!academyId || !studentUserId) {
+  if (!studentUserId) {
     return null;
   }
 
   if (isSupabaseConfigured()) {
-    const remoteResult = await fetchStudentOfficialGradeFromSupabase(academyId, studentUserId);
+    const remoteResult = academyId
+      ? await fetchStudentOfficialGradeFromSupabase(academyId, studentUserId)
+      : await fetchStudentOfficialGradeForStudentFromSupabase(studentUserId);
     if (remoteResult.ok && remoteResult.grade) {
       const enriched = enrichOfficialGradeRecord(remoteResult.grade);
       writeOfficialGradeCache(enriched);
@@ -109,7 +117,10 @@ export async function fetchStudentOfficialGrade(academyId, studentUserId) {
     }
   }
 
-  return enrichOfficialGradeRecord(readOfficialGradeFromCache(academyId, studentUserId));
+  const cached = academyId
+    ? readOfficialGradeFromCache(academyId, studentUserId)
+    : findOfficialGradeByStudentFromCache(studentUserId);
+  return enrichOfficialGradeRecord(cached);
 }
 
 export async function upsertStudentOfficialGrade(academyId, studentUserId, input) {

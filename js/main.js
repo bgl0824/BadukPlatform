@@ -76,6 +76,8 @@ import {
   getGradeLevelSelectOptions,
   matchesGradeLevelFilter,
   formatGradeLevelLabel,
+  GRADE_LEVELS,
+  normalizeGradeLevelCode,
 } from "./services/grade-level-service.js";
 import {
   PROBLEM_LIST_SORT,
@@ -121,6 +123,10 @@ import {
   getPersistentReviewOffersForLevel,
 } from "./services/review-service.js";
 import { problemService } from "./services/problem-service.js";
+import { resolveAcademyScopeId } from "./services/academy-service.js";
+import { getStudentCurriculumOverview } from "./services/student-curriculum-progress-service.js";
+import { getStudentProjectedGradeSummary } from "./services/student-growth-report-service.js";
+import { fetchStudentOfficialGrade } from "./services/student-official-grade-service.js";
 import {
   invalidateStudentProgressHydrateCache,
   PROGRESS_STATUS,
@@ -299,6 +305,7 @@ let problemBankReady = false;
 const setMode = (mode) => {
   solveView.setMode(mode);
   syncBoardPreviewContext();
+  void renderStudentGradeSummaryCard();
 };
 
 const {
@@ -1032,6 +1039,7 @@ function applyInitialListScreen() {
     "카테고리별로 문제를 살펴보고 학습할 문제를 선택하세요.";
   elements.description.classList.remove("is-hidden");
   elements.learningObjective.textContent = "학습할 문제를 선택하세요";
+  void renderStudentGradeSummaryCard();
 }
 
 function ensureProblemLibraryElements() {
@@ -1102,6 +1110,7 @@ function refreshProblemBank() {
   elements.description.classList.remove("is-hidden");
   elements.learningObjective.textContent = "학습할 문제를 선택하세요";
   renderProblemLibraryScreen();
+  void renderStudentGradeSummaryCard();
 }
 
 function resolveActiveLevelGroupForStudy(progressList) {
@@ -1194,6 +1203,104 @@ function refreshScreensAfterProgressSync() {
   if (appState.mode === "list" && problemBankReady) {
     renderProblemLibraryScreen();
   }
+
+  void renderStudentGradeSummaryCard();
+}
+
+let studentGradeSummaryRenderSeq = 0;
+
+function hideStudentGradeSummaryCard() {
+  if (!elements.studentGradeSummaryCard) {
+    return;
+  }
+
+  elements.studentGradeSummaryCard.classList.add("is-hidden");
+  elements.studentGradeSummaryCard.innerHTML = "";
+}
+
+function resolveNextGoalGradeCode(baseGradeCode) {
+  const normalized = normalizeGradeLevelCode(baseGradeCode);
+  if (!normalized) {
+    return null;
+  }
+
+  const currentIndex = GRADE_LEVELS.findIndex((entry) => entry.code === normalized);
+  if (currentIndex < 0 || currentIndex >= GRADE_LEVELS.length - 1) {
+    return null;
+  }
+
+  return GRADE_LEVELS[currentIndex + 1]?.code ?? null;
+}
+
+function renderStudentGradeSummaryHtml({
+  curriculumLabel,
+  projectedGradeLabel,
+  officialGradeLabel,
+  officialGradeMeta,
+  nextGoalGradeLabel,
+}) {
+  return `
+    <h2>급수 현황</h2>
+    <dl class="student-grade-summary-grid">
+      <div>
+        <dt>현재 과정</dt>
+        <dd>${escapeHtml(curriculumLabel)}</dd>
+      </div>
+      <div>
+        <dt>실제급수 (공식)</dt>
+        <dd class="student-grade-summary-official">${escapeHtml(officialGradeLabel)}</dd>
+        <p class="student-grade-summary-note">${escapeHtml(officialGradeMeta)}</p>
+      </div>
+      <div>
+        <dt>예상급수 (참고)</dt>
+        <dd>${escapeHtml(projectedGradeLabel)}</dd>
+      </div>
+      <div>
+        <dt>다음 목표 급수</dt>
+        <dd>${escapeHtml(nextGoalGradeLabel)}</dd>
+      </div>
+    </dl>
+  `;
+}
+
+async function renderStudentGradeSummaryCard() {
+  if (!elements.studentGradeSummaryCard) {
+    return;
+  }
+
+  const currentUser = getCurrentUser();
+  const role = normalizeRole(currentUser?.role);
+  if (!currentUser?.id || role !== ROLES.student || !["list", "study"].includes(appState.mode)) {
+    hideStudentGradeSummaryCard();
+    return;
+  }
+
+  const renderSeq = ++studentGradeSummaryRenderSeq;
+  const curriculum = getStudentCurriculumOverview(currentUser.id, problems);
+  const projected = getStudentProjectedGradeSummary(currentUser.id, problems);
+  const academyId = resolveAcademyScopeId(currentUser);
+  const official = await fetchStudentOfficialGrade(academyId, currentUser.id);
+
+  if (renderSeq !== studentGradeSummaryRenderSeq) {
+    return;
+  }
+
+  const officialGradeCode = official?.gradeCode ?? null;
+  const baseForNextGoal = officialGradeCode ?? projected.projectedGradeCode ?? null;
+  const nextGoalCode = resolveNextGoalGradeCode(baseForNextGoal);
+  const officialGradeLabel = official?.gradeLabel ?? "미등록";
+  const officialGradeMeta = official
+    ? `${official.gradeSourceLabel} · 취득 ${official.acquiredAt}`
+    : "공식 급수가 아직 등록되지 않았습니다.";
+
+  elements.studentGradeSummaryCard.innerHTML = renderStudentGradeSummaryHtml({
+    curriculumLabel: `${curriculum.activeLevelGroup} (${curriculum.activeLevelGroupStatusLabel})`,
+    projectedGradeLabel: projected.projectedGradeLabel ?? "산정 중",
+    officialGradeLabel,
+    officialGradeMeta,
+    nextGoalGradeLabel: nextGoalCode ? formatGradeLevelLabel(nextGoalCode) : "설정 필요",
+  });
+  elements.studentGradeSummaryCard.classList.remove("is-hidden");
 }
 
 function renderStudyScreen() {
@@ -1244,6 +1351,7 @@ function showStudyMode() {
     : [];
   studyView.renderStudyHubMeta(resolveActiveLevelGroupForStudy(progressList));
   renderStudyScreen();
+  void renderStudentGradeSummaryCard();
 }
 
 function clearReviewSession({ completeCategoryOffer = false } = {}) {

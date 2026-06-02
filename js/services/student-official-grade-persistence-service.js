@@ -74,6 +74,30 @@ export async function fetchStudentOfficialGradeFromSupabase(academyId, studentUs
   return { ok: true, source: DEBUG_SOURCES.supabase, grade };
 }
 
+export async function fetchStudentOfficialGradeForStudentFromSupabase(studentUserId) {
+  if (!isSupabaseConfigured() || !studentUserId) {
+    return { ok: false, source: DEBUG_SOURCES.localCache, grade: null, skipped: true };
+  }
+
+  const client = getSupabaseClient();
+  const { data, error } = await client
+    .from(SUPABASE_STUDENT_OFFICIAL_GRADES_TABLE)
+    .select("*")
+    .eq("student_user_id", studentUserId)
+    .maybeSingle();
+
+  if (error) {
+    debugWarn(OFFICIAL_GRADE, "official grade student fetch failed", {
+      source: DEBUG_SOURCES.supabase,
+      studentUserId,
+      message: error.message,
+    });
+    return { ok: false, grade: null, message: error.message };
+  }
+
+  return { ok: true, source: DEBUG_SOURCES.supabase, grade: rowToOfficialGrade(data) };
+}
+
 export async function upsertStudentOfficialGradeToSupabase(grade) {
   if (!isSupabaseConfigured() || !grade?.academyId || !grade?.studentUserId) {
     return { ok: false, source: DEBUG_SOURCES.localCache, skipped: true };

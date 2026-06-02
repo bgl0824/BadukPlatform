@@ -38,6 +38,7 @@ alter table public.student_official_grades enable row level security;
 drop policy if exists "student_official_grades_owner_all" on public.student_official_grades;
 drop policy if exists "student_official_grades_teacher_all" on public.student_official_grades;
 drop policy if exists "student_official_grades_admin_all" on public.student_official_grades;
+drop policy if exists "student_official_grades_student_select" on public.student_official_grades;
 
 create policy "student_official_grades_owner_all"
   on public.student_official_grades
@@ -71,5 +72,14 @@ create policy "student_official_grades_admin_all"
   to authenticated
   using (public.auth_jwt_role() = 'admin')
   with check (public.auth_jwt_role() = 'admin');
+
+create policy "student_official_grades_student_select"
+  on public.student_official_grades
+  for select
+  to authenticated
+  using (
+    public.auth_jwt_role() = 'student'
+    and student_user_id = auth.uid()::text
+  );
 
 notify pgrst, 'reload schema';

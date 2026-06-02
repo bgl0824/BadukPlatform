@@ -77,6 +77,7 @@ export const problemElements = {
   wrongModal: document.querySelector("#wrong-modal"),
   wrongModalMessage: document.querySelector("#wrong-modal-message"),
   creatorPanel: document.querySelector("#creator-panel"),
+  studentGradeSummaryCard: document.querySelector("#student-grade-summary-card"),
   createTitle: document.querySelector("#create-title"),
   createDescription: document.querySelector("#create-description"),
   createLevel: document.querySelector("#create-level"),
