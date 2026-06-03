@@ -71,6 +71,8 @@ import { createAiResponseQaBatchController } from "./admin/ai-response-qa-batch-
 import { createExamSetManager } from "./admin/exam-set-manager.js";
 import { createExamCatalogController } from "./controllers/exam-catalog-controller.js";
 import { examSetService } from "./services/exam-set-service.js";
+import { EXAM_SET_ROLE, EXAM_SET_TYPE } from "./services/exam-set-constants.js";
+import { mockTestAttemptService } from "./services/mock-test-attempt-service.js";
 import {
   getGradeLevelFilterOptions,
   getGradeLevelSelectOptions,
@@ -143,7 +145,10 @@ import { createProblemCreatorView } from "./views/create-view.js";
 import { createSolveView } from "./views/solve-view.js";
 import { createBoardFeedbackOverlay } from "./ui/board-feedback-overlay.js";
 import { createCategoryCompleteModalController } from "./ui/category-complete-modal-controller.js";
+import { createMockTestUi } from "./ui/mock-test-ui.js";
 import { createStudyView } from "./views/study-view.js";
+import { renderMockTestResultsTableHtml } from "./views/mock-test-results-view.js";
+import { computeMockTestTiming } from "./utils/mock-test-time.js";
 
 const { BoardController } = window.BadukBoard;
 const { BOARD_SIZE, ProblemStore, problems, STONE } = window.BadukProblems;
@@ -173,6 +178,26 @@ const boardFeedbackOverlay = createBoardFeedbackOverlay({
   subtitleEl: elements.boardFeedbackSubtitle,
   characterSlot: elements.boardCharacterLayer,
   speechSlot: elements.boardSpeechLayer,
+});
+
+const mockTestUi = createMockTestUi({
+  startModal: elements.mockTestStartModal,
+  startTitle: elements.mockTestStartTitle,
+  startBody: elements.mockTestStartBody,
+  startCancelButton: elements.mockTestStartCancelButton,
+  startConfirmButton: elements.mockTestStartConfirmButton,
+  resultModal: elements.mockTestResultModal,
+  resultTitle: elements.mockTestResultTitle,
+  resultSubtitle: elements.mockTestResultSubtitle,
+  resultScore: elements.mockTestResultScore,
+  resultWrong: elements.mockTestResultWrong,
+  resultDuration: elements.mockTestResultDuration,
+  resultOvertime: elements.mockTestResultOvertime,
+  resultViewButton: elements.mockTestResultViewButton,
+  resultCloseButton: elements.mockTestResultCloseButton,
+  timerRoot: elements.mockTestTimer,
+  timerLabel: elements.mockTestTimerLabel,
+  timerValue: elements.mockTestTimerValue,
 });
 
 const boardController = new BoardController(elements.board, {
@@ -709,8 +734,23 @@ const examCatalog = createExamCatalogController({
   getCurrentUser,
   escapeHtml,
   onStartExamSet: (examSet) => {
+    if (examSet?.type === EXAM_SET_TYPE.mockTest) {
+      mockTestUi.showStartConfirm({
+        examTitle: examSet.title,
+        questionCount: examSet.questionCount ?? 0,
+        onConfirm: () => {
+          void startExamSetSession(examSet);
+        },
+      });
+      return;
+    }
     void startExamSetSession(examSet);
   },
+  onPreviewExamSet: (examSet) => {
+    void openExamSetQuestionPreview(examSet);
+  },
+  onShowMockResults: (examSet) => showMockTestResults(examSet),
+  onHideMockResults: () => hideMockTestResults(),
 });
 
 const studyView = createStudyView({
@@ -1010,6 +1050,42 @@ function bindStudyScreenEvents() {
       showListMode();
     }
   });
+
+  elements.promotionPaperPrintButton?.addEventListener("click", () => {
+    document.body.classList.add("promotion-paper-print");
+    ensurePromotionPaperPageStyle();
+    window.print();
+  });
+  elements.promotionPaperCloseButton?.addEventListener("click", () => {
+    document.body.classList.remove("promotion-paper-print");
+    clearPromotionPaperPageStyle();
+    showListMode();
+  });
+  window.addEventListener("beforeprint", () => {
+    const paperVisible = !elements.promotionPaperScreen?.classList.contains("is-hidden");
+    if (paperVisible) {
+      document.body.classList.add("promotion-paper-print");
+      ensurePromotionPaperPageStyle();
+    }
+  });
+  window.addEventListener("afterprint", () => {
+    document.body.classList.remove("promotion-paper-print");
+    clearPromotionPaperPageStyle();
+  });
+}
+
+function ensurePromotionPaperPageStyle() {
+  if (document.querySelector("#promotion-paper-page-style")) {
+    return;
+  }
+  const style = document.createElement("style");
+  style.id = "promotion-paper-page-style";
+  style.textContent = "@media print { @page { size: A4 portrait; margin: 8mm; } }";
+  document.head.append(style);
+}
+
+function clearPromotionPaperPageStyle() {
+  document.querySelector("#promotion-paper-page-style")?.remove();
 }
 
 function logScreen(event, detail) {
@@ -1458,12 +1534,149 @@ function loadProblemById(problemId, { examSessionIndex } = {}) {
   loadProblem(index);
 }
 
+function renderPromotionPaperScreen(examSet, detail) {
+  const questions = detail.questions ?? [];
+  const questionCards = questions
+    .map((entry, idx) => {
+      const problem = problems.find((row) => row.id === entry.problemId);
+      if (!problem) {
+        return "";
+      }
+      const prompt = getPromotionPaperPrompt(problem);
+      return `
+        <article class="promotion-paper-question">
+          <header>
+            <h3>${idx + 1}번</h3>
+          </header>
+          <p class="promotion-paper-problem-prompt">${escapeHtml(prompt)}</p>
+          <div class="promotion-paper-board" data-promotion-paper-problem-id="${escapeHtml(problem.id)}"></div>
+        </article>
+      `;
+    })
+    .join("");
+
+  if (elements.promotionPaperMeta) {
+    elements.promotionPaperMeta.textContent = "Promotion Paper";
+  }
+  if (elements.promotionPaperTitle) {
+    elements.promotionPaperTitle.textContent = examSet.title ?? "승급심사 시험지";
+  }
+  if (elements.promotionPaperDescription) {
+    const gradeLabel = examSet.gradeLevel ? formatGradeLevelLabel(examSet.gradeLevel) : "급수 미지정";
+    const examDate = examSet.examDate ? `시험일 ${examSet.examDate}` : "시험일 미지정";
+    elements.promotionPaperDescription.textContent = `${gradeLabel} · ${examDate} · 총 ${questions.length}문제`;
+  }
+  if (elements.promotionPaperForm) {
+    const examDate = formatPromotionPaperDate(examSet.examDate);
+    const gradeLabel = examSet.gradeLevel ? formatGradeLevelLabel(examSet.gradeLevel) : "미지정";
+    elements.promotionPaperForm.innerHTML = `
+      <section class="promotion-paper-form-sheet" aria-label="시험지 양식">
+        <h3 class="promotion-paper-form-title">${escapeHtml(examSet.title || "승단급심사 시험지")}</h3>
+        <table class="promotion-paper-info-table" aria-label="시험 정보">
+          <tbody>
+            <tr>
+              <th>급수</th>
+              <td>${escapeHtml(gradeLabel)}</td>
+              <th>시험명</th>
+              <td>${escapeHtml(examSet.title || "승단급심사")}</td>
+            </tr>
+            <tr>
+              <th>이름</th>
+              <td>____________</td>
+              <th>학원</th>
+              <td>____________</td>
+            </tr>
+            <tr>
+              <th>학교</th>
+              <td>____________</td>
+              <th>학년</th>
+              <td>____________</td>
+            </tr>
+            <tr>
+              <th>응시일</th>
+              <td colspan="3">${escapeHtml(examDate)}</td>
+            </tr>
+          </tbody>
+        </table>
+        <p class="promotion-paper-form-note">※ 모든 문제는 흑의 둘 차례입니다.</p>
+      </section>
+    `;
+  }
+  if (elements.promotionPaperQuestions) {
+    elements.promotionPaperQuestions.innerHTML =
+      questionCards || '<p class="promotion-paper-empty">표시할 문제가 없습니다.</p>';
+    elements.promotionPaperQuestions.querySelectorAll("[data-promotion-paper-problem-id]").forEach((node) => {
+      const problemId = node.dataset.promotionPaperProblemId;
+      const problem = problems.find((row) => row.id === problemId);
+      if (problem) {
+        renderProblemPreviewBoard(node, problem);
+      }
+    });
+  }
+
+  setMode("paper");
+  elements.meta.textContent = "Promotion Paper";
+  elements.title.textContent = "승급심사 시험지";
+  elements.description.textContent = "온라인 풀이가 아닌 인쇄/열람 전용 화면입니다.";
+  elements.description.classList.remove("is-hidden");
+}
+
+function getPromotionPaperPrompt(problem) {
+  const candidates = [
+    problem?.prompt,
+    problem?.problemPrompt,
+    problem?.problem_prompt,
+    problem?.description,
+    problem?.title,
+  ];
+  const value = candidates.find((entry) => String(entry ?? "").trim().length > 0);
+  return value ? String(value).trim() : "문제 설명이 없습니다.";
+}
+
+function formatPromotionPaperDate(value) {
+  if (!value) {
+    return "____________";
+  }
+  const date = new Date(value);
+  if (Number.isNaN(date.getTime())) {
+    return String(value);
+  }
+  const year = date.getFullYear();
+  const month = String(date.getMonth() + 1).padStart(2, "0");
+  const day = String(date.getDate()).padStart(2, "0");
+  return `${year}.${month}.${day}`;
+}
+
+async function openExamSetQuestionPreview(examSet) {
+  try {
+    const detail = await examSetService.getExamSetDetail({
+      user: getCurrentUser(),
+      examSetId: examSet.id,
+    });
+    const questions = detail.questions ?? [];
+    if (questions.length === 0) {
+      setFeedback("이 시험 세트에 포함된 문제가 없습니다.", "wrong");
+      return;
+    }
+    clearExamSession();
+    renderPromotionPaperScreen(detail.set ?? examSet, detail);
+  } catch (error) {
+    console.error("[ExamSet] question preview failed", error);
+    setFeedback("시험 문제를 열람하지 못했습니다.", "wrong");
+  }
+}
+
 async function startExamSetSession(examSet) {
   try {
     const detail = await examSetService.getExamSetDetail({
       user: getCurrentUser(),
       examSetId: examSet.id,
     });
+    if ((detail.set?.setRole ?? examSet.setRole) === EXAM_SET_ROLE.promotionPaper) {
+      clearExamSession();
+      renderPromotionPaperScreen(detail.set ?? examSet, detail);
+      return;
+    }
     const problemIds = (detail.questions ?? []).map((entry) => entry.problemId);
 
     if (problemIds.length === 0) {
@@ -1471,12 +1684,23 @@ async function startExamSetSession(examSet) {
       return;
     }
 
+    const isMock = (detail.set?.type ?? examSet.type) === EXAM_SET_TYPE.mockTest;
     appState.examSession = {
       examSetId: examSet.id,
       title: examSet.title,
       problemIds,
       currentIndex: 0,
+      sessionMode: isMock ? "mock" : "learning",
+      setRole: detail.set?.setRole ?? examSet.setRole ?? EXAM_SET_ROLE.questionBank,
+      type: detail.set?.type ?? examSet.type,
+      correctCount: 0,
+      wrongProblemNumbers: [],
+      mockStartedAt: isMock ? Date.now() : null,
     };
+
+    if (isMock) {
+      mockTestUi.startTimer({ startedAt: appState.examSession.mockStartedAt });
+    }
 
     loadProblemById(problemIds[0], { examSessionIndex: 0 });
   } catch (error) {
@@ -1486,8 +1710,123 @@ async function startExamSetSession(examSet) {
 }
 
 function clearExamSession() {
+  mockTestUi.stopTimer();
   appState.examSession = null;
   examView.clearExamSessionBanner();
+  elements.promotionPaperScreen?.classList.add("is-hidden");
+  elements.mockTestResultsPanel?.classList.add("is-hidden");
+  examCatalog.clearOpenMockResults?.();
+  document.body.classList.remove("promotion-paper-print");
+  clearPromotionPaperPageStyle();
+}
+
+function showMockExamFeedback(tone) {
+  if (tone === "correct") {
+    boardFeedbackOverlay.show({
+      tone: "correct",
+      title: "정답입니다.",
+      subtitle: "잠시 후 다음 문제로 넘어갑니다.",
+      duration: 1000,
+    });
+    return;
+  }
+
+  boardFeedbackOverlay.show({
+    tone: "wrong",
+    title: "오답입니다.",
+    subtitle: "잠시 후 다음 문제로 넘어갑니다.",
+    duration: 800,
+  });
+}
+
+async function finishMockTestSession(session) {
+  const startedAt =
+    session.mockStartedAt ?? mockTestUi.getTimerStartedAt() ?? Date.now();
+  const { durationSeconds, overtimeSeconds } = computeMockTestTiming(Date.now() - startedAt);
+  const total = session.problemIds.length;
+  const correctCount = Number(session.correctCount ?? 0);
+  const accuracy = total > 0 ? Math.round((correctCount / total) * 100) : 0;
+  const wrongProblemNumbers = Array.isArray(session.wrongProblemNumbers)
+    ? session.wrongProblemNumbers
+    : [];
+  const examSetRef = { id: session.examSetId, title: session.title };
+
+  const saveResult = await mockTestAttemptService.recordMockTestAttempt({
+    user: getCurrentUser(),
+    examSetId: session.examSetId,
+    examSetTitle: session.title,
+    totalQuestionCount: total,
+    correctCount,
+    wrongProblemNumbers,
+    durationSeconds,
+    overtimeSeconds,
+  });
+  if (!saveResult.ok) {
+    console.warn("[MockTestAttempt] save failed after mock test", saveResult.message);
+  }
+
+  mockTestUi.stopTimer();
+  clearExamSession();
+  await examCatalog.refreshExamCatalog();
+  showListMode();
+
+  mockTestUi.showResultModal({
+    examTitle: session.title,
+    correctCount,
+    totalQuestionCount: total,
+    accuracyRate: accuracy,
+    wrongProblemNumbers,
+    durationSeconds,
+    overtimeSeconds,
+    onViewResults: () => {
+      examCatalog.syncOpenMockResults?.(examSetRef.id);
+      void showMockTestResults(examSetRef);
+    },
+    onClose: () => {
+      setFeedback(`"${session.title}" 모의시험을 마쳤습니다.`, "correct");
+    },
+  });
+}
+
+function hideMockTestResults() {
+  if (!elements.mockTestResultsPanel) {
+    return;
+  }
+  elements.mockTestResultsPanel.classList.add("is-hidden");
+  if (elements.mockTestResultsList) {
+    elements.mockTestResultsList.innerHTML = "";
+  }
+}
+
+async function showMockTestResults(examSet) {
+  if (!elements.mockTestResultsPanel || !elements.mockTestResultsList) {
+    return;
+  }
+  elements.mockTestResultsPanel.classList.remove("is-hidden");
+  elements.mockTestResultsPanel.dataset.examSetId = examSet.id;
+  elements.mockTestResultsPanel.scrollIntoView?.({ behavior: "smooth", block: "nearest" });
+  elements.mockTestResultsTitle.textContent = `${examSet.title} 결과`;
+  elements.mockTestResultsList.innerHTML = '<p class="mock-test-results-empty">결과를 불러오는 중...</p>';
+
+  const result = await mockTestAttemptService.listMockTestAttemptsForViewer({
+    user: getCurrentUser(),
+    examSetId: examSet.id,
+    limit: 200,
+  });
+
+  if (!result.ok) {
+    elements.mockTestResultsList.innerHTML = `<p class="mock-test-results-empty">결과를 불러오지 못했습니다: ${escapeHtml(result.message ?? "unknown")}</p>`;
+    return;
+  }
+
+  const attempts = result.attempts ?? [];
+  if (attempts.length === 0) {
+    elements.mockTestResultsList.innerHTML =
+      '<p class="mock-test-results-empty">저장된 모의시험 결과가 없습니다.</p>';
+    return;
+  }
+
+  elements.mockTestResultsList.innerHTML = renderMockTestResultsTableHtml(attempts, escapeHtml);
 }
 
 function resolveProblemEntry(index) {
@@ -1670,7 +2009,7 @@ function loadProblem(index, { source = "direct" } = {}) {
   appState.isAiThinking = false;
   appState.playedMoves = [];
   const boardStones = captureInitialBoardState(problem);
-  solveView.renderProblem(problem, resolvedIndex, { boardStones });
+  solveView.renderProblem(problem, resolvedIndex, { boardStones, examSession: appState.examSession });
   ensureAiResponseSolveSession(problem, { source, forceReinit: true });
   if (!shouldUseAiResponseSolve(problem) && isAiResponseProblem(problem)) {
     logAiResponseSolveContext(problem, "loadProblem — ai_response but solve engine OFF");
@@ -1778,6 +2117,10 @@ function handleOxAnswer(userOxAnswer) {
     return;
   }
 
+  if (handleMockExamWrong(problem)) {
+    return;
+  }
+
   resetCurrentProblemAfterWrongMove(problem);
 }
 
@@ -1828,7 +2171,9 @@ function handleUserMove(point) {
     return;
   }
 
-  recordWrongMove(problem, userMove);
+  if (appState.examSession?.sessionMode !== "mock") {
+    recordWrongMove(problem, userMove);
+  }
 
   if (shouldUseAiResponseUx(problem)) {
     const enterResult = aiResponseUx.enterAfterWrongMove(problem, userMove);
@@ -1838,6 +2183,10 @@ function handleUserMove(point) {
     if (enterResult === "no_candidates") {
       setFeedback(AI_RESPONSE_UX_MESSAGES.noCandidates, "wrong");
     }
+  }
+
+  if (handleMockExamWrong(problem)) {
+    return;
   }
 
   resetCurrentProblemAfterWrongMove(problem);
@@ -3092,11 +3441,16 @@ function completeProblem(problem) {
 
   if (appState.examSession) {
     const session = appState.examSession;
+    session.correctCount = Number(session.correctCount ?? 0) + 1;
     const nextIndex = session.currentIndex + 1;
     const hasNext = nextIndex < session.problemIds.length;
-    boardFeedbackOverlay.showCorrectPreset(hasNext ? "correctNext" : "correctLast", {
-      duration: 1000,
-    });
+    if (session.sessionMode === "mock") {
+      showMockExamFeedback("correct");
+    } else {
+      boardFeedbackOverlay.showCorrectPreset(hasNext ? "correctNext" : "correctLast", {
+        duration: 1000,
+      });
+    }
 
     if (hasNext) {
       appState.autoNextTimeout = window.setTimeout(() => {
@@ -3104,9 +3458,13 @@ function completeProblem(problem) {
         loadProblemById(session.problemIds[nextIndex], { examSessionIndex: nextIndex });
       }, 1000);
     } else {
-      appState.autoNextTimeout = window.setTimeout(() => {
+      appState.autoNextTimeout = window.setTimeout(async () => {
         hideBoardFeedback();
         const title = session.title;
+        if (session.sessionMode === "mock") {
+          await finishMockTestSession(session);
+          return;
+        }
         clearExamSession();
         showListMode();
         setFeedback(`"${title}" 세트를 완료했습니다.`, "correct");
@@ -3258,6 +3616,38 @@ function resetCurrentProblemAfterWrongMove(problem) {
     duration: 1000,
     onHidden: () => restoreProblemInitialStateAfterWrong(problem),
   });
+}
+
+function handleMockExamWrong(problem) {
+  const session = appState.examSession;
+  if (!session || session.sessionMode !== "mock") {
+    return false;
+  }
+
+  appState.isAiThinking = true;
+  syncBoardPreviewContext();
+  solveView.renderProblemSolveMode(problem);
+  setStatus("오답입니다.");
+  setFeedback("오답입니다. 잠시 후 다음 문제로 넘어갑니다.");
+  clearWrongTimers();
+
+  const nextIndex = session.currentIndex + 1;
+  session.wrongProblemNumbers = [
+    ...(Array.isArray(session.wrongProblemNumbers) ? session.wrongProblemNumbers : []),
+    Number(session.currentIndex) + 1,
+  ];
+  const hasNext = nextIndex < session.problemIds.length;
+  showMockExamFeedback("wrong");
+  appState.autoNextTimeout = window.setTimeout(async () => {
+    hideBoardFeedback();
+    appState.isAiThinking = false;
+    if (hasNext) {
+      loadProblemById(session.problemIds[nextIndex], { examSessionIndex: nextIndex });
+      return;
+    }
+    await finishMockTestSession(session);
+  }, 850);
+  return true;
 }
 
 /** AI 응수형: 오답 흑수 + 백 응수 표시 후 일반 오답 팝업 → 초기화 */

@@ -19,6 +19,17 @@ export function createProblemPrintController({
     renderPrintProblems(selectedProblems, elements.printMonochrome.checked);
     setFeedback(`선택한 ${selectedProblems.length}개 문제를 인쇄합니다.`, "correct");
 
+    // 문제은행 인쇄와 승급심사 인쇄를 완전히 분리한다.
+    document.body.classList.remove("promotion-paper-print");
+    document.querySelector("#promotion-paper-page-style")?.remove();
+    document.body.classList.add("print-builder-print");
+
+    const handleAfterPrint = () => {
+      document.body.classList.remove("print-builder-print");
+      window.removeEventListener("afterprint", handleAfterPrint);
+    };
+    window.addEventListener("afterprint", handleAfterPrint);
+
     window.requestAnimationFrame(() => {
       window.requestAnimationFrame(() => {
         window.print();

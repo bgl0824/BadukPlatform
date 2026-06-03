@@ -5,8 +5,12 @@ import {
 } from "../permissions/permission-service.js";
 import {
   createExamSetId,
+  EXAM_SET_ROLE,
   EXAM_SET_STATUS,
+  normalizeExamSetType,
+  normalizeExamSetRole,
   normalizeExamSetStatus,
+  resolveExamSetRoleByType,
 } from "./exam-set-constants.js";
 import { normalizeGradeLevelCode } from "./grade-level-service.js";
 import {
@@ -100,6 +104,29 @@ export async function saveExamSet({
     throw new Error("세트 제목을 입력해 주세요.");
   }
 
+  const type = normalizeExamSetType(examSet?.type);
+  const setRole = resolveExamSetRoleByType(type);
+  const availableFromInput = examSet?.availableFrom ?? null;
+  const availableUntilInput = examSet?.availableUntil ?? null;
+  const sourceExamSetId = String(examSet?.sourceExamSetId ?? "").trim();
+  const availableFrom = normalizeLocalDateTimeToUtcIso(availableFromInput, "공개 시작");
+  const availableUntil = normalizeLocalDateTimeToUtcIso(availableUntilInput, "공개 종료");
+
+  if (setRole === EXAM_SET_ROLE.promotionPaper) {
+    if (!sourceExamSetId) {
+      throw new Error("승급심사 시험지는 기반 기출세트를 선택해 주세요.");
+    }
+    if (!availableFrom || !availableUntil) {
+      throw new Error("승급심사 시험지는 공개 시작/종료 일시가 필요합니다.");
+    }
+    if (new Date(availableFrom).getTime() > new Date(availableUntil).getTime()) {
+      throw new Error("공개 시작일은 공개 종료일보다 늦을 수 없습니다.");
+    }
+    if (!Array.isArray(orderedProblemIds) || orderedProblemIds.length !== 20) {
+      throw new Error("승급심사 시험지는 정확히 20문제로 구성해야 합니다.");
+    }
+  }
+
   if (normalizeExamSetStatus(examSet?.status) === EXAM_SET_STATUS.published) {
     if (!Array.isArray(orderedProblemIds) || orderedProblemIds.length === 0) {
       throw new Error("문제를 추가한 뒤 게시할 수 있습니다.");
@@ -113,6 +140,11 @@ export async function saveExamSet({
   const payload = {
     ...examSet,
     id: examSet.id || createExamSetId(),
+    type,
+    setRole,
+    sourceExamSetId,
+    availableFrom,
+    availableUntil,
     createdBy: examSet.createdBy || user?.id || "",
   };
 
@@ -141,6 +173,30 @@ export async function saveExamSet({
     set: saveResult.set,
     questionCount: questionsResult.count ?? orderedProblemIds.length,
   };
+}
+
+/**
+ * datetime-local 입력값(로컬시간)을 UTC ISO 문자열로 정규화한다.
+ * - 입력 예: 2026-06-02T19:52
+ * - 저장 예: 2026-06-02T10:52:00.000Z
+ * 이미 ISO(Z/offset)인 값은 그대로 ISO로 정규화한다.
+ */
+function normalizeLocalDateTimeToUtcIso(value, fieldLabel) {
+  if (!value) {
+    return null;
+  }
+
+  const raw = String(value).trim();
+  if (!raw) {
+    return null;
+  }
+
+  const parsed = new Date(raw);
+  if (Number.isNaN(parsed.getTime())) {
+    throw new Error(`${fieldLabel} 일시 형식이 올바르지 않습니다.`);
+  }
+
+  return parsed.toISOString();
 }
 
 export async function deleteExamSet({ user, examSetId }) {

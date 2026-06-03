@@ -21,7 +21,7 @@ export const appState = {
   reviewSession: null,
   pendingCategoryCompletion: null,
   studyExpandedLevelGroups: null,
-  /** @type {{ examSetId: string, title: string, problemIds: string[], currentIndex: number } | null} */
+  /** @type {{ examSetId: string, title: string, problemIds: string[], currentIndex: number, sessionMode?: "learning" | "mock", setRole?: string, type?: string, correctCount?: number, wrongProblemNumbers?: number[], mockStartedAt?: number | null } | null} */
   examSession: null,
   /** @deprecated 스팟 UX 프로토타입 */
   aiResponseSession: null,

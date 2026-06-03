@@ -1,10 +1,13 @@
 import {
   createExamSetId,
+  EXAM_SET_ROLE,
   EXAM_SET_STATUS,
   buildExamSetSaveSuccessMessage,
+  formatExamSetRoleLabel,
   formatExamSetStatusLabel,
   formatExamSetTypeLabel,
   formatExamSetVisibilityLabel,
+  getExamSetRoleOptions,
   getExamSetSaveButtonLabel,
   getExamSetSaveHint,
   getExamSetStatusOptions,
@@ -13,6 +16,8 @@ import {
   normalizeExamSetStatus,
   normalizeExamSetType,
   normalizeExamSetVisibility,
+  normalizeExamSetRole,
+  resolveExamSetRoleByType,
 } from "../services/exam-set-constants.js";
 import { examSetService } from "../services/exam-set-service.js";
 import {
@@ -31,9 +36,14 @@ function createEmptyDraft({ user }) {
     description: "",
     gradeLevel: "30k",
     type: "past_exam",
+    setRole: EXAM_SET_ROLE.questionBank,
     visibility: "private",
     status: "draft",
     academyId: "",
+    sourceExamSetId: "",
+    availableFrom: "",
+    availableUntil: "",
+    examDate: "",
     sortOrder: 0,
     createdBy: user?.id ?? "",
     orderedProblemIds: [],
@@ -176,6 +186,31 @@ export function createExamSetManager({
 
     if (target.id === "admin-exam-set-type") {
       draft.type = normalizeExamSetType(target.value);
+      draft.setRole = resolveExamSetRoleByType(draft.type);
+      if (draft.setRole !== EXAM_SET_ROLE.promotionPaper) {
+        draft.sourceExamSetId = "";
+        draft.availableFrom = "";
+        draft.availableUntil = "";
+        draft.examDate = "";
+      }
+      renderExamSetEditor();
+      return;
+    }
+
+    if (target.id === "admin-exam-set-role") {
+      draft.setRole = normalizeExamSetRole(target.value);
+      if (draft.setRole === EXAM_SET_ROLE.promotionPaper) {
+        draft.type = "promotion_test";
+      } else if (draft.type === "promotion_test") {
+        draft.type = "past_exam";
+      }
+      if (draft.setRole !== EXAM_SET_ROLE.promotionPaper) {
+        draft.sourceExamSetId = "";
+        draft.availableFrom = "";
+        draft.availableUntil = "";
+        draft.examDate = "";
+      }
+      renderExamSetEditor();
       return;
     }
 
@@ -193,6 +228,26 @@ export function createExamSetManager({
 
     if (target.id === "admin-exam-set-academy-id") {
       draft.academyId = target.value.trim();
+      return;
+    }
+
+    if (target.id === "admin-exam-set-source-id") {
+      draft.sourceExamSetId = target.value.trim();
+      return;
+    }
+
+    if (target.id === "admin-exam-set-available-from") {
+      draft.availableFrom = target.value;
+      return;
+    }
+
+    if (target.id === "admin-exam-set-available-until") {
+      draft.availableUntil = target.value;
+      return;
+    }
+
+    if (target.id === "admin-exam-set-date") {
+      draft.examDate = target.value;
       return;
     }
 
@@ -247,6 +302,11 @@ export function createExamSetManager({
 
     if (action === "add-all-visible") {
       void addAllVisibleProblemsToSet();
+      return;
+    }
+
+    if (action === "generate-random-20") {
+      void generateRandomPromotionPaperQuestions();
       return;
     }
 
@@ -324,6 +384,9 @@ export function createExamSetManager({
     } finally {
       state.loading = false;
       renderExamSetList();
+      if (state.draft) {
+        renderExamSetEditor();
+      }
       if (state.selectedSetId && !state.draft) {
         void selectExamSet(state.selectedSetId);
       }
@@ -370,9 +433,14 @@ export function createExamSetManager({
         description: detail.set.description,
         gradeLevel: detail.set.gradeLevel,
         type: detail.set.type,
+        setRole: resolveExamSetRoleByType(detail.set.type),
         visibility: detail.set.visibility,
         status: detail.set.status,
         academyId: detail.set.academyId ?? "",
+        sourceExamSetId: detail.set.sourceExamSetId ?? "",
+        availableFrom: detail.set.availableFrom ?? "",
+        availableUntil: detail.set.availableUntil ?? "",
+        examDate: detail.set.examDate ?? "",
         sortOrder: detail.set.sortOrder ?? 0,
         createdBy: detail.set.createdBy,
         orderedProblemIds: detail.questions.map((q) => q.problemId),
@@ -397,6 +465,21 @@ export function createExamSetManager({
 
     if (draft.visibility === "academy" && !String(draft.academyId ?? "").trim()) {
       return { ok: false, message: "학원 공개 세트는 academy ID가 필요합니다." };
+    }
+
+    if (draft.setRole === EXAM_SET_ROLE.promotionPaper) {
+      if (!String(draft.sourceExamSetId ?? "").trim()) {
+        return { ok: false, message: "승급심사 시험지는 기반 기출세트를 선택해 주세요." };
+      }
+      if (!draft.availableFrom || !draft.availableUntil) {
+        return { ok: false, message: "승급심사 시험지는 공개 시작/종료 일시가 필요합니다." };
+      }
+      if (new Date(draft.availableFrom).getTime() > new Date(draft.availableUntil).getTime()) {
+        return { ok: false, message: "공개 시작일은 공개 종료일보다 늦을 수 없습니다." };
+      }
+      if ((draft.orderedProblemIds?.length ?? 0) !== 20) {
+        return { ok: false, message: "승급심사 시험지는 정확히 20문제로 구성해 주세요." };
+      }
     }
 
     const status = normalizeExamSetStatus(draft.status);
@@ -467,9 +550,14 @@ export function createExamSetManager({
       description: draft.description ?? "",
       gradeLevel: draft.gradeLevel,
       type: draft.type,
+      setRole: draft.setRole,
       visibility: draft.visibility,
       status: draft.status,
       academyId: draft.academyId,
+      sourceExamSetId: draft.sourceExamSetId,
+      availableFrom: draft.availableFrom || null,
+      availableUntil: draft.availableUntil || null,
+      examDate: draft.examDate || null,
       sortOrder: draft.sortOrder,
       createdBy: draft.createdBy,
     };
@@ -581,9 +669,14 @@ export function createExamSetManager({
       description: draft.description,
       gradeLevel: draft.gradeLevel,
       type: draft.type,
+      setRole: draft.setRole,
       visibility: draft.visibility,
       status: draft.status,
       academyId: draft.academyId,
+      sourceExamSetId: draft.sourceExamSetId,
+      availableFrom: draft.availableFrom || null,
+      availableUntil: draft.availableUntil || null,
+      examDate: draft.examDate || null,
       sortOrder: draft.sortOrder,
       createdBy: draft.createdBy,
     };
@@ -810,6 +903,75 @@ export function createExamSetManager({
     return problems.filter((problem) => matchesExamSetPickerFilters(problem));
   }
 
+  function toDatetimeLocalValue(value) {
+    if (!value) {
+      return "";
+    }
+    const date = new Date(value);
+    if (Number.isNaN(date.getTime())) {
+      return "";
+    }
+    const pad = (num) => String(num).padStart(2, "0");
+    return `${date.getFullYear()}-${pad(date.getMonth() + 1)}-${pad(date.getDate())}T${pad(date.getHours())}:${pad(date.getMinutes())}`;
+  }
+
+  function shuffleArray(items) {
+    const copy = [...items];
+    for (let index = copy.length - 1; index > 0; index -= 1) {
+      const swapIndex = Math.floor(Math.random() * (index + 1));
+      [copy[index], copy[swapIndex]] = [copy[swapIndex], copy[index]];
+    }
+    return copy;
+  }
+
+  async function generateRandomPromotionPaperQuestions() {
+    const draft = ensureExamSetState().draft;
+    if (!draft) {
+      return;
+    }
+    if (draft.setRole !== EXAM_SET_ROLE.promotionPaper) {
+      setFeedback("승급심사 시험지에서만 사용할 수 있습니다.", "wrong");
+      window.alert?.("승급심사 시험지에서만 사용할 수 있습니다.");
+      return;
+    }
+    if (!draft.sourceExamSetId) {
+      setFeedback("기반 기출세트를 먼저 선택해 주세요.", "wrong");
+      window.alert?.("기반 기출세트를 먼저 선택해 주세요.");
+      return;
+    }
+    console.log("[ExamSetManager] generate random 20 clicked", {
+      draftId: draft.id || "(new)",
+      sourceExamSetId: draft.sourceExamSetId,
+    });
+
+    try {
+      const detail = await examSetService.getExamSetDetail({
+        user: getCurrentUser(),
+        examSetId: draft.sourceExamSetId,
+        forAdmin: true,
+      });
+      const sourceProblemIds = detail.questions.map((row) => row.problemId).filter(Boolean);
+      if (sourceProblemIds.length < 20) {
+        setFeedback("기반 기출세트 문제 수가 20개 미만이라 생성할 수 없습니다.", "wrong");
+        window.alert?.("기반 기출세트 문제 수가 20개 미만이라 생성할 수 없습니다.");
+        return;
+      }
+
+      draft.orderedProblemIds = shuffleArray(sourceProblemIds).slice(0, 20);
+      draft.selectedToAddIds.clear();
+      refreshAfterExamSetQuestionsChanged();
+      setFeedback("기반 기출세트에서 랜덤 20문제를 구성했습니다.", "correct");
+      console.log("[ExamSetManager] generate random 20 success", {
+        sourceCount: sourceProblemIds.length,
+        generatedCount: draft.orderedProblemIds.length,
+      });
+    } catch (error) {
+      console.error("[ExamSetManager] generate random 20 failed", error);
+      setFeedback(error?.message ?? "랜덤 20문제 생성에 실패했습니다.", "wrong");
+      window.alert?.(error?.message ?? "랜덤 20문제 생성에 실패했습니다.");
+    }
+  }
+
   function renderExamSetManager() {
     bindExamSetEvents();
     bindExamSetCardEvents();
@@ -856,6 +1018,7 @@ export function createExamSetManager({
             <span class="admin-exam-set-list-title">${escapeHtml(set.title)}</span>
             <span class="admin-exam-set-badges">
               <span class="${statusClass}">${escapeHtml(formatExamSetStatusLabel(set.status))}</span>
+              <span class="admin-exam-set-badge is-role">${escapeHtml(formatExamSetRoleLabel(set.setRole))}</span>
               <span class="admin-exam-set-badge is-visibility">${escapeHtml(formatExamSetVisibilityLabel(set.visibility))}</span>
             </span>
             <span class="admin-exam-set-list-meta">${escapeHtml(gradeLabel)} · ${escapeHtml(formatExamSetTypeLabel(set.type))} · ${set.questionCount ?? 0}문제</span>
@@ -877,6 +1040,15 @@ export function createExamSetManager({
     }
 
     const categories = ["전체", ...getOrderedCategoryNames()];
+    const isPromotionPaper = draft.setRole === EXAM_SET_ROLE.promotionPaper;
+    const sourceCandidates = ensureExamSetState().sets.filter((set) => {
+      return set.id !== draft.id && set.setRole === EXAM_SET_ROLE.questionBank;
+    });
+    console.log("[ExamSetManager] source question_bank sets", {
+      totalSets: ensureExamSetState().sets.length,
+      questionBankCount: sourceCandidates.length,
+      titles: sourceCandidates.map((set) => set.title),
+    });
 
     elements.adminExamSetEditor.innerHTML = `
       <div class="admin-exam-set-form">
@@ -897,7 +1069,42 @@ export function createExamSetManager({
                 `<option value="${escapeHtml(o.value)}"${draft.type === o.value ? " selected" : ""}>${escapeHtml(o.label)}</option>`,
             )
             .join("")}</select></label>
+          <label>세트 역할 <select id="admin-exam-set-role">${getExamSetRoleOptions()
+            .map(
+              (o) =>
+                `<option value="${escapeHtml(o.value)}"${draft.setRole === o.value ? " selected" : ""}>${escapeHtml(o.label)}</option>`,
+            )
+            .join("")}</select></label>
         </div>
+        ${
+          isPromotionPaper
+            ? `
+        <div class="admin-exam-set-form-row">
+          <label>기반 기출세트
+            <select id="admin-exam-set-source-id">
+              <option value="">기출세트를 선택하세요</option>
+              ${sourceCandidates
+                .map(
+                  (set) =>
+                    `<option value="${escapeHtml(set.id)}"${draft.sourceExamSetId === set.id ? " selected" : ""}>${escapeHtml(set.title)}</option>`,
+                )
+                .join("")}
+            </select>
+          </label>
+          <label>시험일
+            <input id="admin-exam-set-date" type="date" value="${escapeHtml(draft.examDate ?? "")}" />
+          </label>
+        </div>
+        <div class="admin-exam-set-form-row">
+          <label>공개 시작
+            <input id="admin-exam-set-available-from" type="datetime-local" value="${escapeHtml(toDatetimeLocalValue(draft.availableFrom))}" />
+          </label>
+          <label>공개 종료
+            <input id="admin-exam-set-available-until" type="datetime-local" value="${escapeHtml(toDatetimeLocalValue(draft.availableUntil))}" />
+          </label>
+        </div>`
+            : ""
+        }
         <div class="admin-exam-set-form-row">
           <label>공개 <select id="admin-exam-set-visibility">${getExamSetVisibilityOptions()
             .map(
@@ -919,6 +1126,7 @@ export function createExamSetManager({
         <div class="admin-exam-set-form-actions">
           <button type="button" class="primary-button" data-exam-set-action="save">${escapeHtml(getExamSetSaveButtonLabel(draft.status))}</button>
           <button type="button" class="secondary-button" data-exam-set-action="delete"${draft.id ? "" : " disabled"}>삭제</button>
+          <button type="button" class="secondary-button" data-exam-set-action="generate-random-20"${isPromotionPaper ? "" : " disabled"}>기출 기반 랜덤 20</button>
         </div>
       </div>
       <section class="admin-exam-set-questions" aria-label="세트 문제">

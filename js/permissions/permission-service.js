@@ -7,6 +7,7 @@ export const ROLES = {
 
 const ROLE_ALIASES = {
   academy: ROLES.academyOwner,
+  owner: ROLES.academyOwner,
   individual: ROLES.student,
   user: ROLES.student,
 };
@@ -57,23 +58,144 @@ export function canViewPublishedExamSets(user) {
 }
 
 export function filterExamSetsForViewer(sets, user) {
-  const academyId = String(user?.academyId ?? "").trim();
+  const academyIds = [
+    user?.academyId,
+    user?.academy_id,
+    user?.metadata?.academyId,
+    user?.user_metadata?.academyId,
+  ]
+    .map((value) => String(value ?? "").trim())
+    .filter(Boolean);
+  const academyId = academyIds[0] ?? "";
+  const role = normalizeRole(user?.role);
+  const now = Date.now();
+  const roleRaw = String(user?.role ?? "");
+  console.log("[ExamSets][ViewerFilter] start", {
+    roleRaw,
+    roleNormalized: role,
+    academyId,
+    totalSets: sets.length,
+  });
 
-  return sets.filter((set) => {
+  const filtered = sets.filter((set) => {
     if (set.status !== "published") {
       return false;
+    }
+
+    const setRole = String(set.setRole ?? "question_bank").trim();
+    if (setRole === "promotion_paper") {
+      if (role === ROLES.student) {
+        console.log("[ExamSets][ViewerFilter] drop promotion_paper by role", {
+          id: set.id,
+          title: set.title,
+          roleRaw,
+          roleNormalized: role,
+        });
+        return false;
+      }
+
+      // admin 은 기간 조건과 무관하게 항상 확인 가능해야 한다.
+      if (role === ROLES.admin) {
+        console.log("[ExamSets][ViewerFilter] allow promotion_paper for admin", {
+          id: set.id,
+          title: set.title,
+        });
+        return true;
+      }
+
+      if (![ROLES.academyOwner, ROLES.teacher].includes(role)) {
+        console.log("[ExamSets][ViewerFilter] drop promotion_paper by unsupported role", {
+          id: set.id,
+          title: set.title,
+          roleRaw,
+          roleNormalized: role,
+        });
+        return false;
+      }
+
+      console.log("[ExamSets][ViewerFilter] promotion_paper raw window values", {
+        id: set.id,
+        title: set.title,
+        availableFromRaw: set.availableFrom,
+        availableUntilRaw: set.availableUntil,
+      });
+
+      const availableFrom = set.availableFrom ? new Date(set.availableFrom).getTime() : null;
+      const availableUntil = set.availableUntil ? new Date(set.availableUntil).getTime() : null;
+      console.log("[ExamSets][ViewerFilter] promotion_paper parsed window values", {
+        id: set.id,
+        title: set.title,
+        availableFrom,
+        availableUntil,
+        now,
+        nowType: typeof now,
+        nowIso: new Date(now).toISOString(),
+      });
+      if (!Number.isFinite(availableFrom) || !Number.isFinite(availableUntil)) {
+        console.log("[ExamSets][ViewerFilter] drop promotion_paper by window", {
+          id: set.id,
+          title: set.title,
+          availableFrom: set.availableFrom,
+          availableUntil: set.availableUntil,
+        });
+        return false;
+      }
+
+      // 기간 판정은 반드시 Date.now() 기준 epoch 비교를 사용한다.
+      const inWindow = now >= availableFrom && now <= availableUntil;
+      console.log("[ExamSets][ViewerFilter] promotion_paper window check", {
+        id: set.id,
+        title: set.title,
+        status: set.status,
+        visibility: set.visibility,
+        availableFrom: set.availableFrom,
+        availableUntil: set.availableUntil,
+        now,
+        availableFromEpoch: availableFrom,
+        availableUntilEpoch: availableUntil,
+        nowIso: new Date(now).toISOString(),
+        inWindow,
+      });
+      return inWindow;
+    }
+
+    if (role === ROLES.student && set.type === "mock_test") {
+      console.log("[ExamSets][ViewerFilter] student mock_test candidate", {
+        id: set.id,
+        title: set.title,
+        visibility: set.visibility,
+        academyId: set.academyId,
+      });
     }
 
     if (set.visibility === "public") {
       return true;
     }
 
-    if (set.visibility === "academy" && academyId && set.academyId === academyId) {
-      return true;
+    if (set.visibility === "academy") {
+      if (role === ROLES.student && !academyIds.length) {
+        // 학생 계정 academyId 메타가 비어있는 경우, 1차 필터는 RLS 결과를 신뢰한다.
+        return true;
+      }
+      if (!academyIds.length) {
+        return false;
+      }
+      return academyIds.includes(String(set.academyId ?? "").trim());
     }
 
     return false;
   });
+
+  const questionBankCount = filtered.filter((set) => String(set.setRole ?? "question_bank") === "question_bank").length;
+  const promotionPaperCount = filtered.filter((set) => String(set.setRole ?? "question_bank") === "promotion_paper").length;
+  console.log("[ExamSets][ViewerFilter] result", {
+    roleRaw,
+    roleNormalized: role,
+    filteredCount: filtered.length,
+    questionBankCount,
+    promotionPaperCount,
+  });
+  return filtered;
 }
 
 /** 문제은행 관리자 모드 토글 */

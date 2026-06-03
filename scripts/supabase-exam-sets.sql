@@ -20,14 +20,60 @@ create table if not exists public.exam_sets (
     check (status in ('draft', 'published')),
   level_group text,
   academy_id text,
+  set_role text not null default 'question_bank'
+    check (set_role in ('question_bank', 'promotion_paper')),
+  source_exam_set_id text references public.exam_sets(id) on delete set null,
+  available_from timestamptz,
+  available_until timestamptz,
+  exam_date date,
   sort_order integer not null default 0,
   created_by text,
   created_at timestamptz not null default now(),
   updated_at timestamptz not null default now()
 );
 
+do $$
+begin
+  if not exists (
+    select 1
+    from pg_constraint
+    where conname = 'exam_sets_available_window_check'
+  ) then
+    alter table public.exam_sets
+      add constraint exam_sets_available_window_check
+      check (
+        available_from is null
+        or available_until is null
+        or available_from <= available_until
+      );
+  end if;
+
+  if not exists (
+    select 1
+    from pg_constraint
+    where conname = 'exam_sets_type_role_check'
+  ) then
+    alter table public.exam_sets
+      add constraint exam_sets_type_role_check
+      check (
+        (type = 'promotion_test' and set_role = 'promotion_paper')
+        or (type in ('past_exam', 'mock_test') and set_role = 'question_bank')
+      );
+  end if;
+end
+$$;
+
 create index if not exists exam_sets_status_visibility_idx
   on public.exam_sets (status, visibility, grade_level);
+
+create index if not exists exam_sets_role_status_idx
+  on public.exam_sets (set_role, status);
+
+create index if not exists exam_sets_available_window_idx
+  on public.exam_sets (available_from, available_until);
+
+create index if not exists exam_sets_source_idx
+  on public.exam_sets (source_exam_set_id);
 
 create index if not exists exam_sets_level_group_sort_idx
   on public.exam_sets (level_group, sort_order);
@@ -95,13 +141,42 @@ using (
   or (
     status = 'published'
     and (
-      visibility = 'public'
+      (
+        set_role = 'question_bank'
+        and (
+          visibility = 'public'
+          or (
+            visibility = 'academy'
+            and coalesce(academy_id, '') <> ''
+            and (
+              academy_id = coalesce(auth.jwt() -> 'user_metadata' ->> 'academyId', '')
+              or exists (
+                select 1
+                from public.academy_members am
+                where am.user_id = auth.uid()::text
+                  and am.role = public.auth_jwt_role()
+                  and am.status = 'active'
+                  and am.academy_id = academy_id
+              )
+            )
+          )
+        )
+      )
       or (
-        visibility = 'academy'
-        and coalesce(academy_id, '') <> ''
-        and academy_id = coalesce(
-          auth.jwt() -> 'user_metadata' ->> 'academyId',
-          ''
+        set_role = 'promotion_paper'
+        and public.auth_jwt_role() in ('academy_owner', 'teacher')
+        and now() >= coalesce(available_from, now() + interval '100 years')
+        and now() <= coalesce(available_until, now() - interval '100 years')
+        and (
+          visibility = 'public'
+          or (
+            visibility = 'academy'
+            and coalesce(academy_id, '') <> ''
+            and academy_id = coalesce(
+              auth.jwt() -> 'user_metadata' ->> 'academyId',
+              ''
+            )
+          )
         )
       )
     )
@@ -129,13 +204,42 @@ using (
         or (
           es.status = 'published'
           and (
-            es.visibility = 'public'
+            (
+              es.set_role = 'question_bank'
+              and (
+                es.visibility = 'public'
+                or (
+                  es.visibility = 'academy'
+                  and coalesce(es.academy_id, '') <> ''
+                  and (
+                    es.academy_id = coalesce(auth.jwt() -> 'user_metadata' ->> 'academyId', '')
+                    or exists (
+                      select 1
+                      from public.academy_members am
+                      where am.user_id = auth.uid()::text
+                        and am.role = public.auth_jwt_role()
+                        and am.status = 'active'
+                        and am.academy_id = es.academy_id
+                    )
+                  )
+                )
+              )
+            )
             or (
-              es.visibility = 'academy'
-              and coalesce(es.academy_id, '') <> ''
-              and es.academy_id = coalesce(
-                auth.jwt() -> 'user_metadata' ->> 'academyId',
-                ''
+              es.set_role = 'promotion_paper'
+              and public.auth_jwt_role() in ('academy_owner', 'teacher')
+              and now() >= coalesce(es.available_from, now() + interval '100 years')
+              and now() <= coalesce(es.available_until, now() - interval '100 years')
+              and (
+                es.visibility = 'public'
+                or (
+                  es.visibility = 'academy'
+                  and coalesce(es.academy_id, '') <> ''
+                  and es.academy_id = coalesce(
+                    auth.jwt() -> 'user_metadata' ->> 'academyId',
+                    ''
+                  )
+                )
               )
             )
           )

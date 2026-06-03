@@ -52,6 +52,10 @@
           <p id="problem-description" class="problem-description">
             카테고리별로 문제를 살펴보고 학습할 문제를 선택하세요.
           </p>
+          <div id="mock-test-timer" class="mock-test-timer is-hidden" aria-live="polite">
+            <p id="mock-test-timer-label" class="mock-test-timer-label">남은 시간</p>
+            <p id="mock-test-timer-value" class="mock-test-timer-value">20:00</p>
+          </div>
         </div>
         <section
           id="student-grade-summary-card"
@@ -267,6 +271,22 @@
 
       <section id="study-screen" class="study-screen is-hidden" aria-label="학습중">
         <div id="study-curriculum-accordion" class="study-curriculum-accordion" aria-label="단계별 학습 흐름"></div>
+      </section>
+
+      <section id="promotion-paper-screen" class="promotion-paper-screen is-hidden" aria-label="승급심사 시험지">
+        <header class="promotion-paper-header">
+          <div>
+            <p id="promotion-paper-meta" class="eyebrow">Promotion Paper</p>
+            <h2 id="promotion-paper-title">승급심사 시험지</h2>
+            <p id="promotion-paper-description" class="promotion-paper-description"></p>
+            <div id="promotion-paper-form" class="promotion-paper-form"></div>
+          </div>
+          <div class="promotion-paper-actions">
+            <button id="promotion-paper-print" class="primary-button" type="button">인쇄</button>
+            <button id="promotion-paper-close" class="secondary-button" type="button">닫기</button>
+          </div>
+        </header>
+        <div id="promotion-paper-questions" class="promotion-paper-questions"></div>
       </section>
 
       <section id="problem-list-screen" class="problem-list-screen" aria-label="문제은행">
@@ -536,6 +556,10 @@
               <p id="exam-set-catalog-summary" class="exam-set-catalog-summary">게시된 시험 세트를 선택해 풀이를 시작하세요.</p>
             </div>
             <div id="exam-set-catalog-list" class="exam-set-catalog-list" aria-live="polite"></div>
+            <section id="mock-test-results-panel" class="mock-test-results-panel is-hidden" aria-label="모의시험 결과">
+              <h4 id="mock-test-results-title">모의시험 결과</h4>
+              <div id="mock-test-results-list" class="mock-test-results-list"></div>
+            </section>
           </section>
           <div id="problem-cards" class="problem-cards" aria-live="polite"></div>
         </div>
@@ -1096,6 +1120,43 @@
         <p class="eyebrow">Try Again</p>
         <h2>오답입니다</h2>
         <p id="wrong-modal-message">문제가 초기 상태로 돌아갑니다. 다시 시도해 보세요.</p>
+      </div>
+    </div>
+    <div
+      id="mock-test-start-modal"
+      class="answer-modal mock-test-modal is-hidden"
+      role="dialog"
+      aria-modal="true"
+      aria-labelledby="mock-test-start-title"
+    >
+      <div class="answer-modal-card mock-test-modal-card" data-mock-test-start-backdrop>
+        <p class="eyebrow">Mock Test</p>
+        <h2 id="mock-test-start-title">모의시험 안내</h2>
+        <div id="mock-test-start-body" class="mock-test-start-body"></div>
+        <div class="mock-test-modal-actions">
+          <button id="mock-test-start-cancel" class="ghost-button" type="button">취소</button>
+          <button id="mock-test-start-confirm" class="primary-button" type="button">시작</button>
+        </div>
+      </div>
+    </div>
+    <div
+      id="mock-test-result-modal"
+      class="answer-modal mock-test-modal is-hidden"
+      role="dialog"
+      aria-modal="true"
+      aria-labelledby="mock-test-result-title"
+    >
+      <div class="answer-modal-card mock-test-modal-card mock-test-result-modal-card" data-mock-test-result-backdrop>
+        <h2 id="mock-test-result-title" class="mock-test-result-modal-heading">고생하셨습니다!</h2>
+        <p id="mock-test-result-subtitle" class="mock-test-result-modal-subtitle"></p>
+        <div id="mock-test-result-score" class="mock-test-result-modal-score-block"></div>
+        <p id="mock-test-result-wrong" class="mock-test-result-modal-wrong"></p>
+        <p id="mock-test-result-duration" class="mock-test-result-modal-timing"></p>
+        <p id="mock-test-result-overtime" class="mock-test-result-modal-timing is-hidden"></p>
+        <div class="mock-test-modal-actions">
+          <button id="mock-test-result-view" class="primary-button" type="button">결과 확인</button>
+          <button id="mock-test-result-close" class="ghost-button" type="button">닫기</button>
+        </div>
       </div>
     </div>
     <section id="print-area" class="print-area" aria-hidden="true"></section>

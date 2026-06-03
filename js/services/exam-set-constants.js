@@ -35,6 +35,17 @@ export const EXAM_SET_STATUS_LABELS = {
   [EXAM_SET_STATUS.published]: "게시됨",
 };
 
+/** 세트 역할: 학습용 기출세트 vs 실전 승급심사 시험지 */
+export const EXAM_SET_ROLE = {
+  questionBank: "question_bank",
+  promotionPaper: "promotion_paper",
+};
+
+export const EXAM_SET_ROLE_LABELS = {
+  [EXAM_SET_ROLE.questionBank]: "기출세트",
+  [EXAM_SET_ROLE.promotionPaper]: "승급심사 시험지",
+};
+
 export function normalizeExamSetType(value) {
   const raw = String(value ?? "").trim();
   return Object.values(EXAM_SET_TYPE).includes(raw) ? raw : EXAM_SET_TYPE.pastExam;
@@ -52,6 +63,18 @@ export function normalizeExamSetStatus(value) {
   return Object.values(EXAM_SET_STATUS).includes(raw) ? raw : EXAM_SET_STATUS.draft;
 }
 
+export function normalizeExamSetRole(value) {
+  const raw = String(value ?? "").trim();
+  return Object.values(EXAM_SET_ROLE).includes(raw) ? raw : EXAM_SET_ROLE.questionBank;
+}
+
+/** type 기준으로 set_role 강제 매핑 (운영 규칙) */
+export function resolveExamSetRoleByType(type) {
+  return normalizeExamSetType(type) === EXAM_SET_TYPE.promotionTest
+    ? EXAM_SET_ROLE.promotionPaper
+    : EXAM_SET_ROLE.questionBank;
+}
+
 export function formatExamSetTypeLabel(type) {
   return EXAM_SET_TYPE_LABELS[normalizeExamSetType(type)] ?? type;
 }
@@ -62,6 +85,10 @@ export function formatExamSetVisibilityLabel(visibility) {
 
 export function formatExamSetStatusLabel(status) {
   return EXAM_SET_STATUS_LABELS[normalizeExamSetStatus(status)] ?? status;
+}
+
+export function formatExamSetRoleLabel(role) {
+  return EXAM_SET_ROLE_LABELS[normalizeExamSetRole(role)] ?? role;
 }
 
 /** 저장 버튼 라벨 — 상태에 따라 의미 구분 */
@@ -107,6 +134,10 @@ export function getExamSetVisibilityOptions() {
 
 export function getExamSetStatusOptions() {
   return Object.entries(EXAM_SET_STATUS_LABELS).map(([value, label]) => ({ value, label }));
+}
+
+export function getExamSetRoleOptions() {
+  return Object.entries(EXAM_SET_ROLE_LABELS).map(([value, label]) => ({ value, label }));
 }
 
 export function createExamSetId() {

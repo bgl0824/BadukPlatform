@@ -1,11 +1,13 @@
 import { examSetService } from "../services/exam-set-service.js";
 import {
   formatExamSetTypeLabel,
+  EXAM_SET_ROLE,
   EXAM_SET_TYPE,
   EXAM_SET_VISIBILITY,
 } from "../services/exam-set-constants.js";
 import { formatGradeLevelLabel } from "../services/grade-level-service.js";
-import { normalizeRole } from "../permissions/permission-service.js";
+import { normalizeRole, ROLES } from "../permissions/permission-service.js";
+import { mockTestAttemptService } from "../services/mock-test-attempt-service.js";
 
 export function createExamCatalogController({
   elements,
@@ -13,8 +15,13 @@ export function createExamCatalogController({
   getCurrentUser,
   escapeHtml,
   onStartExamSet,
+  onPreviewExamSet,
+  onShowMockResults,
+  onHideMockResults,
 }) {
   let catalogSets = [];
+  let studentMockAttemptBySetId = new Map();
+  let openMockResultsExamSetId = null;
 
   function bindExamCatalogEvents() {
     elements.examSetCatalogList?.addEventListener("click", (event) => {
@@ -30,7 +37,55 @@ export function createExamCatalogController({
       }
 
       void onStartExamSet?.(examSet);
+      return;
     });
+
+    elements.examSetCatalogList?.addEventListener("click", (event) => {
+      const button = event.target.closest("[data-preview-exam-set-id]");
+      if (!button) {
+        return;
+      }
+      const examSetId = button.dataset.previewExamSetId;
+      const examSet = catalogSets.find((set) => set.id === examSetId);
+      if (!examSet) {
+        return;
+      }
+      void onPreviewExamSet?.(examSet);
+    });
+
+    elements.examSetCatalogList?.addEventListener("click", (event) => {
+      const button = event.target.closest("[data-view-mock-results-id]");
+      if (!button) {
+        return;
+      }
+      const examSetId = button.dataset.viewMockResultsId;
+      const examSet = catalogSets.find((set) => set.id === examSetId);
+      if (!examSet) {
+        return;
+      }
+      toggleMockResults(examSet);
+    });
+  }
+
+  function toggleMockResults(examSet) {
+    if (openMockResultsExamSetId === examSet.id) {
+      openMockResultsExamSetId = null;
+      onHideMockResults?.();
+      renderExamCatalog();
+      return;
+    }
+
+    openMockResultsExamSetId = examSet.id;
+    renderExamCatalog();
+    void onShowMockResults?.(examSet);
+  }
+
+  function clearOpenMockResults() {
+    if (!openMockResultsExamSetId) {
+      return;
+    }
+    openMockResultsExamSetId = null;
+    renderExamCatalog();
   }
 
   async function refreshExamCatalog() {
@@ -47,9 +102,27 @@ export function createExamCatalogController({
     try {
       const result = await examSetService.listExamSetsForViewer({ user });
       catalogSets = result.sets ?? [];
+      const questionBankSets = catalogSets.filter(
+        (set) => String(set.setRole ?? "question_bank") === "question_bank",
+      );
+      const promotionPaperSets = catalogSets.filter(
+        (set) => String(set.setRole ?? "question_bank") === "promotion_paper",
+      );
       console.log("[ExamCatalog] loaded for viewer", {
+        roleRaw: user.role,
         role: normalizeRole(user.role),
         count: catalogSets.length,
+        questionBankCount: questionBankSets.length,
+        promotionPaperCount: promotionPaperSets.length,
+        promotionPapers: promotionPaperSets.map((set) => ({
+          id: set.id,
+          title: set.title,
+          setRole: set.setRole,
+          status: set.status,
+          visibility: set.visibility,
+          availableFrom: set.availableFrom,
+          availableUntil: set.availableUntil,
+        })),
         titles: catalogSets.map((set) => set.title),
       });
     } catch (error) {
@@ -57,7 +130,37 @@ export function createExamCatalogController({
       catalogSets = [];
     }
 
+    await loadStudentMockAttempts(user);
     renderExamCatalog();
+    if (openMockResultsExamSetId) {
+      const openSet = catalogSets.find((set) => set.id === openMockResultsExamSetId);
+      if (openSet) {
+        void onShowMockResults?.(openSet);
+      } else {
+        openMockResultsExamSetId = null;
+        onHideMockResults?.();
+      }
+    }
+  }
+
+  async function loadStudentMockAttempts(user) {
+    studentMockAttemptBySetId = new Map();
+    if (normalizeRole(user?.role) !== ROLES.student || !user?.id) {
+      return;
+    }
+
+    const mockSets = catalogSets.filter((set) => set.type === EXAM_SET_TYPE.mockTest);
+    await Promise.all(
+      mockSets.map(async (set) => {
+        const result = await mockTestAttemptService.getLatestMockTestAttemptForStudent({
+          user,
+          examSetId: set.id,
+        });
+        if (result.ok && result.attempt) {
+          studentMockAttemptBySetId.set(set.id, result.attempt);
+        }
+      }),
+    );
   }
 
   function renderExamCatalog() {
@@ -97,19 +200,31 @@ export function createExamCatalogController({
           ? formatGradeLevelLabel(set.gradeLevel)
           : "급수 미지정";
         const typeLabel = formatExamSetTypeLabel(set.type);
-        const actionLabel = getExamActionLabel(set.type);
         const count = set.questionCount ?? 0;
+        const studentAttempt = studentMockAttemptBySetId.get(set.id) ?? null;
+        const role = normalizeRole(user?.role);
+        const mockCompleted =
+          set.type === EXAM_SET_TYPE.mockTest && role === ROLES.student && Boolean(studentAttempt);
+        const primaryAction = resolveExamCatalogPrimaryAction(set, user, { mockCompleted });
         const visibilityNote =
           set.visibility === EXAM_SET_VISIBILITY.academy
             ? " · 학원 공개"
             : set.visibility === EXAM_SET_VISIBILITY.public
               ? " · 전체 공개"
               : "";
-
+        const showResultButton = canViewMockResultButton(user, set, studentAttempt);
+        const resultsOpen = openMockResultsExamSetId === set.id;
+        const resultsButtonLabel = resultsOpen ? "▲ 결과 닫기" : "▼ 결과 보기";
         return `
-          <article class="exam-set-card">
+          <article class="exam-set-card${mockCompleted ? " exam-set-card--mock-complete" : ""}">
             <div class="exam-set-card-body">
               <h4 class="exam-set-card-title">${escapeHtml(set.title)}</h4>
+              ${
+                mockCompleted
+                  ? `<p class="exam-set-card-mock-score">정답률 <strong>${studentAttempt.accuracyRate}%</strong></p>
+              <p class="exam-set-card-mock-subscore">${studentAttempt.correctCount} / ${studentAttempt.totalQuestionCount}</p>`
+                  : ""
+              }
               <p class="exam-set-card-meta">${escapeHtml(gradeLabel)} · ${escapeHtml(typeLabel)} · ${count}문제${escapeHtml(visibilityNote)}</p>
               ${
                 set.description
@@ -117,32 +232,87 @@ export function createExamCatalogController({
                   : ""
               }
             </div>
-            <button
-              type="button"
-              class="primary-button exam-set-card-action"
-              data-start-exam-set-id="${escapeHtml(set.id)}"
-              ${count === 0 ? "disabled" : ""}
-            >${escapeHtml(actionLabel)}</button>
+            <div class="exam-set-card-actions">
+              ${
+                primaryAction
+                  ? `<button
+                type="button"
+                class="primary-button exam-set-card-action"
+                ${
+                  primaryAction.kind === "preview"
+                    ? `data-preview-exam-set-id="${escapeHtml(set.id)}"`
+                    : `data-start-exam-set-id="${escapeHtml(set.id)}"`
+                }
+                ${count === 0 ? "disabled" : ""}
+              >${escapeHtml(primaryAction.label)}</button>`
+                  : ""
+              }
+              ${
+                showResultButton
+                  ? `<button
+                type="button"
+                class="${mockCompleted || resultsOpen ? "primary-button exam-set-card-action" : "ghost-button exam-set-card-action-secondary"}${resultsOpen ? " is-active" : ""}"
+                data-view-mock-results-id="${escapeHtml(set.id)}"
+                aria-expanded="${resultsOpen ? "true" : "false"}"
+              >${escapeHtml(resultsButtonLabel)}</button>`
+                  : ""
+              }
+            </div>
           </article>`;
       })
       .join("");
+  }
+
+  function syncOpenMockResults(examSetId) {
+    openMockResultsExamSetId = examSetId || null;
+    renderExamCatalog();
   }
 
   return {
     bindExamCatalogEvents,
     refreshExamCatalog,
     renderExamCatalog,
+    clearOpenMockResults,
+    syncOpenMockResults,
   };
 }
 
-function getExamActionLabel(type) {
-  if (type === EXAM_SET_TYPE.promotionTest) {
-    return "승급시험 응시";
+function isExamCatalogStaffRole(role) {
+  return role === ROLES.admin || role === ROLES.academyOwner || role === ROLES.teacher;
+}
+
+function resolveExamCatalogPrimaryAction(set, user, { mockCompleted = false } = {}) {
+  const role = normalizeRole(user?.role);
+
+  if (mockCompleted) {
+    return null;
   }
 
-  if (type === EXAM_SET_TYPE.mockTest) {
-    return "모의시험 시작";
+  if (set?.setRole === EXAM_SET_ROLE.promotionPaper) {
+    return { kind: "start", label: "승급심사 시험지 열람" };
   }
 
-  return "기출문제 풀기";
+  if (set?.type === EXAM_SET_TYPE.promotionTest) {
+    return { kind: "start", label: "승급시험 응시" };
+  }
+
+  if (set?.type === EXAM_SET_TYPE.mockTest) {
+    if (isExamCatalogStaffRole(role)) {
+      return { kind: "preview", label: "문제 열람" };
+    }
+    return { kind: "start", label: "모의시험 시작" };
+  }
+
+  return { kind: "start", label: "기출문제 풀기" };
+}
+
+function canViewMockResultButton(user, set, studentAttempt = null) {
+  if (set?.type !== EXAM_SET_TYPE.mockTest) {
+    return false;
+  }
+  const role = normalizeRole(user?.role);
+  if (role === ROLES.student) {
+    return Boolean(studentAttempt);
+  }
+  return role === ROLES.admin || role === ROLES.academyOwner || role === ROLES.teacher;
 }

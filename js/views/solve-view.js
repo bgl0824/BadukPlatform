@@ -41,6 +41,7 @@ export function createSolveView({
     elements.nextButton.classList.toggle("is-hidden", mode !== "solve");
     elements.studyLayout.classList.toggle("is-hidden", mode !== "solve" && mode !== "create");
     elements.studyScreen?.classList.toggle("is-hidden", mode !== "study");
+    elements.promotionPaperScreen?.classList.toggle("is-hidden", mode !== "paper");
     elements.problemListScreen.classList.toggle("is-hidden", mode !== "list");
     elements.platformAdminScreen?.classList.toggle("is-hidden", mode !== "platform");
     elements.academyMenuScreen.classList.toggle("is-hidden", !ACADEMY_MODES.includes(mode));
@@ -62,7 +63,7 @@ export function createSolveView({
     });
   }
 
-  function renderProblem(problem, index, { reviewItem, boardStones } = {}) {
+  function renderProblem(problem, index, { reviewItem, boardStones, examSession } = {}) {
     setMode("solve");
     elements.title.textContent = problem.title;
     elements.description.textContent = "";
@@ -71,11 +72,23 @@ export function createSolveView({
     renderProblemSolveMode(problem);
     if (reviewItem) {
       elements.meta.textContent = `${reviewItem.categoryName} 복습 (${reviewItem.positionInQueue}/${reviewItem.totalInQueue})`;
+      elements.description.textContent = "";
+      elements.description.classList.add("is-hidden");
+    } else if (examSession) {
+      const total = examSession.problemIds?.length ?? 0;
+      const position = Number(examSession.currentIndex ?? 0) + 1;
+      const remaining = Math.max(0, total - position);
+      const modeLabel = examSession.sessionMode === "mock" ? "모의시험" : "기출문제";
+      elements.meta.textContent = `${modeLabel} · ${position} / ${total}`;
+      elements.description.textContent = `현재 ${position}번 문제 · 남은 문제 ${remaining}개`;
+      elements.description.classList.remove("is-hidden");
     } else {
       const totalInCategory = getProblemsInCategoryOrder(problem.category, problems, {
         levelGroup: problem.levelGroup,
       }).length;
       elements.meta.textContent = `${formatCategoryProblemLabel(problem, problems)} / ${totalInCategory}`;
+      elements.description.textContent = "";
+      elements.description.classList.add("is-hidden");
     }
     setStatus(`${getStoneLabel(STONE.black)} 차례입니다.`);
     setFeedback(getProblemStartFeedback(problem));
