@@ -149,6 +149,7 @@ import { createMockTestUi } from "./ui/mock-test-ui.js";
 import { createStudyView } from "./views/study-view.js";
 import { renderMockTestResultsTableHtml } from "./views/mock-test-results-view.js";
 import { computeMockTestTiming } from "./utils/mock-test-time.js";
+import { mockTestLeaveGuard } from "./mock-test/mock-test-leave-guard.js";
 
 const { BoardController } = window.BadukBoard;
 const { BOARD_SIZE, ProblemStore, problems, STONE } = window.BadukProblems;
@@ -1404,6 +1405,14 @@ function renderStudyScreen() {
 }
 
 function showStudyMode() {
+  if (
+    !mockTestLeaveGuard.confirmLeaveInApp(appState, () => {
+      clearExamSession();
+    })
+  ) {
+    return;
+  }
+
   logScreen("showStudyMode");
   logLearningFlow("showStudyMode", {
     previousMode: appState.mode,
@@ -1700,6 +1709,7 @@ async function startExamSetSession(examSet) {
 
     if (isMock) {
       mockTestUi.startTimer({ startedAt: appState.examSession.mockStartedAt });
+      mockTestLeaveGuard.activate();
     }
 
     loadProblemById(problemIds[0], { examSessionIndex: 0 });
@@ -1710,6 +1720,7 @@ async function startExamSetSession(examSet) {
 }
 
 function clearExamSession() {
+  mockTestLeaveGuard.deactivate();
   mockTestUi.stopTimer();
   appState.examSession = null;
   examView.clearExamSessionBanner();
@@ -2227,6 +2238,14 @@ function showNextProblem() {
 }
 
 function showMainMenuTarget(menuTarget) {
+  if (
+    !mockTestLeaveGuard.confirmLeaveInApp(appState, () => {
+      clearExamSession();
+    })
+  ) {
+    return;
+  }
+
   if (menuTarget === "list") {
     showListMode();
     return;
@@ -2281,6 +2300,10 @@ function showSolveMode() {
 }
 
 function showListMode() {
+  if (!mockTestLeaveGuard.confirmLeaveInApp(appState)) {
+    return;
+  }
+
   logScreen("showListMode");
   logLearningFlow("showListMode", {
     previousMode: appState.mode,
