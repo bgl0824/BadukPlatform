@@ -8,6 +8,7 @@ const requiredFiles = [
   "auth.html",
   "index.html",
   "signup.html",
+  "attendance-check.html",
   "styles.css",
   "vendor/wgo.min.js",
   "vendor/wood1.jpg",

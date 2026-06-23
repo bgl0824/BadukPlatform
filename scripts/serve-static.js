@@ -12,9 +12,14 @@ const contentTypes = {
   ".json": "application/json; charset=utf-8",
 };
 
+const cleanUrlRewrites = {
+  "/attendance-check": "attendance-check.html",
+};
+
 const server = http.createServer((request, response) => {
   const requestPath = decodeURIComponent(request.url.split("?")[0]);
-  const relativePath = requestPath === "/" ? "index.html" : requestPath.slice(1);
+  const rewrittenPath = cleanUrlRewrites[requestPath] ?? requestPath;
+  const relativePath = rewrittenPath === "/" ? "index.html" : rewrittenPath.replace(/^\//, "");
   const filePath = path.normalize(path.join(root, relativePath));
 
   if (!filePath.startsWith(root)) {

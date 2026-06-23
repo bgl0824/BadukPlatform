@@ -180,7 +180,7 @@ export function toggleCategoryPrintSelection(categoryName, problems, selectedIds
   return { changed: true, selected: true };
 }
 
-export function getPrintPageCount(selectedCount, pageSize = 8) {
+export function getPrintPageCount(selectedCount, pageSize = 6) {
   if (selectedCount <= 0) {
     return 0;
   }
@@ -233,7 +233,7 @@ export function getSelectedCategoryCounts(selectedIds, problems, categoryOrder =
 export function formatPrintSelectionSummary(
   selectedIds,
   problems,
-  { categoryOrder = [], pageSize = 8 } = {},
+  { categoryOrder = [], pageSize = 6 } = {},
 ) {
   const selectedSet = selectedIds instanceof Set ? selectedIds : new Set(selectedIds);
   const categories = getSelectedCategoryCounts(selectedSet, problems, categoryOrder);

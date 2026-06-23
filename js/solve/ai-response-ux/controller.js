@@ -1,6 +1,7 @@
 import { AI_RESPONSE_UX_MESSAGES } from "./config.js";
 import { resolveCandidateResponses } from "./candidates.js";
 import { clearAiResponseSpots, renderAiResponseSpots } from "./spot-renderer.js";
+import { getProblemBoardSize } from "../../game/board-size.js";
 
 /**
  * AI 응수 UX 프로토타입 — 명시적 candidateResponses만 스팟 표시 (KataGo 연동 대비).
@@ -19,7 +20,12 @@ export function createAiResponseUxController({
   syncBoardPreviewContext,
   removeCapturedStonesAfterMove,
   cloneBoardStones,
+  getBoardCandidateLabels,
 }) {
+  function getActiveBoardSize(problem = getCurrentProblem?.()) {
+    return getProblemBoardSize(problem ?? {});
+  }
+
   function isActive() {
     return Boolean(appState.aiResponseSession?.active);
   }
@@ -46,7 +52,7 @@ export function createAiResponseUxController({
    */
   function enterAfterWrongMove(problem, wrongMove) {
     const stones = boardController.getStones();
-    const candidates = resolveCandidateResponses(problem, { boardSize });
+    const candidates = resolveCandidateResponses(problem, { boardSize: getActiveBoardSize(problem) });
 
     if (candidates.length === 0) {
       console.info("[AiResponseUx] no candidate responses — skip spot overlay");
@@ -63,7 +69,7 @@ export function createAiResponseUxController({
     };
 
     appState.isAiThinking = false;
-    renderAiResponseSpots(boardController, candidates, boardSize);
+    renderAiResponseSpots(boardController, candidates, getActiveBoardSize(problem));
     renderPanel({ visible: true, showActions: false });
     syncBoardPreviewContext();
     setStatus("백 응수 차례", { aiResponseTurn: true });
@@ -129,12 +135,14 @@ export function createAiResponseUxController({
       return;
     }
 
-    boardController.loadPosition(cloneBoardStones(session.boardSnapshotAfterWrong));
+    boardController.loadPosition(cloneBoardStones(session.boardSnapshotAfterWrong), {
+      candidateLabels: getBoardCandidateLabels?.(problem) ?? [],
+    });
     session.phase = "pick_white";
     session.selectedCandidate = null;
     session.whiteMove = null;
 
-    renderAiResponseSpots(boardController, session.candidates, boardSize);
+    renderAiResponseSpots(boardController, session.candidates, getActiveBoardSize());
     renderPanel({ visible: true, showActions: false });
     syncBoardPreviewContext();
     setStatus("백 응수 차례", { aiResponseTurn: true });
@@ -150,6 +158,9 @@ export function createAiResponseUxController({
 
     boardController.loadPosition(
       cloneBoardStones(appState.initialBoardStones ?? problem.stones ?? []),
+      {
+        candidateLabels: getBoardCandidateLabels?.(problem) ?? [],
+      },
     );
     appState.playedMoves = [];
     appState.solvedAnswerKeys = new Set();

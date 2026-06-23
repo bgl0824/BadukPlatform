@@ -20,6 +20,10 @@ import {
   PROGRESS_STATUS,
 } from "./student-progress-service.js";
 import { normalizeLevelGroup } from "./level-group-service.js";
+import {
+  buildDirectorComments,
+  buildGrowthSummaryNarrative,
+} from "./student-growth-report-narrative.js";
 
 export const GROWTH_REPORT_WINDOW_DAYS = 28;
 
@@ -259,24 +263,26 @@ function buildReviewSection(progressList, problems, activeLevelGroup) {
     }
   });
 
-  let parentSentence = "";
+  const briefLines = [];
   if (wrongNoteCount === 0) {
-    parentSentence = "아직 기록된 오답 문제가 없습니다.";
+    briefLines.push("아직 기록된 오답 문제가 없습니다.");
   } else if (reviewResolvedCount > 0) {
-    parentSentence = `틀린 문제 ${wrongNoteCount}개 중 ${reviewResolvedCount}개를 다시 풀어 맞췄습니다.`;
+    briefLines.push(`틀린 문제 ${wrongNoteCount}개 중`);
+    briefLines.push(`${reviewResolvedCount}개를 다시 해결했습니다.`);
   } else {
-    parentSentence = `틀린 문제 ${wrongNoteCount}개가 오답노트에 있습니다.`;
+    briefLines.push(`틀린 문제 ${wrongNoteCount}개가 오답노트에 있습니다.`);
   }
 
   if (repeatWrongCount > 0) {
-    parentSentence += ` 반복해서 틀린 문제는 ${repeatWrongCount}개입니다.`;
+    briefLines.push(`반복 오답은 ${repeatWrongCount}개입니다.`);
   }
 
   return {
     wrongNoteCount,
     reviewResolvedCount,
     repeatWrongCount,
-    parentSentence,
+    briefLines,
+    parentSentence: briefLines.join(" "),
   };
 }
 
@@ -456,8 +462,35 @@ export function buildStudentGrowthReport(userId, problems = [], options = {}) {
     problems,
   });
 
+  const officialGrade = options.officialGrade ?? null;
+  const growthSummary = buildGrowthSummaryNarrative({
+    studentName: options.studentName ?? "",
+    curriculumProgress: {
+      activeLevelGroup,
+      activeLevelGroupStatusLabel: curriculum.activeLevelGroupStatusLabel,
+      completionPercent: activePercent,
+      solvedCount: curriculum.solvedProblemCount ?? 0,
+      totalCount: curriculum.totalProblemCount ?? 0,
+      recentSolvedCount,
+      recentWindowLabel: `최근 ${windowDays}일`,
+    },
+    levelGroups: curriculum.levelGroups,
+    projectedGrade,
+    officialGrade,
+  });
+
+  const mapCategoryRow = (row) => ({
+    categoryName: row.categoryName,
+    solved: row.solved,
+    total: row.total,
+    completionPercent: row.completionPercent,
+    ...(row.repeatWrongCount != null ? { repeatWrongCount: row.repeatWrongCount } : {}),
+  });
+
+  const directorComments = buildDirectorComments(strengths, weaknesses);
+
   return {
-    version: "v1",
+    version: "v4",
     generatedAt: options.generatedAt ?? new Date().toISOString(),
     studentName: options.studentName ?? "",
     windowDays,
@@ -470,20 +503,13 @@ export function buildStudentGrowthReport(userId, problems = [], options = {}) {
       recentSolvedCount,
       recentWindowLabel: `최근 ${windowDays}일`,
     },
+    growthSummary,
+    growthOutcome: growthSummary.growthOutcome,
+    grades: growthSummary.grades,
+    directorComments,
     categoryAnalysis: {
-      strengths: strengths.map((row) => ({
-        categoryName: row.categoryName,
-        solved: row.solved,
-        total: row.total,
-        completionPercent: row.completionPercent,
-      })),
-      weaknesses: weaknesses.map((row) => ({
-        categoryName: row.categoryName,
-        solved: row.solved,
-        total: row.total,
-        completionPercent: row.completionPercent,
-        repeatWrongCount: row.repeatWrongCount,
-      })),
+      strengths: strengths.map(mapCategoryRow),
+      weaknesses: weaknesses.map(mapCategoryRow),
       recommended: recommended
         ? {
             categoryName: recommended.categoryName,
@@ -504,9 +530,30 @@ export function formatStudentGrowthReportPlainText(report) {
   const lines = [];
   const namePrefix = report.studentName ? `${report.studentName} ` : "";
 
-  lines.push(`${namePrefix}성장리포트 (V1)`);
+  lines.push(`${namePrefix}성장리포트 (V4)`);
   lines.push(`작성 기준: ${report.generatedAt?.slice(0, 10) ?? ""}`);
   lines.push("");
+
+  if (report.growthSummary?.paragraphs?.length) {
+    lines.push("[성장 요약]");
+    report.growthSummary.paragraphs.forEach((paragraph) => lines.push(paragraph));
+    lines.push("");
+  }
+
+  const outcome = report.growthOutcome ?? report.growthSummary?.growthOutcome;
+  if (outcome) {
+    lines.push("[성장 결과]");
+    lines.push(outcome.stageLabel);
+    lines.push(`현재 급수: ${outcome.currentGradeLabel}`);
+    lines.push(outcome.nextStepLabel);
+    if (report.grades) {
+      lines.push(`실제 급수: ${report.grades.officialLabel ?? "미등록"}`);
+      if (report.grades.projectedAvailable) {
+        lines.push(`예상 급수: ${report.grades.projectedLabel}`);
+      }
+    }
+    lines.push("");
+  }
 
   lines.push("[1. 과정 진행]");
   lines.push(
@@ -521,40 +568,44 @@ export function formatStudentGrowthReportPlainText(report) {
   lines.push("");
 
   lines.push("[2. 카테고리 분석]");
-  if (report.categoryAnalysis.strengths.length) {
-    lines.push(
-      `강점: ${report.categoryAnalysis.strengths.map((row) => `${row.categoryName} ${row.solved}/${row.total}`).join(", ")}`,
-    );
-  } else {
-    lines.push("강점: 아직 판단할 기록이 부족합니다.");
-  }
-  if (report.categoryAnalysis.weaknesses.length) {
-    lines.push(
-      `보완: ${report.categoryAnalysis.weaknesses.map((row) => `${row.categoryName} ${row.solved}/${row.total}`).join(", ")}`,
-    );
-  } else {
-    lines.push("보완: 뚜렷한 보완 유형이 없습니다.");
-  }
-  if (report.categoryAnalysis.recommended) {
-    lines.push(`추천 학습: ${report.categoryAnalysis.recommended.categoryName}`);
+  const appendCategoryBlock = (title, items, emptyLabel) => {
+    lines.push(title);
+    if (!items?.length) {
+      lines.push(emptyLabel);
+      return;
+    }
+    items.forEach((row) => {
+      lines.push(`${row.categoryName} ${row.solved}/${row.total}`);
+    });
+  };
+  appendCategoryBlock(
+    "잘하는 유형",
+    report.categoryAnalysis.strengths,
+    "아직 판단할 기록이 부족합니다.",
+  );
+  appendCategoryBlock(
+    "보완 유형",
+    report.categoryAnalysis.weaknesses,
+    "뚜렷한 보완 유형이 없습니다.",
+  );
+  if (report.directorComments) {
+    lines.push("원장 코멘트");
+    lines.push(report.directorComments.strengthLine);
+    lines.push(report.directorComments.weaknessLine);
   }
   lines.push("");
 
   lines.push("[3. 복습 습관]");
-  lines.push(`오답노트 문제: ${report.reviewHabits.wrongNoteCount}개`);
-  lines.push(`복습 완료: ${report.reviewHabits.reviewResolvedCount}개`);
-  lines.push(`반복 오답: ${report.reviewHabits.repeatWrongCount}개`);
-  lines.push(report.reviewHabits.parentSentence);
+  (report.reviewHabits.briefLines ?? [report.reviewHabits.parentSentence]).forEach((line) => {
+    lines.push(line);
+  });
   lines.push("");
 
-  lines.push("[4. 예상 급수 (참고)]");
-  if (report.projectedGrade.projectedGradeLabel) {
-    lines.push(`예상: ${report.projectedGrade.projectedGradeLabel}`);
-    lines.push(`근거: ${report.projectedGrade.basisSummary}`);
-  } else {
-    lines.push(report.projectedGrade.basisSummary);
+  lines.push("[급수]");
+  lines.push(`실제 급수: ${report.grades?.officialLabel ?? "미등록"}`);
+  if (report.grades?.projectedAvailable) {
+    lines.push(`예상 급수: ${report.grades.projectedLabel}`);
   }
-  lines.push(report.projectedGrade.disclaimer);
 
   return lines.join("\n");
 }

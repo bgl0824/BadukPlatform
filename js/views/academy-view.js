@@ -24,6 +24,8 @@ export function createAcademyView({
   renderAcademyStudents,
   renderTeacherManagement,
   renderStudentAccounts,
+  renderAttendancePanel,
+  hideAttendancePanel,
 }) {
   let activeAcademySection = ACADEMY_SECTIONS.students;
 
@@ -44,6 +46,7 @@ export function createAcademyView({
     elements.academyManagementSubmenu?.classList.toggle("is-hidden", !isAcademyManagement);
 
     if (isAcademyManagement) {
+      hideAcademyManagementSections();
       showAcademySection(activeAcademySection);
       return;
     }
@@ -55,6 +58,13 @@ export function createAcademyView({
       return;
     }
 
+    if (menuType === "attendance") {
+      hideAcademyManagementSections();
+      elements.attendancePanel?.classList.remove("is-hidden");
+      renderAttendancePanel?.({ resetSection: true });
+      return;
+    }
+
     hideAcademyManagementSections();
   }
 
@@ -62,6 +72,7 @@ export function createAcademyView({
     elements.academySectionPanels?.forEach((panel) => {
       panel.classList.add("is-hidden");
     });
+    hideAttendancePanel?.();
     elements.academyManagementSubmenu
       ?.querySelectorAll(".academy-submenu-button")
       .forEach((button) => {
@@ -214,7 +225,7 @@ export function createAcademyView({
       attendance: {
         eyebrow: "Attendance",
         title: "출결관리",
-        description: "원생 출석과 결석 내역을 관리하는 학원장 전용 메뉴입니다.",
+        description: "월별 출석부를 확인하고 수업부별 출석을 체크합니다.",
       },
       payments: {
         eyebrow: "Payments",

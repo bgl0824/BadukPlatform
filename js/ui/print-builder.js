@@ -471,7 +471,35 @@ export function createPrintBuilderController({
 
 
 
+  function collapsePrintBuilderUi() {
+
+    if (elements.printBuilder) {
+
+      elements.printBuilder.open = false;
+
+    }
+
+
+
+    elements.printBuilder
+
+      ?.querySelectorAll(".print-builder-panel[data-print-panel]")
+
+      .forEach((panel) => {
+
+        panel.open = false;
+
+      });
+
+  }
+
+
+
   function clearAll() {
+
+    collapsePrintBuilderUi();
+
+
 
     if (typeof onClearAll === "function") {
 
@@ -578,6 +606,8 @@ export function createPrintBuilderController({
     clearCategory,
 
     clearAll,
+
+    collapsePrintBuilderUi,
 
   };
 

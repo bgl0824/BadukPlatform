@@ -410,9 +410,13 @@ export function createAdminController({
 
       stones: [],
 
+      candidateLabels: [],
+
       correctMove: { x: 0, y: 0 },
 
       correctSequence: [],
+
+      boardSize: 13,
 
     };
 

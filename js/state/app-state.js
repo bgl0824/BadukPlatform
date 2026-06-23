@@ -18,6 +18,7 @@ export const appState = {
   selectedPrintProblemIds: new Set(),
   playedMoves: [],
   initialBoardStones: [],
+  initialCandidateLabels: [],
   reviewSession: null,
   pendingCategoryCompletion: null,
   studyExpandedLevelGroups: null,

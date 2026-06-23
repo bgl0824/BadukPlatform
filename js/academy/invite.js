@@ -148,24 +148,15 @@ export function createAcademyInviteController({
               </div>
               <div class="invite-code-card-status">
                 <span class="invite-status-badge invite-status-badge--${status.tone}">${status.label}</span>
-                <a
-                  class="invite-signup-link"
-                  href="${escapeHtml(signupLink)}"
-                  target="_blank"
-                  rel="noopener noreferrer"
-                >
-                  <span class="invite-signup-link__icon" aria-hidden="true">↗</span>
-                  <span>가입 링크 열기</span>
-                </a>
               </div>
               <p class="invite-code-meta">생성일: ${formatDateTime(invite.createdAt)} · ${usage.label}</p>
             </div>
             <div class="invite-card-actions">
+              <button class="primary-button invite-copy-link-button" type="button" data-copy-invite-link="${escapeHtml(signupLink)}">
+                링크 복사
+              </button>
               <button class="secondary-button" type="button" data-copy-invite="${escapeHtml(invite.code)}">
                 코드 복사
-              </button>
-              <button class="secondary-button" type="button" data-copy-invite-link="${escapeHtml(signupLink)}">
-                링크 복사
               </button>
               ${
                 canDeleteInvite

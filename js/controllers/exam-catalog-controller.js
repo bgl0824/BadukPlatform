@@ -8,6 +8,12 @@ import {
 import { formatGradeLevelLabel } from "../services/grade-level-service.js";
 import { normalizeRole, ROLES } from "../permissions/permission-service.js";
 import { mockTestAttemptService } from "../services/mock-test-attempt-service.js";
+import {
+  examSetLearningProgressService,
+  formatLearningProgressDate,
+  getLearningProgressPercent,
+  isResumableLearningProgress,
+} from "../services/exam-set-learning-progress-service.js";
 
 export function createExamCatalogController({
   elements,
@@ -21,6 +27,7 @@ export function createExamCatalogController({
 }) {
   let catalogSets = [];
   let studentMockAttemptBySetId = new Map();
+  let studentLearningProgressBySetId = new Map();
   let openMockResultsExamSetId = null;
 
   function bindExamCatalogEvents() {
@@ -131,6 +138,7 @@ export function createExamCatalogController({
     }
 
     await loadStudentMockAttempts(user);
+    loadStudentLearningProgress(user);
     renderExamCatalog();
     if (openMockResultsExamSetId) {
       const openSet = catalogSets.find((set) => set.id === openMockResultsExamSetId);
@@ -141,6 +149,14 @@ export function createExamCatalogController({
         onHideMockResults?.();
       }
     }
+  }
+
+  function loadStudentLearningProgress(user) {
+    studentLearningProgressBySetId = new Map();
+    if (normalizeRole(user?.role) !== ROLES.student || !user?.id) {
+      return;
+    }
+    studentLearningProgressBySetId = examSetLearningProgressService.getAllLearningProgress(user.id);
   }
 
   async function loadStudentMockAttempts(user) {
@@ -176,6 +192,10 @@ export function createExamCatalogController({
 
     elements.examSetCatalog.classList.remove("is-hidden");
 
+    if (elements.examSetCatalog instanceof HTMLDetailsElement) {
+      elements.examSetCatalog.open = Boolean(appState.examSession?.title);
+    }
+
     if (elements.examSetCatalogSummary) {
       if (appState.examSession?.title) {
         elements.examSetCatalogSummary.textContent = `진행 중: ${appState.examSession.title}`;
@@ -205,13 +225,24 @@ export function createExamCatalogController({
         const role = normalizeRole(user?.role);
         const mockCompleted =
           set.type === EXAM_SET_TYPE.mockTest && role === ROLES.student && Boolean(studentAttempt);
-        const primaryAction = resolveExamCatalogPrimaryAction(set, user, { mockCompleted });
+        const learningProgress = studentLearningProgressBySetId.get(set.id) ?? null;
+        const hasLearningProgress = isResumableLearningProgress(learningProgress);
+        const primaryAction = resolveExamCatalogPrimaryAction(set, user, {
+          mockCompleted,
+          hasLearningProgress,
+        });
         const visibilityNote =
           set.visibility === EXAM_SET_VISIBILITY.academy
             ? " · 학원 공개"
             : set.visibility === EXAM_SET_VISIBILITY.public
               ? " · 전체 공개"
               : "";
+        const learningProgressNote =
+          hasLearningProgress && learningProgress
+            ? `<p class="exam-set-card-learning-progress">진행률 ${getLearningProgressPercent(learningProgress)}% · ${learningProgress.resumeIndex} / ${learningProgress.totalQuestionCount} 완료</p>
+              <p class="exam-set-card-learning-date">최근 학습 ${escapeHtml(formatLearningProgressDate(learningProgress.updatedAt))}</p>`
+            : "";
+
         const showResultButton = canViewMockResultButton(user, set, studentAttempt);
         const resultsOpen = openMockResultsExamSetId === set.id;
         const resultsButtonLabel = resultsOpen ? "▲ 결과 닫기" : "▼ 결과 보기";
@@ -225,6 +256,7 @@ export function createExamCatalogController({
               <p class="exam-set-card-mock-subscore">${studentAttempt.correctCount} / ${studentAttempt.totalQuestionCount}</p>`
                   : ""
               }
+              ${learningProgressNote}
               <p class="exam-set-card-meta">${escapeHtml(gradeLabel)} · ${escapeHtml(typeLabel)} · ${count}문제${escapeHtml(visibilityNote)}</p>
               ${
                 set.description
@@ -281,7 +313,7 @@ function isExamCatalogStaffRole(role) {
   return role === ROLES.admin || role === ROLES.academyOwner || role === ROLES.teacher;
 }
 
-function resolveExamCatalogPrimaryAction(set, user, { mockCompleted = false } = {}) {
+function resolveExamCatalogPrimaryAction(set, user, { mockCompleted = false, hasLearningProgress = false } = {}) {
   const role = normalizeRole(user?.role);
 
   if (mockCompleted) {
@@ -301,6 +333,10 @@ function resolveExamCatalogPrimaryAction(set, user, { mockCompleted = false } = 
       return { kind: "preview", label: "문제 열람" };
     }
     return { kind: "start", label: "모의시험 시작" };
+  }
+
+  if (examSetLearningProgressService.isResumableQuestionBankSet(set) && hasLearningProgress) {
+    return { kind: "start", label: "이어서 학습하기" };
   }
 
   return { kind: "start", label: "기출문제 풀기" };

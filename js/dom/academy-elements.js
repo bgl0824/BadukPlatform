@@ -44,6 +44,34 @@ export const academyElements = {
 
   academyStudentAccountsPanel: document.querySelector("#academy-student-accounts-panel"),
 
+  attendancePanel: document.querySelector("#attendance-panel"),
+
+  attendanceManagementSubmenu: document.querySelector("#attendance-management-submenu"),
+
+  attendanceSubmenuButtons: document.querySelectorAll("[data-attendance-section]"),
+
+  attendanceSectionPanels: document.querySelectorAll("[data-attendance-section-panel]"),
+
+  attendanceMonthlySection: document.querySelector("#attendance-monthly-section"),
+
+  attendancePanelBody: document.querySelector("#attendance-panel-body"),
+
+  attendanceCodesSection: document.querySelector("#attendance-codes-section"),
+
+  attendanceCodesBody: document.querySelector("#attendance-codes-body"),
+
+  attendanceCheckSection: document.querySelector("#attendance-check-section"),
+
+  attendanceCheckBody: document.querySelector("#attendance-check-body"),
+
+  attendanceKioskSection: document.querySelector("#attendance-kiosk-section"),
+
+  attendanceKioskBody: document.querySelector("#attendance-kiosk-body"),
+
+  attendanceSmsLogsSection: document.querySelector("#attendance-sms-logs-section"),
+
+  attendanceSmsLogsBody: document.querySelector("#attendance-sms-logs-body"),
+
   academyAccountsTitle: document.querySelector("#academy-accounts-title"),
 
   academyAccountsDescription: document.querySelector("#academy-accounts-description"),
@@ -90,6 +118,22 @@ export const academyElements = {
   studentReviewTitle: document.querySelector("#student-review-title"),
 
   studentReviewList: document.querySelector("#student-review-list"),
+
+  studentReviewSelectAll: document.querySelector("#student-review-select-all"),
+
+  studentReviewPrintSelected: document.querySelector("#student-review-print-selected"),
+
+  studentReviewArchiveSelected: document.querySelector("#student-review-archive-selected"),
+
+  studentReviewDeleteSelected: document.querySelector("#student-review-delete-selected"),
+
+  studentReviewArchivePromptModal: document.querySelector("#student-review-archive-prompt-modal"),
+
+  studentReviewArchivePromptMessage: document.querySelector("#student-review-archive-prompt-message"),
+
+  studentReviewArchivePromptConfirm: document.querySelector("#student-review-archive-prompt-confirm"),
+
+  studentReviewArchivePromptDismiss: document.querySelector("#student-review-archive-prompt-dismiss"),
 
   toggleArchivedReviewNotes: document.querySelector("#toggle-archived-review-notes"),
 

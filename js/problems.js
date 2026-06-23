@@ -1,6 +1,21 @@
 ﻿(function () {
 const BOARD_SIZE = 13;
 
+function normalizeBoardSize(value) {
+  const size = Number(value);
+  if (size === 9) {
+    return 9;
+  }
+  if (size === 13) {
+    return 13;
+  }
+  return BOARD_SIZE;
+}
+
+function getProblemBoardSize(problem) {
+  return normalizeBoardSize(problem?.boardSize ?? problem?.board_size);
+}
+
 const STONE = {
   black: "black",
   white: "white",
@@ -686,6 +701,7 @@ function toSupabaseRow(problem) {
     correct_sequence: problem.correctSequence ?? null,
     display_order: Math.floor(displayOrder),
     grade_level: normalizeGradeLevelForStorage(problem.gradeLevel),
+    board_size: normalizeBoardSize(problem.boardSize ?? problem.board_size),
   };
 
   if (problem.problemMode) {
@@ -732,7 +748,42 @@ function toSupabaseRow(problem) {
     row.target_white_mark = targetMark;
   }
 
+  row.candidate_labels = sanitizeCandidateLabelsForStorage(
+    problem.candidateLabels ?? problem.candidate_labels,
+  );
+
   return row;
+}
+
+function sanitizeCandidateLabelsForStorage(labels) {
+  if (!Array.isArray(labels)) {
+    return [];
+  }
+
+  const allowed = new Set(["A", "B", "C", "D"]);
+  const seen = new Set();
+  const sanitized = [];
+
+  labels.forEach((entry) => {
+    const x = Number(entry?.x);
+    const y = Number(entry?.y);
+    const label = String(entry?.label ?? "")
+      .trim()
+      .toUpperCase();
+    if (!allowed.has(label) || !Number.isInteger(x) || !Number.isInteger(y) || x < 0 || y < 0) {
+      return;
+    }
+
+    const key = `${x}:${y}`;
+    if (seen.has(key)) {
+      return;
+    }
+
+    seen.add(key);
+    sanitized.push({ x, y, label });
+  });
+
+  return sanitized;
 }
 
 function normalizeGradeLevelForStorage(value) {
@@ -820,6 +871,11 @@ function fromSupabaseRow(row) {
     problem.target_white_mark = problem.targetWhiteMark;
   }
 
+  problem.candidateLabels = sanitizeCandidateLabelsForStorage(row.candidate_labels);
+  problem.candidate_labels = problem.candidateLabels;
+
+  problem.boardSize = normalizeBoardSize(row.board_size);
+
   return problem;
 }
 
@@ -862,6 +918,12 @@ function cloneProblem(problem) {
       : undefined,
     targetWhiteMark: problem.targetWhiteMark ?? problem.target_white_mark,
     target_white_mark: problem.targetWhiteMark ?? problem.target_white_mark,
+    candidateLabels: sanitizeCandidateLabelsForStorage(
+      problem.candidateLabels ?? problem.candidate_labels,
+    ),
+    candidate_labels: sanitizeCandidateLabelsForStorage(
+      problem.candidateLabels ?? problem.candidate_labels,
+    ),
   };
 
   if (clonedProblem.type === "ox") {
@@ -881,5 +943,7 @@ window.BadukProblems = {
   STONE,
   problems,
   ProblemStore,
+  getProblemBoardSize,
+  normalizeBoardSize,
 };
 })();

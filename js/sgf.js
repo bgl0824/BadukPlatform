@@ -6,7 +6,7 @@ function pointToSgf(point) {
 }
 
 function createProblemSgf(problem, playedMoves = []) {
-  const size = window.BadukProblems?.BOARD_SIZE ?? 13;
+  const size = window.BadukProblems?.getProblemBoardSize?.(problem) ?? 13;
   const setupNodes = buildSetupNodes(problem.stones);
   const moveNodes = playedMoves
     .map((move) => `;${move.color === "black" ? "B" : "W"}[${pointToSgf(move)}]`)

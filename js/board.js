@@ -5,6 +5,11 @@ import {
   sanitizeStone,
   sanitizeStones,
 } from "./game/board-point-validation.js";
+import {
+  registerCandidateLabelDrawHandler,
+  sanitizeCandidateLabels,
+  CANDIDATE_LABEL_TYPE,
+} from "./game/candidate-labels.js";
 
 const { STONE } = window.BadukProblems;
 
@@ -137,6 +142,7 @@ function registerGhostPreviewHandlers() {
 }
 
 registerGhostPreviewHandlers();
+registerCandidateLabelDrawHandler();
 
 class BoardController {
   applyBoardBackgroundFallback() {
@@ -167,6 +173,7 @@ class BoardController {
     this.onSecondaryPlay = onSecondaryPlay;
     this.onInvalidPlay = onInvalidPlay;
     this.stones = [];
+    this.candidateLabels = [];
     this.aiResponseSpots = [];
     this.answerMarker = null;
     this.previewContext = {
@@ -456,10 +463,18 @@ class BoardController {
     this.ghostObject = null;
   }
 
-  loadPosition(stones) {
+  loadPosition(stones, options = {}) {
     this.stones = sanitizeStones(stones, this.size, "loadPosition");
+    if (Object.prototype.hasOwnProperty.call(options, "candidateLabels")) {
+      this.candidateLabels = sanitizeCandidateLabels(options.candidateLabels, this.size);
+    }
     this.answerMarker = null;
     this.clearPreview();
+    this.render();
+  }
+
+  setCandidateLabels(labels) {
+    this.candidateLabels = sanitizeCandidateLabels(labels, this.size);
     this.render();
   }
 
@@ -537,6 +552,47 @@ class BoardController {
     this.syncGhostObject();
   }
 
+  setSize(newSize) {
+    const normalized = Number(newSize) === 9 ? 9 : 13;
+    if (normalized === this.size && this.board) {
+      this.resize();
+      return;
+    }
+
+    const stones = sanitizeStones(this.stones, normalized, "setSize:stones");
+    const candidateLabels = sanitizeCandidateLabels(this.candidateLabels, normalized);
+    const answerMarker = this.answerMarker
+      ? sanitizeBoardPoint(this.answerMarker, normalized, "setSize:answerMarker")
+      : null;
+    const aiResponseSpots = (Array.isArray(this.aiResponseSpots) ? this.aiResponseSpots : [])
+      .map((spot) => sanitizeBoardSpot(spot, normalized, "setSize:aiResponseSpot"))
+      .filter(Boolean);
+
+    this.size = normalized;
+    this.clearPreview();
+    this.pendingConfirmPoint = null;
+    this.stones = stones;
+    this.candidateLabels = candidateLabels;
+    this.answerMarker = answerMarker;
+    this.aiResponseSpots = aiResponseSpots;
+
+    this.element.innerHTML = "";
+    this.board = new WGo.Board(this.element, {
+      size: this.size,
+      width: this.getResponsiveWidth(),
+      background: BOARD_BACKGROUND_IMAGE,
+      section: {
+        top: 0,
+        right: 0,
+        bottom: 0,
+        left: 0,
+      },
+    });
+
+    this.applyBoardBackgroundFallback();
+    this.render();
+  }
+
   render() {
     const previewState = this.previewState;
     this.ghostObject = null;
@@ -578,6 +634,18 @@ class BoardController {
           type: spot.type,
         },
         "render:aiResponseSpot",
+      );
+    });
+
+    this.candidateLabels.forEach((entry) => {
+      this.safeAddObject(
+        {
+          x: entry.x,
+          y: entry.y,
+          type: CANDIDATE_LABEL_TYPE,
+          text: entry.label,
+        },
+        "render:candidateLabel",
       );
     });
 

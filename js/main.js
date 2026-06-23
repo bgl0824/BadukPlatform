@@ -12,7 +12,13 @@ import { adminElements } from "./dom/admin-elements.js";
 import { platformAdminElements } from "./dom/platform-admin-elements.js";
 import { problemElements } from "./dom/problem-elements.js";
 import { removeCapturedStonesAfterMove as calculateStonesAfterCapture } from "./game/capture.js";
-import { sanitizeStones } from "./game/board-point-validation.js";
+import { sanitizeStones, isValidBoardPoint } from "./game/board-point-validation.js";
+import { getBoardSizeLabel, getProblemBoardSize } from "./game/board-size.js";
+import {
+  applyCandidateLabelsToWgoBoard,
+  cloneCandidateLabels,
+  getProblemCandidateLabels,
+} from "./game/candidate-labels.js";
 import { evaluatePlacement, PLACEMENT_STATUS } from "./game/placement-validation.js";
 import { isSamePoint } from "./game/rules.js";
 import {
@@ -138,6 +144,7 @@ import { adminState } from "./state/admin-state.js";
 import { appState } from "./state/app-state.js";
 import { createCreatorState } from "./state/creator-state.js";
 import { createAcademyView } from "./views/academy-view.js";
+import { createAttendanceView } from "./views/attendance-view.js";
 import { createAdminView } from "./views/admin-view.js";
 import { createPlatformAdminView } from "./views/platform-admin-view.js";
 import { createExamView } from "./views/exam-view.js";
@@ -148,8 +155,14 @@ import { createCategoryCompleteModalController } from "./ui/category-complete-mo
 import { createMockTestUi } from "./ui/mock-test-ui.js";
 import { createStudyView } from "./views/study-view.js";
 import { renderMockTestResultsTableHtml } from "./views/mock-test-results-view.js";
+import { buildPromotionPaperPagesHtml } from "./views/promotion-paper-view.js";
 import { computeMockTestTiming } from "./utils/mock-test-time.js";
 import { mockTestLeaveGuard } from "./mock-test/mock-test-leave-guard.js";
+import {
+  examSetLearningProgressService,
+  isResumableLearningProgress,
+} from "./services/exam-set-learning-progress-service.js";
+import { createExamSetResumeUi } from "./ui/exam-set-resume-ui.js";
 
 const { BoardController } = window.BadukBoard;
 const { BOARD_SIZE, ProblemStore, problems, STONE } = window.BadukProblems;
@@ -179,6 +192,16 @@ const boardFeedbackOverlay = createBoardFeedbackOverlay({
   subtitleEl: elements.boardFeedbackSubtitle,
   characterSlot: elements.boardCharacterLayer,
   speechSlot: elements.boardSpeechLayer,
+  studyLayout: elements.studyLayout,
+});
+
+const examSetResumeUi = createExamSetResumeUi({
+  modal: elements.examSetResumeModal,
+  titleEl: elements.examSetResumeTitle,
+  bodyEl: elements.examSetResumeBody,
+  resumeButton: elements.examSetResumeContinueButton,
+  restartButton: elements.examSetResumeRestartButton,
+  cancelButton: elements.examSetResumeCancelButton,
 });
 
 const mockTestUi = createMockTestUi({
@@ -253,7 +276,7 @@ function evaluateBoardPreviewPoint(point, stones = boardController.getStones()) 
     return evaluatePlacement(
       stones,
       { ...point, color },
-      { boardSize: BOARD_SIZE, stoneColors: STONE },
+      { boardSize: boardController.size, stoneColors: STONE },
     );
   }
 
@@ -347,6 +370,14 @@ const {
   formatDateTime,
 });
 
+const { renderAttendancePanel, bindAttendanceEvents, hideAttendancePanel } = createAttendanceView({
+  elements,
+  getCurrentUser,
+  escapeHtml,
+});
+
+let printReviewProblemsForAcademy = null;
+
 const {
   bindAcademyMemberEvents,
   renderAcademyMembers,
@@ -359,6 +390,7 @@ const {
   getTotalProblemCount: () => problems.length,
   getProblems: () => problems,
   getProblemById: (problemId) => problems.find((problem) => problem.id === problemId),
+  printReviewProblems: (...args) => printReviewProblemsForAcademy?.(...args),
   openProblemInLibrary: (problemId) => {
     const problem = problems.find((item) => item.id === problemId);
     if (!problem) {
@@ -416,7 +448,10 @@ function clearPrintSelectionSession(options = {}) {
   }
 }
 
-const { printSelectedProblems: runPrintSelectedProblems } = createProblemPrintController({
+const {
+  printSelectedProblems: runPrintSelectedProblems,
+  printExplicitProblems: runPrintExplicitProblems,
+} = createProblemPrintController({
   elements,
   problems,
   getSelectedPrintProblems,
@@ -434,6 +469,25 @@ function printSelectedProblems() {
 
   runPrintSelectedProblems();
 }
+
+function printReviewProblems(problemIds, { title, onAfterPrint } = {}) {
+  const idSet = new Set(problemIds.filter(Boolean));
+  const selectedProblems = orderProblemsForPrint(problems, idSet, CREATOR_CATEGORIES, {});
+
+  if (selectedProblems.length === 0) {
+    setFeedback("인쇄할 문제를 찾을 수 없습니다.", "wrong");
+    return;
+  }
+
+  runPrintExplicitProblems(selectedProblems, {
+    titleOverride: title,
+    onAfterPrint,
+    printFormat: "detailed",
+    feedbackMessage: `선택한 ${selectedProblems.length}개 오답 문제를 인쇄합니다.`,
+  });
+}
+
+printReviewProblemsForAcademy = printReviewProblems;
 
 let adminEditorActions = {
   renderAdminEditor: () => {},
@@ -608,7 +662,6 @@ const {
   problems,
   ProblemStore,
   problemService,
-  BOARD_SIZE,
   STONE,
   CREATOR_CATEGORIES,
   requireAdminMode,
@@ -664,6 +717,8 @@ const academyView = createAcademyView({
   renderAcademyStudents,
   renderTeacherManagement,
   renderStudentAccounts,
+  renderAttendancePanel,
+  hideAttendancePanel,
 });
 
 const {
@@ -745,7 +800,7 @@ const examCatalog = createExamCatalogController({
       });
       return;
     }
-    void startExamSetSession(examSet);
+    void beginQuestionBankExamSet(examSet);
   },
   onPreviewExamSet: (examSet) => {
     void openExamSetQuestionPreview(examSet);
@@ -791,6 +846,7 @@ aiResponseUx = createAiResponseUxController({
   syncBoardPreviewContext,
   removeCapturedStonesAfterMove,
   cloneBoardStones,
+  getBoardCandidateLabels,
 });
 aiResponseUx.bindEvents();
 
@@ -809,6 +865,7 @@ aiResponseSolve = createAiResponseSolveEngine({
   resetCurrentProblemAfterWrong: resetCurrentProblemAfterWrongMove,
   finishWrongReveal: finishAiResponseWrongReveal,
   cloneBoardStones,
+  getBoardCandidateLabels,
   markProblemInProgress: (problem) => {
     safeRecordStudentProgress(() => {
       studentProgressService.markProblemInProgress({
@@ -877,6 +934,7 @@ function runApplicationBootstrap() {
     });
     boot.run("bindStudyScreenEvents", () => bindStudyScreenEvents());
     boot.run("bindAcademyMemberEvents", () => bindAcademyMemberEvents());
+    boot.run("bindAttendanceEvents", () => bindAttendanceEvents());
     boot.run("bindInviteCodeEvents", () => bindInviteCodeEvents());
     boot.run("bindAcademyEvents", () => bindAcademyEvents());
     boot.run("bindPlatformAdminEvents", () => bindPlatformAdminEvents());
@@ -1053,25 +1111,31 @@ function bindStudyScreenEvents() {
   });
 
   elements.promotionPaperPrintButton?.addEventListener("click", () => {
-    document.body.classList.add("promotion-paper-print");
-    ensurePromotionPaperPageStyle();
-    window.print();
+    void runPromotionPaperPrint();
   });
   elements.promotionPaperCloseButton?.addEventListener("click", () => {
-    document.body.classList.remove("promotion-paper-print");
+    clearPromotionPaperPrintModeClasses();
     clearPromotionPaperPageStyle();
     showListMode();
   });
   window.addEventListener("beforeprint", () => {
     const paperVisible = !elements.promotionPaperScreen?.classList.contains("is-hidden");
-    if (paperVisible) {
-      document.body.classList.add("promotion-paper-print");
-      ensurePromotionPaperPageStyle();
+    if (!paperVisible) {
+      return;
     }
+
+    const monochrome = isPromotionPaperMonochromePrintEnabled();
+    setPromotionPaperPrintModeClasses({ monochrome });
+    ensurePromotionPaperPageStyle();
+    preparePromotionPaperPrintBoardsSync(elements.promotionPaperQuestions, { monochrome });
   });
   window.addEventListener("afterprint", () => {
-    document.body.classList.remove("promotion-paper-print");
+    const paperVisible = !elements.promotionPaperScreen?.classList.contains("is-hidden");
+    clearPromotionPaperPrintModeClasses();
     clearPromotionPaperPageStyle();
+    if (paperVisible) {
+      mountPromotionPaperBoards(elements.promotionPaperQuestions);
+    }
   });
 }
 
@@ -1101,6 +1165,7 @@ function logScreen(event, detail) {
 function applyInitialListScreen() {
   logScreen("applyInitialListScreen");
   hideCategoryCompleteModal();
+  hideAttendancePanel?.();
   clearReviewSession();
   clearPendingAiMove();
   appState.isAiThinking = false;
@@ -1196,7 +1261,7 @@ function resolveActiveLevelGroupForStudy(progressList) {
 
 function getStudyExpandedLevelGroups(defaultLevelGroup) {
   if (appState.studyExpandedLevelGroups === null) {
-    appState.studyExpandedLevelGroups = new Set([normalizeLevelGroup(defaultLevelGroup)]);
+    appState.studyExpandedLevelGroups = new Set();
   }
 
   return appState.studyExpandedLevelGroups;
@@ -1424,6 +1489,7 @@ function showStudyMode() {
   }
 
   hideCategoryCompleteModal();
+  hideAttendancePanel?.();
   clearReviewSession();
   clearPendingAiMove();
   clearStudySolvePath();
@@ -1503,6 +1569,7 @@ function loadReviewProblem(queueIndex) {
   appState.playedMoves = [];
   aiResponseSolve?.clearSession?.();
   const boardStones = captureInitialBoardState(reviewItem.problem);
+  boardController.setSize(getProblemBoardSize(reviewItem.problem));
   solveView.renderProblem(reviewItem.problem, reviewItem.index, { reviewItem, boardStones });
   logLearningFlow("loadReviewProblem", {
     source: "review",
@@ -1543,26 +1610,302 @@ function loadProblemById(problemId, { examSessionIndex } = {}) {
   loadProblem(index);
 }
 
+const PROMOTION_PAPER_BOARD_COLOR_BACKGROUND = "#f3d08a";
+const PROMOTION_PAPER_BOARD_MONOCHROME_BACKGROUND = "#ffffff";
+
+function getPromotionPaperMonochromeBoardTheme() {
+  const defaultTheme = window.WGo?.Board?.themes?.default ?? {};
+  return {
+    ...defaultTheme,
+    gridLinesColor: "#222222",
+    gridLinesWidth: 1,
+    starColor: "#111111",
+    shadowBlur: 0,
+    shadowSize: 0,
+  };
+}
+
+function addPromotionPaperBoardStones(previewBoard, problem) {
+  const boardSize = getProblemBoardSize(problem);
+  problem.stones.forEach((stone) => {
+    if (!isValidBoardPoint(stone, boardSize)) {
+      return;
+    }
+
+    previewBoard.addObject({
+      x: stone.x,
+      y: stone.y,
+      c: stone.color === STONE.black ? WGo.B : WGo.W,
+    });
+
+    const markType = getWgoMarkType(stone.mark);
+    if (markType) {
+      previewBoard.addObject({
+        x: stone.x,
+        y: stone.y,
+        type: markType,
+      });
+    }
+  });
+
+  applyCandidateLabelsToWgoBoard(previewBoard, getProblemCandidateLabels(problem), boardSize);
+}
+
+function renderPromotionPaperPrintBoard(element, problem, { monochrome = false } = {}) {
+  if (!element || !window.WGo || !Array.isArray(problem?.stones)) {
+    return;
+  }
+
+  const boardSize = getProblemBoardSize(problem);
+  const boardWidth = element.clientWidth || 196;
+  const boardOptions = {
+    size: boardSize,
+    width: boardWidth,
+    section: {
+      top: 0,
+      right: 0,
+      bottom: 0,
+      left: 0,
+    },
+  };
+
+  if (monochrome) {
+    boardOptions.background = PROMOTION_PAPER_BOARD_MONOCHROME_BACKGROUND;
+    boardOptions.theme = getPromotionPaperMonochromeBoardTheme();
+  }
+
+  const previewBoard = new WGo.Board(element, boardOptions);
+  addPromotionPaperBoardStones(previewBoard, problem);
+}
+
+let promotionPaperPrintPrepared = false;
+
+function getPromotionPaperBoardCanvases(element) {
+  const wgoBoard = element.querySelector(".wgo-board");
+  if (wgoBoard) {
+    return [...wgoBoard.querySelectorAll("canvas")];
+  }
+  return [...element.querySelectorAll("canvas")];
+}
+
+function getPromotionPaperBoardFlattenBackground(element, fallbackColor) {
+  const wgoBoard = element.querySelector(".wgo-board");
+  if (!wgoBoard) {
+    return fallbackColor;
+  }
+
+  const backgroundColor = getComputedStyle(wgoBoard).backgroundColor;
+  if (backgroundColor && backgroundColor !== "rgba(0, 0, 0, 0)" && backgroundColor !== "transparent") {
+    return backgroundColor;
+  }
+
+  return fallbackColor;
+}
+
+function flattenPromotionPaperBoardForPrint(
+  element,
+  backgroundColor = PROMOTION_PAPER_BOARD_COLOR_BACKGROUND,
+) {
+  const canvases = getPromotionPaperBoardCanvases(element);
+  const baseCanvas = canvases[0];
+  if (!baseCanvas || baseCanvas.width === 0 || baseCanvas.height === 0) {
+    return;
+  }
+
+  const exportCanvas = document.createElement("canvas");
+  exportCanvas.width = baseCanvas.width;
+  exportCanvas.height = baseCanvas.height;
+
+  const context = exportCanvas.getContext("2d");
+  context.fillStyle = getPromotionPaperBoardFlattenBackground(element, backgroundColor);
+  context.fillRect(0, 0, exportCanvas.width, exportCanvas.height);
+  canvases.forEach((canvas) => {
+    context.drawImage(canvas, 0, 0, exportCanvas.width, exportCanvas.height);
+  });
+
+  const image = document.createElement("img");
+  image.src = exportCanvas.toDataURL("image/png");
+  image.alt = "승급심사 바둑판";
+  image.decoding = "sync";
+  image.dataset.ppPrintBoard = "1";
+  image.style.display = "block";
+  image.style.width = "100%";
+  image.style.height = "100%";
+  image.style.objectFit = "contain";
+
+  element.replaceChildren(image);
+}
+
+function mountPromotionPaperBoardNode(node, problem) {
+  node.replaceChildren();
+  node.style.width = "";
+  node.style.height = "";
+  renderProblemPreviewBoard(node, problem);
+}
+
+function mountPromotionPaperBoards(root = elements.promotionPaperQuestions) {
+  if (!root) {
+    return;
+  }
+  root.querySelectorAll("[data-promotion-paper-problem-id]").forEach((node) => {
+    const problemId = node.dataset.promotionPaperProblemId;
+    const problem = problems.find((row) => row.id === problemId);
+    if (!problem) {
+      return;
+    }
+    mountPromotionPaperBoardNode(node, problem);
+  });
+}
+
+function ensurePromotionPaperBoardMounted(node, problem, { monochrome = false } = {}) {
+  const hasPrintImage = node.querySelector("img[data-pp-print-board='1']");
+  if (hasPrintImage) {
+    node.replaceChildren();
+    node.style.width = "";
+    node.style.height = "";
+  }
+
+  const hasLiveBoard = node.querySelector(".wgo-board canvas");
+
+  if (monochrome) {
+    if (!hasLiveBoard || hasPrintImage) {
+      node.replaceChildren();
+      node.style.width = "";
+      node.style.height = "";
+      renderPromotionPaperPrintBoard(node, problem, { monochrome: true });
+    }
+    return;
+  }
+
+  if (!node.querySelector(".wgo-board canvas")) {
+    mountPromotionPaperBoardNode(node, problem);
+  }
+}
+
+async function waitForPromotionPaperBoardRender() {
+  await new Promise((resolve) => {
+    window.requestAnimationFrame(() => {
+      window.requestAnimationFrame(resolve);
+    });
+  });
+}
+
+function flattenPromotionPaperPrintBoards(
+  root = elements.promotionPaperQuestions,
+  { monochrome = false } = {},
+) {
+  if (!root) {
+    return;
+  }
+
+  const flattenBackground = monochrome
+    ? PROMOTION_PAPER_BOARD_MONOCHROME_BACKGROUND
+    : PROMOTION_PAPER_BOARD_COLOR_BACKGROUND;
+
+  root.querySelectorAll("[data-promotion-paper-problem-id]").forEach((node) => {
+    flattenPromotionPaperBoardForPrint(node, flattenBackground);
+  });
+}
+
+async function preparePromotionPaperPrintBoards(
+  root = elements.promotionPaperQuestions,
+  { monochrome = false } = {},
+) {
+  if (!root) {
+    return;
+  }
+
+  const nodes = [...root.querySelectorAll("[data-promotion-paper-problem-id]")];
+  nodes.forEach((node) => {
+    const problemId = node.dataset.promotionPaperProblemId;
+    const problem = problems.find((row) => row.id === problemId);
+    if (!problem) {
+      return;
+    }
+    ensurePromotionPaperBoardMounted(node, problem, { monochrome });
+  });
+
+  await waitForPromotionPaperBoardRender();
+  flattenPromotionPaperPrintBoards(root, { monochrome });
+  promotionPaperPrintPrepared = true;
+}
+
+function preparePromotionPaperPrintBoardsSync(
+  root = elements.promotionPaperQuestions,
+  { monochrome = false } = {},
+) {
+  if (!root || promotionPaperPrintPrepared) {
+    return;
+  }
+
+  const nodes = [...root.querySelectorAll("[data-promotion-paper-problem-id]")];
+  nodes.forEach((node) => {
+    const problemId = node.dataset.promotionPaperProblemId;
+    const problem = problems.find((row) => row.id === problemId);
+    if (!problem) {
+      return;
+    }
+    ensurePromotionPaperBoardMounted(node, problem, { monochrome });
+  });
+  flattenPromotionPaperPrintBoards(root, { monochrome });
+  promotionPaperPrintPrepared = true;
+}
+
+function isPromotionPaperMonochromePrintEnabled() {
+  return Boolean(elements.promotionPaperMonochrome?.checked);
+}
+
+function setPromotionPaperPrintModeClasses({ monochrome = false } = {}) {
+  document.body.classList.add("promotion-paper-print");
+  document.body.classList.toggle("promotion-paper-print-monochrome", monochrome);
+}
+
+function clearPromotionPaperPrintModeClasses() {
+  document.body.classList.remove("promotion-paper-print");
+  document.body.classList.remove("promotion-paper-print-monochrome");
+  promotionPaperPrintPrepared = false;
+}
+
+function waitForPromotionPaperPrintImages(root = elements.promotionPaperQuestions) {
+  if (!root) {
+    return Promise.resolve();
+  }
+
+  const images = [...root.querySelectorAll(".promotion-paper-board img")];
+  if (images.length === 0) {
+    return Promise.resolve();
+  }
+
+  return Promise.all(
+    images.map(
+      (image) =>
+        new Promise((resolve) => {
+          if (image.complete && image.naturalWidth > 0) {
+            resolve();
+            return;
+          }
+          image.addEventListener("load", resolve, { once: true });
+          image.addEventListener("error", resolve, { once: true });
+          window.setTimeout(resolve, 600);
+        }),
+    ),
+  );
+}
+
+async function runPromotionPaperPrint() {
+  const monochrome = isPromotionPaperMonochromePrintEnabled();
+  promotionPaperPrintPrepared = false;
+  setPromotionPaperPrintModeClasses({ monochrome });
+  ensurePromotionPaperPageStyle();
+  await preparePromotionPaperPrintBoards(elements.promotionPaperQuestions, { monochrome });
+  await waitForPromotionPaperPrintImages(elements.promotionPaperQuestions);
+  window.print();
+}
+
 function renderPromotionPaperScreen(examSet, detail) {
   const questions = detail.questions ?? [];
-  const questionCards = questions
-    .map((entry, idx) => {
-      const problem = problems.find((row) => row.id === entry.problemId);
-      if (!problem) {
-        return "";
-      }
-      const prompt = getPromotionPaperPrompt(problem);
-      return `
-        <article class="promotion-paper-question">
-          <header>
-            <h3>${idx + 1}번</h3>
-          </header>
-          <p class="promotion-paper-problem-prompt">${escapeHtml(prompt)}</p>
-          <div class="promotion-paper-board" data-promotion-paper-problem-id="${escapeHtml(problem.id)}"></div>
-        </article>
-      `;
-    })
-    .join("");
+  const gradeLabel = examSet.gradeLevel ? formatGradeLevelLabel(examSet.gradeLevel) : "급수 미지정";
+  const examDateLabel = formatPromotionPaperDate(examSet.examDate);
 
   if (elements.promotionPaperMeta) {
     elements.promotionPaperMeta.textContent = "Promotion Paper";
@@ -1571,55 +1914,23 @@ function renderPromotionPaperScreen(examSet, detail) {
     elements.promotionPaperTitle.textContent = examSet.title ?? "승급심사 시험지";
   }
   if (elements.promotionPaperDescription) {
-    const gradeLabel = examSet.gradeLevel ? formatGradeLevelLabel(examSet.gradeLevel) : "급수 미지정";
-    const examDate = examSet.examDate ? `시험일 ${examSet.examDate}` : "시험일 미지정";
-    elements.promotionPaperDescription.textContent = `${gradeLabel} · ${examDate} · 총 ${questions.length}문제`;
-  }
-  if (elements.promotionPaperForm) {
-    const examDate = formatPromotionPaperDate(examSet.examDate);
-    const gradeLabel = examSet.gradeLevel ? formatGradeLevelLabel(examSet.gradeLevel) : "미지정";
-    elements.promotionPaperForm.innerHTML = `
-      <section class="promotion-paper-form-sheet" aria-label="시험지 양식">
-        <h3 class="promotion-paper-form-title">${escapeHtml(examSet.title || "승단급심사 시험지")}</h3>
-        <table class="promotion-paper-info-table" aria-label="시험 정보">
-          <tbody>
-            <tr>
-              <th>급수</th>
-              <td>${escapeHtml(gradeLabel)}</td>
-              <th>시험명</th>
-              <td>${escapeHtml(examSet.title || "승단급심사")}</td>
-            </tr>
-            <tr>
-              <th>이름</th>
-              <td>____________</td>
-              <th>학원</th>
-              <td>____________</td>
-            </tr>
-            <tr>
-              <th>학교</th>
-              <td>____________</td>
-              <th>학년</th>
-              <td>____________</td>
-            </tr>
-            <tr>
-              <th>응시일</th>
-              <td colspan="3">${escapeHtml(examDate)}</td>
-            </tr>
-          </tbody>
-        </table>
-        <p class="promotion-paper-form-note">※ 모든 문제는 흑의 둘 차례입니다.</p>
-      </section>
-    `;
+    elements.promotionPaperDescription.textContent = `${gradeLabel} · ${examDateLabel} · 총 ${questions.length}문제`;
   }
   if (elements.promotionPaperQuestions) {
-    elements.promotionPaperQuestions.innerHTML =
-      questionCards || '<p class="promotion-paper-empty">표시할 문제가 없습니다.</p>';
-    elements.promotionPaperQuestions.querySelectorAll("[data-promotion-paper-problem-id]").forEach((node) => {
-      const problemId = node.dataset.promotionPaperProblemId;
-      const problem = problems.find((row) => row.id === problemId);
-      if (problem) {
-        renderProblemPreviewBoard(node, problem);
-      }
+    elements.promotionPaperQuestions.innerHTML = buildPromotionPaperPagesHtml({
+      examSet,
+      questions,
+      problems,
+      escapeHtml,
+      getPrompt: getPromotionPaperPrompt,
+      gradeLabel,
+      examDateLabel,
+      organizationName: examSet.organizationName ?? examSet.organization_name ?? "",
+    });
+    window.requestAnimationFrame(() => {
+      window.requestAnimationFrame(() => {
+        mountPromotionPaperBoards(elements.promotionPaperQuestions);
+      });
     });
   }
 
@@ -1675,7 +1986,61 @@ async function openExamSetQuestionPreview(examSet) {
   }
 }
 
-async function startExamSetSession(examSet) {
+function persistExamLearningProgressFromSession() {
+  const session = appState.examSession;
+  const user = getCurrentUser();
+  if (!session || !user?.id || session.sessionMode !== "learning") {
+    return;
+  }
+  if (!examSetLearningProgressService.isResumableQuestionBankSet(session)) {
+    return;
+  }
+  if (normalizeRole(user.role) !== ROLES.student) {
+    return;
+  }
+
+  examSetLearningProgressService.saveLearningProgress({
+    studentUserId: user.id,
+    examSetId: session.examSetId,
+    resumeIndex: session.currentIndex,
+    totalQuestionCount: session.problemIds.length,
+    problemIds: session.problemIds,
+    completedProblemIds: session.problemIds.slice(0, session.currentIndex),
+  });
+}
+
+function beginQuestionBankExamSet(examSet) {
+  const user = getCurrentUser();
+  if (
+    !examSetLearningProgressService.isResumableQuestionBankSet(examSet) ||
+    normalizeRole(user?.role) !== ROLES.student ||
+    !user?.id
+  ) {
+    void startExamSetSession(examSet, { startIndex: 0 });
+    return;
+  }
+
+  const progress = examSetLearningProgressService.getLearningProgress(user.id, examSet.id);
+  if (!isResumableLearningProgress(progress)) {
+    void startExamSetSession(examSet, { startIndex: 0 });
+    return;
+  }
+
+  examSetResumeUi.show({
+    examTitle: examSet.title,
+    completedCount: progress.resumeIndex,
+    totalCount: progress.totalQuestionCount,
+    onResume: () => {
+      void startExamSetSession(examSet, { startIndex: progress.resumeIndex });
+    },
+    onRestart: () => {
+      examSetLearningProgressService.clearLearningProgress(user.id, examSet.id);
+      void startExamSetSession(examSet, { startIndex: 0 });
+    },
+  });
+}
+
+async function startExamSetSession(examSet, { startIndex = 0 } = {}) {
   try {
     const detail = await examSetService.getExamSetDetail({
       user: getCurrentUser(),
@@ -1694,11 +2059,27 @@ async function startExamSetSession(examSet) {
     }
 
     const isMock = (detail.set?.type ?? examSet.type) === EXAM_SET_TYPE.mockTest;
+    const user = getCurrentUser();
+    let resumeIndex = Math.max(0, Number(startIndex) || 0);
+    if (!isMock && examSetLearningProgressService.isResumableQuestionBankSet(detail.set ?? examSet)) {
+      const saved = user?.id
+        ? examSetLearningProgressService.getLearningProgress(user.id, examSet.id)
+        : null;
+      if (saved && !examSetLearningProgressService.validateLearningProgress(saved, problemIds)) {
+        examSetLearningProgressService.clearLearningProgress(user.id, examSet.id);
+        resumeIndex = 0;
+      } else if (resumeIndex >= problemIds.length) {
+        resumeIndex = 0;
+      }
+    } else {
+      resumeIndex = 0;
+    }
+
     appState.examSession = {
       examSetId: examSet.id,
       title: examSet.title,
       problemIds,
-      currentIndex: 0,
+      currentIndex: resumeIndex,
       sessionMode: isMock ? "mock" : "learning",
       setRole: detail.set?.setRole ?? examSet.setRole ?? EXAM_SET_ROLE.questionBank,
       type: detail.set?.type ?? examSet.type,
@@ -1712,14 +2093,17 @@ async function startExamSetSession(examSet) {
       mockTestLeaveGuard.activate();
     }
 
-    loadProblemById(problemIds[0], { examSessionIndex: 0 });
+    loadProblemById(problemIds[resumeIndex], { examSessionIndex: resumeIndex });
   } catch (error) {
     console.error("[ExamSession] start failed", error);
     setFeedback("시험 세트를 시작하지 못했습니다.", "wrong");
   }
 }
 
-function clearExamSession() {
+function clearExamSession({ persistProgress = true } = {}) {
+  if (persistProgress) {
+    persistExamLearningProgressFromSession();
+  }
   mockTestLeaveGuard.deactivate();
   mockTestUi.stopTimer();
   appState.examSession = null;
@@ -1728,6 +2112,7 @@ function clearExamSession() {
   elements.mockTestResultsPanel?.classList.add("is-hidden");
   examCatalog.clearOpenMockResults?.();
   document.body.classList.remove("promotion-paper-print");
+  document.body.classList.remove("promotion-paper-print-monochrome");
   clearPromotionPaperPageStyle();
 }
 
@@ -2020,6 +2405,7 @@ function loadProblem(index, { source = "direct" } = {}) {
   appState.isAiThinking = false;
   appState.playedMoves = [];
   const boardStones = captureInitialBoardState(problem);
+  boardController.setSize(getProblemBoardSize(problem));
   solveView.renderProblem(problem, resolvedIndex, { boardStones, examSession: appState.examSession });
   ensureAiResponseSolveSession(problem, { source, forceReinit: true });
   if (!shouldUseAiResponseSolve(problem) && isAiResponseProblem(problem)) {
@@ -2312,6 +2698,7 @@ function showListMode() {
     sessionPhase: appState.aiResponseSolveSession?.phase ?? null,
   });
   hideCategoryCompleteModal();
+  hideAttendancePanel?.();
   clearReviewSession();
   clearExamSession();
   clearPendingAiMove();
@@ -2613,6 +3000,7 @@ function renderProblemList() {
         : escapeHtml(formatCategoryProblemLabel(problem, problems));
       const categoryLabel = escapeHtml(problem.category ?? "");
       const levelLabel = escapeHtml(problem.level ?? "");
+      const boardSizeLabel = escapeHtml(getBoardSizeLabel(getProblemBoardSize(problem)));
       const gradeBadge = gradeMode
         ? `<span class="problem-card-grade">${escapeHtml(formatGradeLevelLabel(problem.gradeLevel))}</span>`
         : adminState.isEnabled && isCurrentUserAdmin() && adminState.listPanel === "problems"
@@ -2633,13 +3021,31 @@ function renderProblemList() {
         card.classList.toggle("is-exam-set-included", alreadyInExamSet);
       }
 
+      const printCardActionHtml = canPrint
+        ? `
+        <div class="problem-card-print-action">
+          <button
+            type="button"
+            class="problem-print-select-btn"
+            data-print-select
+            aria-pressed="false"
+            aria-label="문제집에 인쇄 추가"
+          >
+            <span class="problem-print-select-btn__icon" aria-hidden="true">🖨</span>
+            <span class="problem-print-select-btn__label">인쇄 추가</span>
+          </button>
+        </div>`
+        : "";
+
       card.innerHTML = `
+        ${printCardActionHtml}
         <button class="problem-card-main" type="button"${isProblemSortMode || gradeMode || examSetMode ? " disabled" : ""}>
           <div class="problem-card-header">
             <div class="problem-card-meta-row">
               <div class="problem-card-meta-primary">
                 <span class="problem-card-number">${problemNumberLabel}</span>
                 <span class="problem-category-badge">${categoryLabel}</span>
+                <span class="problem-board-size-badge">${boardSizeLabel}</span>
               </div>
               ${
                 gradeMode
@@ -2665,13 +3071,7 @@ function renderProblemList() {
                 />
                 <span>세트 선택</span>
               </label>`
-                    : canPrint
-                      ? `
-              <label class="problem-print-select">
-                <input type="checkbox" data-print-select />
-                <span>인쇄 선택</span>
-              </label>`
-                      : ""
+                    : ""
               }
             </div>
             <div class="problem-card-title-row">
@@ -2694,17 +3094,17 @@ function renderProblemList() {
         </button>
       `;
       if (canPrint) {
-        const printSelect = card.querySelector("[data-print-select]");
-        const printSelectLabel = card.querySelector(".problem-print-select");
-        if (printSelect) {
-          printSelect.checked = appState.selectedPrintProblemIds.has(problem.id);
-          printSelect.addEventListener("click", (event) => event.stopPropagation());
-          printSelect.addEventListener("change", () => {
-            togglePrintProblemSelection(problem.id, printSelect.checked);
-            card.classList.toggle("is-selected", printSelect.checked);
+        const printSelectButton = card.querySelector("[data-print-select]");
+        if (printSelectButton) {
+          updateProblemPrintSelectButton(printSelectButton, problem.id);
+          printSelectButton.addEventListener("click", (event) => {
+            event.stopPropagation();
+            const nextSelected = !appState.selectedPrintProblemIds.has(problem.id);
+            togglePrintProblemSelection(problem.id, nextSelected);
+            card.classList.toggle("is-selected", nextSelected);
+            updateProblemPrintSelectButton(printSelectButton, problem.id);
           });
         }
-        printSelectLabel?.addEventListener("click", (event) => event.stopPropagation());
       }
 
       if (gradeMode) {
@@ -2855,6 +3255,25 @@ function togglePrintProblemSelection(problemId, isSelected) {
   syncPrintSelectionUi();
 }
 
+function updateProblemPrintSelectButton(button, problemId) {
+  if (!button) {
+    return;
+  }
+
+  const isSelected = appState.selectedPrintProblemIds.has(problemId);
+  button.classList.toggle("is-active", isSelected);
+  button.setAttribute("aria-pressed", String(isSelected));
+  button.setAttribute(
+    "aria-label",
+    isSelected ? "문제집 선택 해제" : "문제집에 인쇄 추가",
+  );
+
+  const label = button.querySelector(".problem-print-select-btn__label");
+  if (label) {
+    label.textContent = isSelected ? "선택됨" : "인쇄 추가";
+  }
+}
+
 function syncPrintSelectionUi() {
   if (!canUsePrintFeatures()) {
     return;
@@ -2873,9 +3292,9 @@ function syncPrintCheckboxes() {
     const problemId = card.dataset.problemId;
     const isSelected = appState.selectedPrintProblemIds.has(problemId);
     card.classList.toggle("is-selected", isSelected);
-    const checkbox = card.querySelector("[data-print-select]");
-    if (checkbox) {
-      checkbox.checked = isSelected;
+    const printSelectButton = card.querySelector("[data-print-select]");
+    if (printSelectButton) {
+      updateProblemPrintSelectButton(printSelectButton, problemId);
     }
   });
 }
@@ -2927,14 +3346,21 @@ function chunkArray(items, chunkSize) {
   return chunks;
 }
 
-function renderProblemPreviewBoard(element, problem) {
+function renderProblemPreviewBoard(element, problem, options = {}) {
   if (!element || !window.WGo || !Array.isArray(problem?.stones)) {
     return;
   }
 
+  const boardSize = getProblemBoardSize(problem);
+  const requestedWidth = Number(options.width);
+  const boardWidth =
+    Number.isFinite(requestedWidth) && requestedWidth > 0
+      ? requestedWidth
+      : element.clientWidth || 160;
+
   const previewBoard = new WGo.Board(element, {
-    size: BOARD_SIZE,
-    width: element.clientWidth || 160,
+    size: boardSize,
+    width: boardWidth,
     section: {
       top: 0,
       right: 0,
@@ -2944,6 +3370,10 @@ function renderProblemPreviewBoard(element, problem) {
   });
 
   problem.stones.forEach((stone) => {
+    if (!isValidBoardPoint(stone, boardSize)) {
+      return;
+    }
+
     previewBoard.addObject({
       x: stone.x,
       y: stone.y,
@@ -2959,6 +3389,8 @@ function renderProblemPreviewBoard(element, problem) {
       });
     }
   });
+
+  applyCandidateLabelsToWgoBoard(previewBoard, getProblemCandidateLabels(problem), boardSize);
 }
 
 function getWgoMarkType(mark) {
@@ -3235,6 +3667,10 @@ function getProblemStoreErrorMessage(error, actionLabel) {
     return "Supabase problems 테이블에 target_white_group/target_white_mark 컬럼이 필요합니다. scripts/supabase-problems-target-white-group.sql 을 실행해 주세요.";
   }
 
+  if (message.includes("candidate_labels")) {
+    return "Supabase problems 테이블에 candidate_labels 컬럼이 필요합니다. scripts/supabase-problems-candidate-labels.sql 을 실행해 주세요.";
+  }
+
   if (message.includes("exam_sets") || message.includes("exam_set_questions")) {
     return "Supabase exam_sets 테이블이 필요합니다. scripts/supabase-exam-sets.sql 을 실행해 주세요.";
   }
@@ -3265,24 +3701,38 @@ function getProblemStoreErrorMessage(error, actionLabel) {
   return `Supabase 문제 ${actionLabel}에 실패했습니다.`;
 }
 
-function cloneBoardStones(stones = []) {
-  return sanitizeStones(stones, BOARD_SIZE, "cloneBoardStones").map((stone) => ({
+function cloneBoardStones(stones = [], boardSize = BOARD_SIZE) {
+  return sanitizeStones(stones, boardSize, "cloneBoardStones").map((stone) => ({
     ...stone,
   }));
 }
 
 function captureInitialBoardState(problem) {
-  appState.initialBoardStones = cloneBoardStones(problem?.stones ?? []);
+  const boardSize = getProblemBoardSize(problem);
+  appState.initialBoardStones = cloneBoardStones(problem?.stones ?? [], boardSize);
+  appState.initialCandidateLabels = cloneCandidateLabels(
+    getProblemCandidateLabels(problem),
+    boardSize,
+  );
   return appState.initialBoardStones;
 }
 
+function getBoardCandidateLabels(problem) {
+  if (Array.isArray(appState.initialCandidateLabels) && appState.initialCandidateLabels.length > 0) {
+    return appState.initialCandidateLabels;
+  }
+  return getProblemCandidateLabels(problem);
+}
+
 function cloneProblem(problem) {
+  const boardSize = getProblemBoardSize(problem);
   const clonedProblem = {
     ...problem,
     levelGroup: normalizeLevelGroup(problem.levelGroup),
     type: problem.type === "ox" ? "ox" : "board",
+    boardSize,
     correctMove: problem.correctMove ? { ...problem.correctMove } : null,
-    stones: cloneBoardStones(problem.stones),
+    stones: cloneBoardStones(problem.stones, boardSize),
   };
 
   if (clonedProblem.type === "ox") {
@@ -3291,6 +3741,12 @@ function cloneProblem(problem) {
 
   if (Array.isArray(problem.correctSequence)) {
     clonedProblem.correctSequence = problem.correctSequence.map((move) => ({ ...move }));
+  }
+
+  const candidateLabels = cloneCandidateLabels(getProblemCandidateLabels(problem), boardSize);
+  if (candidateLabels.length > 0) {
+    clonedProblem.candidateLabels = candidateLabels;
+    clonedProblem.candidate_labels = candidateLabels;
   }
 
   return clonedProblem;
@@ -3479,6 +3935,19 @@ function completeProblem(problem) {
       appState.autoNextTimeout = window.setTimeout(() => {
         hideBoardFeedback();
         loadProblemById(session.problemIds[nextIndex], { examSessionIndex: nextIndex });
+        if (session.sessionMode === "learning" && examSetLearningProgressService.isResumableQuestionBankSet(session)) {
+          const user = getCurrentUser();
+          if (user?.id && normalizeRole(user.role) === ROLES.student) {
+            examSetLearningProgressService.saveLearningProgress({
+              studentUserId: user.id,
+              examSetId: session.examSetId,
+              resumeIndex: nextIndex,
+              totalQuestionCount: session.problemIds.length,
+              problemIds: session.problemIds,
+              completedProblemIds: session.problemIds.slice(0, nextIndex),
+            });
+          }
+        }
       }, 1000);
     } else {
       appState.autoNextTimeout = window.setTimeout(async () => {
@@ -3488,8 +3957,17 @@ function completeProblem(problem) {
           await finishMockTestSession(session);
           return;
         }
-        clearExamSession();
+        const user = getCurrentUser();
+        if (
+          user?.id &&
+          normalizeRole(user.role) === ROLES.student &&
+          examSetLearningProgressService.isResumableQuestionBankSet(session)
+        ) {
+          examSetLearningProgressService.clearLearningProgress(user.id, session.examSetId);
+        }
+        clearExamSession({ persistProgress: false });
         showListMode();
+        void examCatalog.refreshExamCatalog();
         setFeedback(`"${title}" 세트를 완료했습니다.`, "correct");
       }, 1000);
     }
@@ -3707,7 +4185,9 @@ function restoreProblemInitialStateAfterWrong(problem) {
   }
 
   boardController.clearAnswerMarker();
-  boardController.loadPosition(cloneBoardStones(appState.initialBoardStones ?? problem.stones));
+  boardController.loadPosition(cloneBoardStones(appState.initialBoardStones ?? problem.stones), {
+    candidateLabels: getBoardCandidateLabels(problem),
+  });
   syncBoardPreviewContext();
   setStatus(`${getStoneLabel(STONE.black)} 차례입니다.`);
   setFeedback(getProblemStartFeedback(problem));
@@ -3820,7 +4300,7 @@ function bindOxSolveEvents() {
 function removeCapturedStonesAfterMove(move) {
   const stones = boardController.getStones();
   const result = calculateStonesAfterCapture(stones, move, {
-    boardSize: BOARD_SIZE,
+    boardSize: boardController.size,
     stoneColors: STONE,
   });
 

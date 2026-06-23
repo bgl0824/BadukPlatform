@@ -274,19 +274,22 @@
       </section>
 
       <section id="promotion-paper-screen" class="promotion-paper-screen is-hidden" aria-label="승급심사 시험지">
-        <header class="promotion-paper-header">
+        <header class="promotion-paper-screen-bar">
           <div>
             <p id="promotion-paper-meta" class="eyebrow">Promotion Paper</p>
             <h2 id="promotion-paper-title">승급심사 시험지</h2>
             <p id="promotion-paper-description" class="promotion-paper-description"></p>
-            <div id="promotion-paper-form" class="promotion-paper-form"></div>
           </div>
           <div class="promotion-paper-actions">
+            <label class="promotion-paper-print-option" for="promotion-paper-monochrome">
+              <input id="promotion-paper-monochrome" type="checkbox" />
+              흑백 인쇄
+            </label>
             <button id="promotion-paper-print" class="primary-button" type="button">인쇄</button>
             <button id="promotion-paper-close" class="secondary-button" type="button">닫기</button>
           </div>
         </header>
-        <div id="promotion-paper-questions" class="promotion-paper-questions"></div>
+        <div id="promotion-paper-questions" class="promotion-paper-print-area"></div>
       </section>
 
       <section id="problem-list-screen" class="problem-list-screen" aria-label="문제은행">
@@ -457,6 +460,16 @@
               인쇄할 문제를 선택하세요
             </p>
             <div class="print-toolbar-actions">
+              <fieldset class="print-format-fieldset print-format-segment" aria-label="출력 형식">
+                <label class="print-format-segment__option">
+                  <input type="radio" name="print-format" value="textbook" />
+                  <span class="print-format-segment__label">교재형</span>
+                </label>
+                <label class="print-format-segment__option">
+                  <input type="radio" name="print-format" value="detailed" checked />
+                  <span class="print-format-segment__label">상세형</span>
+                </label>
+              </fieldset>
               <button
                 id="print-clear-selection"
                 class="ghost-button ghost-button--compact ghost-button--tooltip print-toolbar-end-session"
@@ -471,15 +484,18 @@
                 <input id="print-monochrome" type="checkbox" />
                 흑백
               </label>
-              <button id="print-selected-problems" class="secondary-button" type="button" disabled>
+              <button id="print-selected-problems" class="primary-button print-toolbar-print-button" type="button" disabled>
                 인쇄
               </button>
             </div>
           </div>
-          <details id="print-builder" class="print-builder print-panel-advanced">
-          <summary class="print-builder-summary">인쇄 문제 구성</summary>
+          <details id="print-builder" class="print-builder print-panel-advanced print-panel-compose">
+          <summary class="print-builder-summary print-builder-summary--cta">
+            <span class="print-builder-summary__title">🖨 문제집 만들기</span>
+            <span class="print-builder-summary__hint">범위·자동 구성으로 세트 만들기</span>
+          </summary>
           <div class="print-builder-body">
-            <p class="print-builder-hint">문제 카드에서 개별 선택하거나, 아래 범위·자동 구성으로 세트를 만듭니다.</p>
+            <p class="print-builder-hint">문제 카드의 <strong>🖨 인쇄 추가</strong>로 선택하거나, 아래 범위·자동 구성으로 세트를 만듭니다.</p>
             <details class="print-builder-panel" data-print-panel="range">
               <summary>범위 선택</summary>
               <form id="print-range-form" class="print-builder-form print-builder-form--range">
@@ -550,17 +566,17 @@
           </div>
           </details>
         </section>
-          <section id="exam-set-catalog" class="exam-set-catalog" aria-label="기출 및 시험">
-            <div class="exam-set-catalog-header">
-              <h3>기출 / 시험</h3>
-              <p id="exam-set-catalog-summary" class="exam-set-catalog-summary">게시된 시험 세트를 선택해 풀이를 시작하세요.</p>
-            </div>
+          <details id="exam-set-catalog" class="exam-set-catalog exam-set-catalog-details" aria-label="기출 및 시험">
+            <summary class="exam-set-catalog-toggle">
+              <span class="exam-set-catalog-toggle-title">기출 / 시험</span>
+              <span id="exam-set-catalog-summary" class="exam-set-catalog-summary">게시된 시험 세트를 선택해 풀이를 시작하세요.</span>
+            </summary>
             <div id="exam-set-catalog-list" class="exam-set-catalog-list" aria-live="polite"></div>
             <section id="mock-test-results-panel" class="mock-test-results-panel is-hidden" aria-label="모의시험 결과">
               <h4 id="mock-test-results-title">모의시험 결과</h4>
               <div id="mock-test-results-list" class="mock-test-results-list"></div>
             </section>
-          </section>
+          </details>
           <div id="problem-cards" class="problem-cards" aria-live="polite"></div>
         </div>
       </section>
@@ -730,6 +746,77 @@
           </div>
           <div id="academy-student-account-list" class="academy-account-list"></div>
         </section>
+        <section
+          id="attendance-panel"
+          class="academy-section-panel attendance-panel is-hidden"
+          aria-label="출결 관리"
+        >
+          <nav
+            id="attendance-management-submenu"
+            class="academy-management-submenu"
+            aria-label="출결관리 하위 메뉴"
+          >
+            <button
+              class="academy-submenu-button is-active"
+              type="button"
+              data-attendance-section="monthly"
+            >
+              월간 출석부
+            </button>
+            <button class="academy-submenu-button" type="button" data-attendance-section="codes">
+              출결코드 관리
+            </button>
+            <button class="academy-submenu-button" type="button" data-attendance-section="check">
+              출결 체크
+            </button>
+            <button class="academy-submenu-button" type="button" data-attendance-section="kiosk">
+              공용폰 관리
+            </button>
+            <button class="academy-submenu-button" type="button" data-attendance-section="sms-logs">
+              문자 로그
+            </button>
+          </nav>
+          <section
+            id="attendance-monthly-section"
+            class="attendance-section-panel"
+            data-attendance-section-panel="monthly"
+            aria-label="월간 출석부"
+          >
+            <div id="attendance-panel-body" class="attendance-panel-body"></div>
+          </section>
+          <section
+            id="attendance-codes-section"
+            class="attendance-section-panel is-hidden"
+            data-attendance-section-panel="codes"
+            aria-label="출결코드 관리"
+          >
+            <div id="attendance-codes-body" class="attendance-codes-body"></div>
+          </section>
+          <section
+            id="attendance-check-section"
+            class="attendance-section-panel is-hidden"
+            data-attendance-section-panel="check"
+            aria-label="출결 체크"
+          >
+            <div id="attendance-check-body" class="attendance-check-body"></div>
+          </section>
+          <section
+            id="attendance-kiosk-section"
+            class="attendance-section-panel is-hidden"
+            data-attendance-section-panel="kiosk"
+            aria-label="공용폰 관리"
+          >
+            <div id="attendance-kiosk-body" class="attendance-kiosk-body"></div>
+          </section>
+          <section
+            id="attendance-sms-logs-section"
+            class="attendance-section-panel is-hidden"
+            data-attendance-section-panel="sms-logs"
+            aria-label="문자 로그"
+          >
+            <div id="attendance-sms-logs-body" class="attendance-sms-logs-body"></div>
+          </section>
+        </section>
       </section>
       <div
         id="category-complete-modal"
@@ -837,6 +924,37 @@
           </footer>
         </div>
       </div>
+      <div
+        id="student-review-archive-prompt-modal"
+        class="answer-modal student-review-archive-prompt-modal is-hidden"
+        role="dialog"
+        aria-live="polite"
+        aria-modal="true"
+        aria-labelledby="student-review-archive-prompt-title"
+      >
+        <div class="answer-modal-card student-review-archive-prompt-card">
+          <h2 id="student-review-archive-prompt-title">인쇄 후 보관</h2>
+          <p id="student-review-archive-prompt-message" class="student-review-archive-prompt-message">
+            선택한 오답을 보관함으로 이동하시겠습니까?
+          </p>
+          <div class="student-review-archive-prompt-actions">
+            <button
+              id="student-review-archive-prompt-confirm"
+              class="primary-button"
+              type="button"
+            >
+              보관하기
+            </button>
+            <button
+              id="student-review-archive-prompt-dismiss"
+              class="secondary-button"
+              type="button"
+            >
+              그대로 두기
+            </button>
+          </div>
+        </div>
+      </div>
       <div id="student-review-modal" class="answer-modal is-hidden" role="dialog" aria-live="polite" aria-modal="true">
         <div class="answer-modal-card student-review-modal-card">
           <button id="close-student-review-modal" class="auth-close" type="button" aria-label="오답노트 닫기">×</button>
@@ -845,6 +963,38 @@
             <h2 id="student-review-title">오답노트</h2>
           </div>
           <div class="student-review-toolbar">
+            <div class="student-review-bulk-bar">
+              <label class="student-review-select-all" for="student-review-select-all">
+                <input id="student-review-select-all" type="checkbox" />
+                <span>전체선택</span>
+              </label>
+              <div class="student-review-bulk-actions" role="group" aria-label="선택한 오답 일괄 작업">
+                <button
+                  id="student-review-print-selected"
+                  class="secondary-button"
+                  type="button"
+                  disabled
+                >
+                  선택 인쇄
+                </button>
+                <button
+                  id="student-review-archive-selected"
+                  class="secondary-button"
+                  type="button"
+                  disabled
+                >
+                  선택 보관
+                </button>
+                <button
+                  id="student-review-delete-selected"
+                  class="secondary-button member-danger-button"
+                  type="button"
+                  disabled
+                >
+                  선택 삭제
+                </button>
+              </div>
+            </div>
             <button
               id="toggle-archived-review-notes"
               class="secondary-button student-review-toolbar-button"
@@ -1136,6 +1286,23 @@
         <div class="mock-test-modal-actions">
           <button id="mock-test-start-cancel" class="ghost-button" type="button">취소</button>
           <button id="mock-test-start-confirm" class="primary-button" type="button">시작</button>
+        </div>
+      </div>
+    </div>
+    <div
+      id="exam-set-resume-modal"
+      class="answer-modal mock-test-modal is-hidden"
+      role="dialog"
+      aria-modal="true"
+      aria-labelledby="exam-set-resume-title"
+    >
+      <div class="answer-modal-card mock-test-modal-card" data-exam-set-resume-backdrop>
+        <h2 id="exam-set-resume-title">이전 학습 기록</h2>
+        <div id="exam-set-resume-body" class="mock-test-start-body"></div>
+        <div class="mock-test-modal-actions exam-set-resume-actions">
+          <button id="exam-set-resume-cancel" class="ghost-button" type="button">취소</button>
+          <button id="exam-set-resume-restart" class="ghost-button" type="button">처음부터 다시하기</button>
+          <button id="exam-set-resume-continue" class="primary-button" type="button">이어서 학습하기</button>
         </div>
       </div>
     </div>

@@ -45,6 +45,7 @@ export function createBoardFeedbackOverlay({
   subtitleEl,
   characterSlot = null,
   speechSlot = null,
+  studyLayout = null,
 }) {
   let hideTimer = null;
   let fadeOutTimer = null;
@@ -80,11 +81,16 @@ export function createBoardFeedbackOverlay({
     }
   }
 
+  function setResultVisible(visible) {
+    studyLayout?.classList.toggle("is-board-result-visible", visible);
+  }
+
   function hide() {
     clearTimers();
     overlayLayer?.classList.remove("is-visible");
     messageLayer?.classList.remove("is-visible");
     overlayLayer?.setAttribute("aria-hidden", "true");
+    setResultVisible(false);
 
     fadeOutTimer = window.setTimeout(() => {
       fadeOutTimer = null;
@@ -98,6 +104,7 @@ export function createBoardFeedbackOverlay({
     overlayLayer?.classList.remove("is-visible");
     messageLayer?.classList.remove("is-visible");
     overlayLayer?.setAttribute("aria-hidden", "true");
+    setResultVisible(false);
     resetMessageContent();
     characterSlot?.setAttribute("hidden", "");
     speechSlot?.setAttribute("hidden", "");
@@ -140,6 +147,7 @@ export function createBoardFeedbackOverlay({
     void overlayLayer?.offsetWidth;
     overlayLayer?.classList.add("is-visible");
     messageLayer?.classList.add("is-visible");
+    setResultVisible(true);
 
     if (duration > 0) {
       hideTimer = window.setTimeout(() => {

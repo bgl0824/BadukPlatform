@@ -51,6 +51,10 @@ import { normalizeLevelGroup } from "../services/level-group-service.js";
 import { getCategoryProblemNumberForProblem } from "../services/category-problem-number.js";
 import { getTotalWrongCount } from "../services/review-service.js";
 import {
+  applyCandidateLabelsToWgoBoard,
+  getProblemCandidateLabels,
+} from "../game/candidate-labels.js";
+import {
   buildStudentGrowthReport,
   formatStudentGrowthReportPlainText,
 } from "../services/student-growth-report-service.js";
@@ -63,6 +67,11 @@ import {
   fetchStudentOfficialGrade,
   upsertStudentOfficialGrade,
 } from "../services/student-official-grade-service.js";
+import {
+  formatGuardianPhoneDisplay,
+  getStudentGuardianProfile,
+  saveStudentGuardianProfile,
+} from "../services/student-guardian-profile-service.js";
 import {
   getOfficialGradeSourceSelectOptions,
 } from "../services/official-grade-source-service.js";
@@ -92,6 +101,7 @@ export function createAcademyMemberController({
   getTotalProblemCount,
   getProblems,
   getProblemById,
+  printReviewProblems,
   openProblemInLibrary,
   escapeHtml,
   formatDateTime,
@@ -130,6 +140,8 @@ export function createAcademyMemberController({
     summaries: [],
     studentId: null,
     showArchived: false,
+    selectedIds: new Set(),
+    pendingArchiveAfterPrintIds: [],
   };
 
   const activeGrowthReportState = {
@@ -282,6 +294,37 @@ export function createAcademyMemberController({
           mode: officialGradeAction.dataset.officialGradeAction,
           grade: activeAcademyProfileState.profile?.officialGrade ?? null,
         });
+        return;
+      }
+
+      const guardianSaveButton = event.target.closest("[data-guardian-action='save']");
+      if (guardianSaveButton) {
+        const studentId = activeAcademyProfileState.studentId;
+        if (!studentId) {
+          return;
+        }
+        void handleGuardianProfileSave(studentId);
+      }
+    });
+    elements.studentAcademyProfileModal?.addEventListener("focusout", (event) => {
+      const phoneInput = event.target.closest("[data-guardian-field='phone']");
+      if (!phoneInput || !elements.studentAcademyProfileSections?.contains(phoneInput)) {
+        return;
+      }
+
+      phoneInput.value = formatGuardianPhoneDisplay(phoneInput.value);
+    });
+    elements.studentAcademyProfileModal?.addEventListener("change", (event) => {
+      const notifyInput = event.target.closest("[data-guardian-field='attendance_notification_enabled']");
+      if (!notifyInput || !elements.studentAcademyProfileSections?.contains(notifyInput)) {
+        return;
+      }
+
+      const toggleState = elements.studentAcademyProfileSections.querySelector(
+        ".student-guardian-toggle-state",
+      );
+      if (toggleState) {
+        toggleState.textContent = notifyInput.checked ? "사용" : "미사용";
       }
     });
     elements.closeStudentOfficialGradeModal?.addEventListener("click", closeOfficialGradeFormModal);
@@ -307,8 +350,20 @@ export function createAcademyMemberController({
     elements.studentLearningDetailLevelNav?.addEventListener("click", handleLearningDetailLevelTabClick);
     elements.toggleArchivedReviewNotes?.addEventListener("click", () => {
       activeReviewState.showArchived = !activeReviewState.showArchived;
+      clearReviewSelection();
       syncArchivedReviewToggle();
       refreshStudentReviewModal();
+    });
+    elements.studentReviewSelectAll?.addEventListener("change", handleReviewSelectAllChange);
+    elements.studentReviewPrintSelected?.addEventListener("click", handleBulkPrintReviewProblems);
+    elements.studentReviewArchiveSelected?.addEventListener("click", handleBulkArchiveReviewProblems);
+    elements.studentReviewDeleteSelected?.addEventListener("click", handleBulkDeleteReviewProblems);
+    elements.studentReviewArchivePromptConfirm?.addEventListener("click", handleConfirmArchiveAfterPrint);
+    elements.studentReviewArchivePromptDismiss?.addEventListener("click", closeReviewArchivePromptModal);
+    elements.studentReviewArchivePromptModal?.addEventListener("click", (event) => {
+      if (event.target === elements.studentReviewArchivePromptModal) {
+        closeReviewArchivePromptModal();
+      }
     });
     elements.studentReviewModal?.addEventListener("click", (event) => {
       if (event.target === elements.studentReviewModal) {
@@ -316,6 +371,7 @@ export function createAcademyMemberController({
       }
     });
     elements.studentReviewList?.addEventListener("click", handleStudentReviewListClick);
+    elements.studentReviewList?.addEventListener("change", handleStudentReviewListChange);
     elements.studentReviewDragHandle?.addEventListener("pointerdown", startReviewModalDrag);
 
     elements.studentAccountNameSearch?.addEventListener("input", () => {
@@ -2341,6 +2397,7 @@ export function createAcademyMemberController({
   function openStudentReviewModal(studentId) {
     activeReviewState.studentId = studentId;
     activeReviewState.showArchived = false;
+    clearReviewSelection();
     syncArchivedReviewToggle();
     refreshStudentReviewModal();
     applyReviewModalPosition();
@@ -2366,6 +2423,7 @@ export function createAcademyMemberController({
     if (elements.studentReviewList) {
       elements.studentReviewList.innerHTML = renderStudentReviewList(reviewSummaries, studentId);
       renderSummaryBoards(reviewSummaries);
+      syncReviewSelectionUi();
     }
   }
 
@@ -2373,6 +2431,8 @@ export function createAcademyMemberController({
     activeReviewState.summaries = [];
     activeReviewState.studentId = null;
     activeReviewState.showArchived = false;
+    clearReviewSelection();
+    closeReviewArchivePromptModal();
     syncArchivedReviewToggle();
     elements.studentReviewModal?.classList.add("is-hidden");
   }
@@ -2383,14 +2443,68 @@ export function createAcademyMemberController({
     }
 
     return items
-      .map((row) => {
-        const repeatLabel =
-          row.repeatWrongCount != null && row.repeatWrongCount > 0
-            ? ` · 반복 오답 ${row.repeatWrongCount}개`
-            : "";
-        return `<li><strong>${escapeHtml(row.categoryName)}</strong> ${row.solved}/${row.total} (${row.completionPercent}%)${escapeHtml(repeatLabel)}</li>`;
-      })
+      .map(
+        (row) =>
+          `<li><strong>${escapeHtml(row.categoryName)}</strong> ${row.solved}/${row.total}</li>`,
+      )
       .join("");
+  }
+
+  function renderGrowthOutcomeBlock(report) {
+    const outcome = report.growthOutcome ?? report.growthSummary?.growthOutcome;
+    if (!outcome) {
+      return "";
+    }
+
+    return `
+      <div class="student-growth-report-outcome">
+        <h5 class="student-growth-report-outcome-title">성장 결과</h5>
+        <p class="student-growth-report-outcome-stage">${escapeHtml(outcome.stageLabel)}</p>
+        <p class="student-growth-report-outcome-grade">현재 급수 : ${escapeHtml(outcome.currentGradeLabel)}</p>
+        <p class="student-growth-report-outcome-next">${escapeHtml(outcome.nextStepLabel)}</p>
+      </div>`;
+  }
+
+  function renderGrowthSummarySection(report) {
+    const paragraphs = report.growthSummary?.paragraphs ?? [];
+    if (!paragraphs.length) {
+      return "";
+    }
+
+    const bodyHtml = paragraphs.map((paragraph) => `<p>${escapeHtml(paragraph)}</p>`).join("");
+
+    const grades = report.grades ?? {};
+    const gradeRows = `
+      <dl class="student-growth-report-grade-pair">
+        <div><dt>실제 급수</dt><dd>${escapeHtml(grades.officialLabel ?? "미등록")}</dd></div>
+        <div><dt>예상 급수</dt><dd>${
+          grades.projectedAvailable
+            ? escapeHtml(grades.projectedLabel)
+            : '<span class="student-growth-report-grade-muted">참고 어려움</span>'
+        }</dd></div>
+      </dl>`;
+
+    return `
+      <section class="student-growth-report-section student-growth-report-section--summary">
+        <h4>성장 요약</h4>
+        <div class="student-growth-report-summary">${bodyHtml}</div>
+        ${renderGrowthOutcomeBlock(report)}
+        ${gradeRows}
+      </section>`;
+  }
+
+  function renderDirectorCommentsSection(report) {
+    const comments = report.directorComments;
+    if (!comments) {
+      return "";
+    }
+
+    return `
+      <div class="student-growth-report-subsection student-growth-report-subsection--comments">
+        <p class="student-growth-report-subtitle">원장 코멘트</p>
+        <p class="student-growth-report-director-line">${escapeHtml(comments.strengthLine)}</p>
+        <p class="student-growth-report-director-line">${escapeHtml(comments.weaknessLine)}</p>
+      </div>`;
   }
 
   function renderStudentGrowthReportCard(report) {
@@ -2399,12 +2513,6 @@ export function createAcademyMemberController({
     }
 
     const generatedDate = report.generatedAt?.slice(0, 10) ?? "";
-    const projectedBlock = report.projectedGrade.projectedGradeLabel
-      ? `
-        <p class="student-growth-report-grade">${escapeHtml(report.projectedGrade.projectedGradeLabel)} <span class="student-growth-report-grade-tag">참고</span></p>
-        <p class="student-growth-report-grade-basis">${escapeHtml(report.projectedGrade.basisSummary)}</p>
-      `
-      : `<p class="student-growth-report-grade-basis">${escapeHtml(report.projectedGrade.basisSummary)}</p>`;
 
     return `
       <article class="student-growth-report-sheet">
@@ -2413,6 +2521,8 @@ export function createAcademyMemberController({
           <h3>${escapeHtml(report.studentName || "학생")}</h3>
           <p class="student-growth-report-sheet-date">기준일 ${escapeHtml(generatedDate)}</p>
         </header>
+
+        ${renderGrowthSummarySection(report)}
 
         <section class="student-growth-report-section">
           <h4>1. 과정 진행</h4>
@@ -2433,30 +2543,16 @@ export function createAcademyMemberController({
             <p class="student-growth-report-subtitle">보완 유형</p>
             <ul class="student-growth-report-list">${renderGrowthReportCategoryList(report.categoryAnalysis.weaknesses, "뚜렷한 보완 유형이 없습니다.")}</ul>
           </div>
-          <div class="student-growth-report-subsection">
-            <p class="student-growth-report-subtitle">추천 학습</p>
-            <p class="student-growth-report-recommendation">${
-              report.categoryAnalysis.recommended
-                ? `<strong>${escapeHtml(report.categoryAnalysis.recommended.categoryName)}</strong> · ${escapeHtml(report.categoryAnalysis.recommended.reason)}`
-                : "현재 과정에서 이어서 학습할 카테고리를 확인해 주세요."
-            }</p>
-          </div>
+          ${renderDirectorCommentsSection(report)}
         </section>
 
         <section class="student-growth-report-section">
           <h4>3. 복습 습관</h4>
-          <ul class="student-growth-report-metrics">
-            <li><span>오답노트 문제</span><strong>${report.reviewHabits.wrongNoteCount}개</strong></li>
-            <li><span>복습 완료</span><strong>${report.reviewHabits.reviewResolvedCount}개</strong></li>
-            <li><span>반복 오답</span><strong>${report.reviewHabits.repeatWrongCount}개</strong></li>
-          </ul>
-          <p class="student-growth-report-parent-line">${escapeHtml(report.reviewHabits.parentSentence)}</p>
-        </section>
-
-        <section class="student-growth-report-section">
-          <h4>4. 예상 급수</h4>
-          ${projectedBlock}
-          <p class="student-growth-report-disclaimer">${escapeHtml(report.projectedGrade.disclaimer)}</p>
+          <div class="student-growth-report-review-brief">
+            ${(report.reviewHabits.briefLines ?? [report.reviewHabits.parentSentence])
+              .map((line) => `<p>${escapeHtml(line)}</p>`)
+              .join("")}
+          </div>
         </section>
       </article>
     `;
@@ -2470,8 +2566,14 @@ export function createAcademyMemberController({
 
     await hydrateStudentProgressCache(studentId);
 
+    const academyId = getAcademyId();
+    const officialGrade = academyId
+      ? await fetchStudentOfficialGrade(academyId, studentId)
+      : null;
+
     const report = buildStudentGrowthReport(studentId, getProblems(), {
       studentName: getMemberDisplayName(student),
+      officialGrade,
     });
 
     activeGrowthReportState.studentId = studentId;
@@ -2596,10 +2698,14 @@ export function createAcademyMemberController({
     const officialGrade = academyId
       ? await fetchStudentOfficialGrade(academyId, studentId)
       : null;
+    const guardianProfile = academyId
+      ? getStudentGuardianProfile(academyId, studentId)
+      : null;
 
     return buildStudentAcademyProfileView({
       studentName,
       officialGrade,
+      guardianProfile,
     });
   }
 
@@ -2686,6 +2792,69 @@ export function createAcademyMemberController({
     await refreshAcademyProfileSections(studentId);
   }
 
+  function renderGuardianProfileSection(guardianInfo) {
+    const phoneValue = formatGuardianPhoneDisplay(guardianInfo?.guardian_phone ?? "");
+    const notificationEnabled = guardianInfo?.attendance_notification_enabled !== false;
+
+    return `
+      <section class="student-academy-profile-section student-academy-profile-section--guardian">
+        <h3>보호자 정보</h3>
+        <form class="student-guardian-profile-form" data-guardian-form>
+          <label class="student-guardian-field">
+            <span class="student-guardian-field-label">보호자 연락처</span>
+            <input
+              type="tel"
+              inputmode="numeric"
+              autocomplete="tel"
+              placeholder="010-1234-5678"
+              value="${escapeHtml(phoneValue)}"
+              data-guardian-field="phone"
+            />
+          </label>
+          <label class="student-guardian-toggle">
+            <input
+              type="checkbox"
+              data-guardian-field="attendance_notification_enabled"
+              ${notificationEnabled ? "checked" : ""}
+            />
+            <span>출결 알림</span>
+            <strong class="student-guardian-toggle-state">${notificationEnabled ? "사용" : "미사용"}</strong>
+          </label>
+          <div class="student-guardian-form-footer">
+            <button type="button" class="primary-button" data-guardian-action="save">
+              저장
+            </button>
+          </div>
+        </form>
+        <p class="student-academy-profile-section-note">연락처는 학생 프로필에서만 확인할 수 있습니다.</p>
+      </section>
+    `;
+  }
+
+  async function handleGuardianProfileSave(studentId) {
+    const academyId = getAcademyId();
+    if (!academyId) {
+      window.alert("학원 정보를 확인할 수 없습니다.");
+      return;
+    }
+
+    const root = elements.studentAcademyProfileSections;
+    const phoneInput = root?.querySelector("[data-guardian-field='phone']");
+    const notifyInput = root?.querySelector("[data-guardian-field='attendance_notification_enabled']");
+
+    const result = saveStudentGuardianProfile(academyId, studentId, {
+      guardian_phone: phoneInput?.value ?? "",
+      attendance_notification_enabled: notifyInput?.checked ?? true,
+    });
+
+    if (!result.ok) {
+      window.alert(result.message ?? "보호자 정보를 저장하지 못했습니다.");
+      return;
+    }
+
+    await refreshAcademyProfileSections(studentId);
+  }
+
   function renderAcademyProfileHub(profile) {
     return `
       <nav class="student-academy-profile-hub" aria-label="학생 운영 정보">
@@ -2709,6 +2878,7 @@ export function createAcademyMemberController({
           note: profile.parentDeliveryHistory.note,
           status: profile.parentDeliveryHistory.status,
         })}
+        ${renderGuardianProfileSection(profile.guardianInfo)}
         ${renderAcademyProfileHubSection({
           title: "출결",
           value: profile.attendance.label,
@@ -2860,6 +3030,226 @@ export function createAcademyMemberController({
     return `반복 시도 ${attemptCount}회`;
   }
 
+  function clearReviewSelection() {
+    activeReviewState.selectedIds.clear();
+    activeReviewState.pendingArchiveAfterPrintIds = [];
+    syncReviewSelectionUi();
+  }
+
+  function pruneReviewSelection() {
+    const visibleIds = new Set(activeReviewState.summaries.map((summary) => summary.problemId));
+    activeReviewState.selectedIds.forEach((problemId) => {
+      if (!visibleIds.has(problemId)) {
+        activeReviewState.selectedIds.delete(problemId);
+      }
+    });
+  }
+
+  function getSelectedReviewSummaries() {
+    return activeReviewState.summaries.filter((summary) =>
+      activeReviewState.selectedIds.has(summary.problemId),
+    );
+  }
+
+  function formatReviewProblemLabel(summary) {
+    return summary?.categoryProblemNumber
+      ? `${summary.category} ${summary.categoryProblemNumber}번`
+      : summary?.problemTitle || summary?.problemId || "문제";
+  }
+
+  function syncReviewSelectionUi() {
+    pruneReviewSelection();
+
+    const visibleCount = activeReviewState.summaries.length;
+    const selectedCount = activeReviewState.selectedIds.size;
+    const selectedSummaries = getSelectedReviewSummaries();
+    const archivableCount = activeReviewState.showArchived
+      ? 0
+      : selectedSummaries.filter((summary) => !summary.reviewArchived).length;
+
+    if (elements.studentReviewSelectAll) {
+      elements.studentReviewSelectAll.disabled = visibleCount === 0;
+      elements.studentReviewSelectAll.checked =
+        visibleCount > 0 && selectedCount === visibleCount;
+      elements.studentReviewSelectAll.indeterminate =
+        selectedCount > 0 && selectedCount < visibleCount;
+    }
+
+    if (elements.studentReviewPrintSelected) {
+      elements.studentReviewPrintSelected.disabled = selectedCount === 0 || !printReviewProblems;
+    }
+
+    if (elements.studentReviewArchiveSelected) {
+      elements.studentReviewArchiveSelected.disabled = archivableCount === 0;
+    }
+
+    if (elements.studentReviewDeleteSelected) {
+      elements.studentReviewDeleteSelected.disabled = selectedCount === 0;
+    }
+
+    elements.studentReviewList?.querySelectorAll("[data-review-select-problem-id]").forEach((input) => {
+      input.checked = activeReviewState.selectedIds.has(input.dataset.reviewSelectProblemId);
+    });
+  }
+
+  function handleReviewSelectAllChange(event) {
+    if (activeReviewState.summaries.length === 0) {
+      event.target.checked = false;
+      return;
+    }
+
+    if (event.target.checked) {
+      activeReviewState.summaries.forEach((summary) => {
+        activeReviewState.selectedIds.add(summary.problemId);
+      });
+    } else {
+      activeReviewState.selectedIds.clear();
+    }
+
+    syncReviewSelectionUi();
+  }
+
+  function handleStudentReviewListChange(event) {
+    const checkbox = event.target.closest("[data-review-select-problem-id]");
+    if (!checkbox) {
+      return;
+    }
+
+    const problemId = checkbox.dataset.reviewSelectProblemId;
+    if (checkbox.checked) {
+      activeReviewState.selectedIds.add(problemId);
+    } else {
+      activeReviewState.selectedIds.delete(problemId);
+    }
+
+    syncReviewSelectionUi();
+  }
+
+  function handleBulkArchiveReviewProblems() {
+    const studentId = activeReviewState.studentId;
+    if (!studentId) {
+      return;
+    }
+
+    const archivable = getSelectedReviewSummaries().filter((summary) => !summary.reviewArchived);
+    if (archivable.length === 0) {
+      window.alert("보관할 오답을 선택해 주세요.");
+      return;
+    }
+
+    archivable.forEach((summary) => {
+      setReviewArchivedForStudent({
+        studentUserId: studentId,
+        problemId: summary.problemId,
+        archived: true,
+      });
+    });
+    refreshStudentReviewModal();
+    refreshAcademyMemberView();
+    clearReviewSelection();
+  }
+
+  function handleBulkDeleteReviewProblems() {
+    const studentId = activeReviewState.studentId;
+    if (!studentId) {
+      return;
+    }
+
+    const targets = getSelectedReviewSummaries();
+    if (targets.length === 0) {
+      window.alert("삭제할 오답을 선택해 주세요.");
+      return;
+    }
+
+    const confirmed = window.confirm(
+      `선택한 ${targets.length}개 오답노트를 삭제할까요?\n\n` +
+        "삭제 범위:\n" +
+        "- 선생님/원장 오답노트 목록에서 제거됩니다.\n" +
+        "- 학생 복습 추천·미해결 복습 집계에서 제외됩니다.\n" +
+        "- 카테고리 완료 수·진도율 등 학습 진행 기록은 유지됩니다.\n" +
+        "- attempts의 오답 이력 데이터는 통계용으로 localStorage에 남습니다.",
+    );
+    if (!confirmed) {
+      return;
+    }
+
+    targets.forEach((summary) => {
+      setReviewDeletedForStudent({ studentUserId: studentId, problemId: summary.problemId });
+    });
+
+    refreshStudentReviewModal();
+    refreshAcademyMemberView();
+    clearReviewSelection();
+  }
+
+  function handleBulkPrintReviewProblems() {
+    if (!printReviewProblems) {
+      window.alert("인쇄 기능을 사용할 수 없습니다.");
+      return;
+    }
+
+    const studentId = activeReviewState.studentId;
+    const selectedSummaries = getSelectedReviewSummaries();
+    if (!studentId || selectedSummaries.length === 0) {
+      window.alert("인쇄할 오답을 선택해 주세요.");
+      return;
+    }
+
+    const student = findRenderedStudent(studentId);
+    const studentName = student?.name || student?.username || "학생";
+    const problemIds = selectedSummaries.map((summary) => summary.problemId);
+    const archivableIds = selectedSummaries
+      .filter((summary) => !summary.reviewArchived)
+      .map((summary) => summary.problemId);
+
+    printReviewProblems(problemIds, {
+      title: `${studentName} 오답노트`,
+      onAfterPrint: () => {
+        if (archivableIds.length === 0) {
+          return;
+        }
+
+        activeReviewState.pendingArchiveAfterPrintIds = archivableIds;
+        openReviewArchivePromptModal(archivableIds.length);
+      },
+    });
+  }
+
+  function openReviewArchivePromptModal(count) {
+    if (!elements.studentReviewArchivePromptModal) {
+      return;
+    }
+
+    if (elements.studentReviewArchivePromptMessage) {
+      elements.studentReviewArchivePromptMessage.textContent =
+        `인쇄한 ${count}개 오답을 보관함으로 이동하시겠습니까?`;
+    }
+
+    elements.studentReviewArchivePromptModal.classList.remove("is-hidden");
+  }
+
+  function closeReviewArchivePromptModal() {
+    activeReviewState.pendingArchiveAfterPrintIds = [];
+    elements.studentReviewArchivePromptModal?.classList.add("is-hidden");
+  }
+
+  function handleConfirmArchiveAfterPrint() {
+    const studentId = activeReviewState.studentId;
+    const problemIds = [...activeReviewState.pendingArchiveAfterPrintIds];
+    closeReviewArchivePromptModal();
+
+    if (!studentId || problemIds.length === 0) {
+      return;
+    }
+
+    problemIds.forEach((problemId) => {
+      setReviewArchivedForStudent({ studentUserId: studentId, problemId, archived: true });
+    });
+    refreshStudentReviewModal();
+    refreshAcademyMemberView();
+    clearReviewSelection();
+  }
+
   function renderStudentReviewList(reviewSummaries, studentId) {
     if (reviewSummaries.length === 0) {
       const emptyLabel = activeReviewState.showArchived
@@ -2871,12 +3261,19 @@ export function createAcademyMemberController({
     return reviewSummaries
       .map((summary) => {
         const boardKey = escapeHtml(summary.problemId);
-        const problemLabel = summary.categoryProblemNumber
-          ? `${summary.category} ${summary.categoryProblemNumber}번`
-          : summary.problemTitle;
+        const problemLabel = formatReviewProblemLabel(summary);
         const lifecycleBadges = renderReviewLifecycleBadges(summary);
+        const isSelected = activeReviewState.selectedIds.has(summary.problemId);
         return `
           <article class="student-review-item${summary.reviewArchived ? " is-archived" : ""}" data-review-problem-id="${boardKey}">
+            <label class="student-review-select">
+              <input
+                type="checkbox"
+                data-review-select-problem-id="${boardKey}"
+                ${isSelected ? "checked" : ""}
+                aria-label="${escapeHtml(problemLabel)} 선택"
+              />
+            </label>
             <div class="student-review-card">
               <div class="student-review-summary-text">
                 <div class="student-review-title-row">
@@ -2890,7 +3287,6 @@ export function createAcademyMemberController({
                   <span>${formatDateTime(summary.updatedAt)}</span>
                 </p>
                 <div class="student-review-card-actions">
-                  <button class="secondary-button" type="button" data-retry-problem-id="${boardKey}">다시 풀기</button>
                   ${
                     summary.reviewArchived
                       ? `<button class="secondary-button" type="button" data-unarchive-review-problem-id="${boardKey}" data-review-student-id="${escapeHtml(studentId)}">보관 해제</button>`
@@ -2919,9 +3315,7 @@ export function createAcademyMemberController({
   }
 
   function handleStudentReviewListClick(event) {
-    const retryButton = event.target.closest("[data-retry-problem-id]");
-    if (retryButton) {
-      handleRetryReviewProblem(retryButton.dataset.retryProblemId);
+    if (event.target.closest("[data-review-select-problem-id]")) {
       return;
     }
 
@@ -2947,17 +3341,6 @@ export function createAcademyMemberController({
     }
   }
 
-  function handleRetryReviewProblem(problemId) {
-    const problem = getProblemById(problemId);
-    if (!problem) {
-      window.alert("문제 정보를 찾을 수 없습니다.");
-      return;
-    }
-
-    closeStudentReviewModal();
-    openProblemInLibrary?.(problemId);
-  }
-
   function handleArchiveReviewProblem(studentId, problemId, archived = true) {
     const result = setReviewArchivedForStudent({ studentUserId: studentId, problemId, archived });
     if (!result) {
@@ -2971,9 +3354,7 @@ export function createAcademyMemberController({
 
   function handleDeleteReviewProblem(studentId, problemId) {
     const summary = activeReviewState.summaries.find((item) => item.problemId === problemId);
-    const label = summary?.categoryProblemNumber
-      ? `${summary.category} ${summary.categoryProblemNumber}번`
-      : summary?.problemTitle || problemId;
+    const label = formatReviewProblemLabel(summary);
 
     const confirmed = window.confirm(
       `${label} 오답노트를 삭제할까요?\n\n` +
@@ -3067,6 +3448,10 @@ export function createAcademyMemberController({
     if (wrongMove) {
       reviewBoard.addObject({ x: wrongMove.x, y: wrongMove.y, c: WGo.B });
       reviewBoard.addObject({ x: wrongMove.x, y: wrongMove.y, type: "CR" });
+    }
+
+    if (problem) {
+      applyCandidateLabelsToWgoBoard(reviewBoard, getProblemCandidateLabels(problem), 13);
     }
   }
 

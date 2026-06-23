@@ -1,6 +1,8 @@
+import { getProblemCandidateLabels } from "../game/candidate-labels.js";
 import { isOxProblem } from "../game/problem-type.js";
 
 const ACADEMY_MODES = ["learning", "academy", "attendance", "payments"];
+const HUB_MENU_MODES = ["list", "learning", "academy", "attendance", "payments", "platform"];
 
 export function createSolveView({
   elements,
@@ -45,6 +47,7 @@ export function createSolveView({
     elements.problemListScreen.classList.toggle("is-hidden", mode !== "list");
     elements.platformAdminScreen?.classList.toggle("is-hidden", mode !== "platform");
     elements.academyMenuScreen.classList.toggle("is-hidden", !ACADEMY_MODES.includes(mode));
+    elements.heroCard?.classList.toggle("is-hub-minimal", HUB_MENU_MODES.includes(mode));
     elements.heroCard?.classList.toggle("is-compact-hub", mode === "study");
     updateAcademyMenuVisibility();
     updateAdminVisibility();
@@ -93,7 +96,9 @@ export function createSolveView({
     setStatus(`${getStoneLabel(STONE.black)} 차례입니다.`);
     setFeedback(getProblemStartFeedback(problem));
     boardController.clearAnswerMarker();
-    boardController.loadPosition(boardStones ?? problem.stones);
+    boardController.loadPosition(boardStones ?? problem.stones, {
+      candidateLabels: getProblemCandidateLabels(problem),
+    });
   }
 
   function renderEmptyProblemState() {

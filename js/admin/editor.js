@@ -2,7 +2,9 @@ import {
   isValidBoardPoint,
   sanitizeBoardPoint,
   sanitizeStone,
+  sanitizeStones,
 } from "../game/board-point-validation.js";
+import { getProblemBoardSize, normalizeBoardSize } from "../game/board-size.js";
 import { isBoardProblem, isOxProblem, PROBLEM_TYPE } from "../game/problem-type.js";
 import { PROBLEM_MODE } from "../game/problem-mode.js";
 import {
@@ -35,6 +37,12 @@ import {
   getGradeLevelSelectOptions,
   normalizeGradeLevelCode,
 } from "../services/grade-level-service.js";
+import {
+  applyCandidateLabelsToWgoBoard,
+  CANDIDATE_LABEL_OPTIONS,
+  removeCandidateLabelAt,
+  toggleCandidateLabelAt,
+} from "../game/candidate-labels.js";
 
 export function createAdminEditorController({
   elements,
@@ -43,7 +51,6 @@ export function createAdminEditorController({
   problems,
   ProblemStore,
   problemService,
-  BOARD_SIZE,
   STONE,
   CREATOR_CATEGORIES,
   requireAdminMode,
@@ -57,6 +64,91 @@ export function createAdminEditorController({
   escapeHtml,
   getProblemStoreErrorMessage,
 }) {
+  function getAdminBoardSize() {
+    return getProblemBoardSize(adminState.draft ?? {});
+  }
+
+  function normalizeDraftForBoardSize(boardSize) {
+    if (!adminState.draft) {
+      return;
+    }
+
+    const normalized = normalizeBoardSize(boardSize);
+    adminState.draft.boardSize = normalized;
+    adminState.draft.stones = sanitizeStones(adminState.draft.stones ?? [], normalized, "admin:resize");
+
+    if (adminState.draft.correctMove) {
+      adminState.draft.correctMove =
+        sanitizeBoardPoint(adminState.draft.correctMove, normalized, "admin:resize") ?? null;
+    }
+
+    if (Array.isArray(adminState.draft.correctSequence)) {
+      adminState.draft.correctSequence = adminState.draft.correctSequence
+        .map((move) => sanitizeBoardPoint(move, normalized, "admin:resize"))
+        .filter(Boolean);
+    }
+
+    adminState.draft.candidateLabels = sanitizeCandidateLabelsForDraft(
+      adminState.draft.candidateLabels ?? adminState.draft.candidate_labels ?? [],
+      normalized,
+    );
+    adminState.draft.candidate_labels = adminState.draft.candidateLabels;
+
+    if (isAiResponseDraft(adminState.draft)) {
+      const current = getAdminFullSequence(adminState.draft);
+      applyFullAnswerSequenceToDraft(
+        adminState.draft,
+        current
+          .map((move) => sanitizeBoardPoint(move, normalized, "admin:resize"))
+          .filter(Boolean),
+        normalized,
+      );
+      trimFullSequenceToAnswerCount(adminState.draft);
+    }
+  }
+
+  function sanitizeCandidateLabelsForDraft(labels, boardSize) {
+    const allowed = new Set(["A", "B", "C", "D"]);
+    const seen = new Set();
+    const sanitized = [];
+
+    (Array.isArray(labels) ? labels : []).forEach((entry) => {
+      const point = sanitizeBoardPoint(entry, boardSize, "admin:resizeLabel");
+      const label = String(entry?.label ?? "")
+        .trim()
+        .toUpperCase();
+      if (!point || !allowed.has(label)) {
+        return;
+      }
+
+      const key = `${point.x}:${point.y}`;
+      if (seen.has(key)) {
+        return;
+      }
+
+      seen.add(key);
+      sanitized.push({ x: point.x, y: point.y, label });
+    });
+
+    return sanitized;
+  }
+
+  function handleAdminBoardSizeChange(nextSize) {
+    if (!adminState.draft) {
+      return;
+    }
+
+    const normalized = normalizeBoardSize(nextSize);
+    if (getAdminBoardSize() === normalized) {
+      return;
+    }
+
+    normalizeDraftForBoardSize(normalized);
+    renderAdminBoard();
+    updateAdminAnswerLabel();
+    setFeedback(`${normalized}줄 바둑판으로 변경했습니다.`, "correct");
+  }
+
   function renderAdminEditor() {
     if (!requireAdminMode()) {
       return;
@@ -71,6 +163,7 @@ export function createAdminEditorController({
     const problemType = adminState.draft.type === PROBLEM_TYPE.ox ? PROBLEM_TYPE.ox : PROBLEM_TYPE.board;
     const isOx = problemType === PROBLEM_TYPE.ox;
     const oxAnswer = Boolean(adminState.draft.oxAnswer);
+    const boardSize = getAdminBoardSize();
 
     elements.adminEditor.classList.remove("is-hidden");
     elements.adminEditor.innerHTML = `
@@ -111,6 +204,29 @@ export function createAdminEditorController({
           정답 수 (AI 응수형)
           <select id="admin-answer-move-count">${renderAnswerMoveCountOptions(draft.answerMoveCount)}</select>
         </label>
+      </div>
+      <div class="admin-board-size-field${isOx ? " is-hidden" : ""}">
+        <p class="panel-label">바둑판 크기</p>
+        <div class="admin-board-size-options" role="radiogroup" aria-label="바둑판 크기">
+          <label class="admin-board-size-option">
+            <input
+              type="radio"
+              name="admin-board-size"
+              value="13"
+              ${boardSize === 13 ? "checked" : ""}
+            />
+            13줄
+          </label>
+          <label class="admin-board-size-option">
+            <input
+              type="radio"
+              name="admin-board-size"
+              value="9"
+              ${boardSize === 9 ? "checked" : ""}
+            />
+            9줄
+          </label>
+        </div>
       </div>
       <div class="admin-board-tools">
         <p class="panel-label">바둑판 배치</p>
@@ -171,6 +287,21 @@ export function createAdminEditorController({
           <button class="admin-board-tool" data-admin-tool="mark" data-admin-mark="square" type="button">네모</button>
           <button class="admin-board-tool" data-admin-tool="mark" data-admin-mark="cross" type="button">X 표시</button>
           <button class="admin-board-tool" data-admin-tool="mark" data-admin-mark="none" type="button">표시 지우기</button>
+        </div>
+        <div class="candidate-label-grid admin-board-tool-group--board-only${isOx ? " is-hidden" : ""}">
+          <p class="panel-label">후보 표시</p>
+          <div class="tool-grid">
+            ${CANDIDATE_LABEL_OPTIONS.map(
+              (label) => `
+            <button
+              class="admin-board-tool admin-board-tool--candidate"
+              data-admin-tool="candidate-label"
+              data-admin-candidate-label="${label}"
+              type="button"
+            >${label}</button>`,
+            ).join("")}
+          </div>
+          <p class="admin-field-hint">A/B/C/D 선택 후 빈 교차점을 클릭해 추가합니다. 같은 위치를 다시 클릭하면 삭제됩니다.</p>
         </div>
       </div>
       <div id="admin-board" class="admin-board" aria-label="관리자 문제 편집 바둑판"></div>
@@ -262,6 +393,11 @@ export function createAdminEditorController({
         updateAdminAnswerLabel();
       });
     });
+    elements.adminEditor.querySelectorAll('input[name="admin-board-size"]').forEach((input) => {
+      input.addEventListener("change", (event) => {
+        handleAdminBoardSizeChange(event.target.value);
+      });
+    });
     renderAdminBoard();
     updateFullSequenceInputUi();
   }
@@ -306,6 +442,9 @@ export function createAdminEditorController({
       .forEach((button) => button.classList.toggle("is-hidden", isOx || !isAiResponse));
     elements.adminEditor.querySelector("#admin-ox-answer-panel")?.classList.toggle("is-hidden", !isOx);
     elements.adminEditor.querySelector(".admin-board-help")?.classList.toggle("is-hidden", isOx);
+    elements.adminEditor
+      .querySelector(".candidate-label-grid")
+      ?.classList.toggle("is-hidden", isOx);
     elements.adminEditor
       .querySelector("#admin-answer-move-count-wrap")
       ?.classList.toggle("is-hidden", !isAiResponse);
@@ -449,7 +588,7 @@ export function createAdminEditorController({
       try {
         report = await qaModule.runAiResponseQa({
           problem: adminState.draft,
-          boardSize: BOARD_SIZE,
+          boardSize: getAdminBoardSize(),
           stoneColors: { black: STONE.black, white: STONE.white },
         });
       } finally {
@@ -540,14 +679,14 @@ export function createAdminEditorController({
   function getAdminFullSequence(draft = adminState.draft) {
     return normalizeFullAnswerSequence(
       draft?.fullAnswerSequence ?? draft?.full_answer_sequence ?? [],
-      BOARD_SIZE,
+      getAdminBoardSize(),
     );
   }
 
   function buildAdminAiSequenceBoardState(draft = adminState.draft) {
     const fullSequence = getAdminFullSequence(draft);
     return simulateFullAnswerSequence(draft?.stones ?? [], fullSequence, {
-      boardSize: BOARD_SIZE,
+      boardSize: getAdminBoardSize(),
       stoneColors: { black: STONE.black, white: STONE.white },
       enforceSimpleKo: false,
     });
@@ -561,7 +700,7 @@ export function createAdminEditorController({
       adminState.draft.answerMoveCount ?? adminState.draft.answer_move_count ?? 1,
     );
     const trimmed = fullSequence.slice(0, answerMoveCount);
-    applyFullAnswerSequenceToDraft(adminState.draft, trimmed, BOARD_SIZE);
+    applyFullAnswerSequenceToDraft(adminState.draft, trimmed, getAdminBoardSize());
   }
 
   function trimFullSequenceToAnswerCount(draft) {
@@ -570,10 +709,10 @@ export function createAdminEditorController({
     );
     const current = normalizeFullAnswerSequence(
       draft?.fullAnswerSequence ?? draft?.full_answer_sequence ?? [],
-      BOARD_SIZE,
+      getAdminBoardSize(),
     );
     if (current.length > answerMoveCount) {
-      applyFullAnswerSequenceToDraft(draft, current.slice(0, answerMoveCount), BOARD_SIZE);
+      applyFullAnswerSequenceToDraft(draft, current.slice(0, answerMoveCount), getAdminBoardSize());
     }
   }
 
@@ -670,7 +809,7 @@ export function createAdminEditorController({
       return;
     }
 
-    applyFullAnswerSequenceToDraft(adminState.draft, [], BOARD_SIZE);
+    applyFullAnswerSequenceToDraft(adminState.draft, [], getAdminBoardSize());
     adminState.fullSequenceInputMode = false;
 
     const status = elements.adminEditor.querySelector("#admin-editor-status");
@@ -726,6 +865,9 @@ export function createAdminEditorController({
   function setAdminBoardTool(button) {
     adminState.activeTool = button.dataset.adminTool;
     adminState.activeMark = button.dataset.adminMark || adminState.activeMark;
+    if (button.dataset.adminCandidateLabel) {
+      adminState.activeCandidateLabel = button.dataset.adminCandidateLabel;
+    }
 
     if (adminState.activeTool === "clear-sequence") {
       if (isAiResponseDraft(adminState.draft)) {
@@ -744,7 +886,7 @@ export function createAdminEditorController({
   }
 
   function safeAdminBoardAdd(adminBoard, object, context = "admin") {
-    if (!isValidBoardPoint(object, BOARD_SIZE)) {
+    if (!isValidBoardPoint(object, getAdminBoardSize())) {
       console.warn("[AdminBoard] skip invalid WGo object", { object, context });
       return false;
     }
@@ -770,7 +912,7 @@ export function createAdminEditorController({
 
     boardElement.innerHTML = "";
     const adminBoard = new WGo.Board(boardElement, {
-      size: BOARD_SIZE,
+      size: getAdminBoardSize(),
       width: boardElement.clientWidth || 360,
       section: {
         top: 0,
@@ -787,7 +929,7 @@ export function createAdminEditorController({
       : null;
     const markByPointKey = new Map();
     adminState.draft.stones.forEach((stone) => {
-      const sanitized = sanitizeStone(stone, BOARD_SIZE, "admin:stone");
+      const sanitized = sanitizeStone(stone, getAdminBoardSize(), "admin:stone");
       if (!sanitized) {
         return;
       }
@@ -801,7 +943,7 @@ export function createAdminEditorController({
       : adminState.draft.stones;
 
     stonesToRender.forEach((stone) => {
-      const sanitized = sanitizeStone(stone, BOARD_SIZE, "admin:stone-render");
+      const sanitized = sanitizeStone(stone, getAdminBoardSize(), "admin:stone-render");
       if (!sanitized) {
         return;
       }
@@ -825,7 +967,7 @@ export function createAdminEditorController({
     ) {
       const correctPoint = sanitizeBoardPoint(
         adminState.draft.correctMove,
-        BOARD_SIZE,
+        getAdminBoardSize(),
         "admin:correctMove",
       );
       if (correctPoint) {
@@ -843,17 +985,24 @@ export function createAdminEditorController({
       Array.isArray(adminState.draft.correctSequence)
     ) {
       adminState.draft.correctSequence.forEach((move) => {
-        const point = sanitizeBoardPoint(move, BOARD_SIZE, "admin:correctSequence");
+        const point = sanitizeBoardPoint(move, getAdminBoardSize(), "admin:correctSequence");
         if (point) {
           safeAdminBoardAdd(adminBoard, { x: point.x, y: point.y, type: "CR" });
         }
       });
     }
 
+    applyCandidateLabelsToWgoBoard(
+      adminBoard,
+      adminState.draft.candidateLabels ?? adminState.draft.candidate_labels,
+      getAdminBoardSize(),
+      (object) => safeAdminBoardAdd(adminBoard, object, "admin:candidateLabel"),
+    );
+
     if (isBoardProblem(adminState.draft) && aiResponseDraft) {
       const stoneAt = new Set((aiBoardState?.stones ?? []).map((s) => `${s.x}:${s.y}`));
       previewSequence.forEach((move) => {
-        const point = sanitizeBoardPoint(move, BOARD_SIZE, "admin:sequenceMarker");
+        const point = sanitizeBoardPoint(move, getAdminBoardSize(), "admin:sequenceMarker");
         if (!point) {
           return;
         }
@@ -887,6 +1036,10 @@ export function createAdminEditorController({
   function handleAdminBoardClick(x, y, { button = "primary" } = {}) {
     const point = { x, y };
     if (!adminState.draft) {
+      return;
+    }
+
+    if (!isValidBoardPoint(point, getAdminBoardSize())) {
       return;
     }
 
@@ -924,6 +1077,15 @@ export function createAdminEditorController({
       }
 
       updateAdminStoneMark(point);
+      return;
+    }
+
+    if (adminState.activeTool === "candidate-label") {
+      if (button === "secondary") {
+        return;
+      }
+
+      updateAdminCandidateLabel(point);
       return;
     }
 
@@ -993,7 +1155,7 @@ export function createAdminEditorController({
     ];
     const nextRenumbered = renumberSequenceMoves(next);
     const nextState = simulateFullAnswerSequence(adminState.draft.stones ?? [], nextRenumbered, {
-      boardSize: BOARD_SIZE,
+      boardSize: getAdminBoardSize(),
       stoneColors: { black: STONE.black, white: STONE.white },
       enforceSimpleKo: false,
     });
@@ -1063,6 +1225,35 @@ export function createAdminEditorController({
 
     if (adminState.draft.correctMove && isSamePoint(adminState.draft.correctMove, point)) {
       adminState.draft.correctMove = { x: 0, y: 0 };
+    }
+
+    adminState.draft.candidateLabels = removeCandidateLabelAt(
+      adminState.draft.candidateLabels ?? adminState.draft.candidate_labels,
+      point,
+      getAdminBoardSize(),
+    );
+    adminState.draft.candidate_labels = adminState.draft.candidateLabels;
+
+    renderAdminBoard();
+  }
+
+  function updateAdminCandidateLabel(point) {
+    if (adminState.draft.stones.some((stone) => isSamePoint(stone, point))) {
+      setFeedback("후보 표시는 빈 교차점에만 추가할 수 있습니다.", "wrong");
+      return;
+    }
+
+    const activeLabel = adminState.activeCandidateLabel || "A";
+    const current = adminState.draft.candidateLabels ?? adminState.draft.candidate_labels ?? [];
+    const next = toggleCandidateLabelAt(current, point, activeLabel, getAdminBoardSize());
+    adminState.draft.candidateLabels = next;
+    adminState.draft.candidate_labels = next;
+
+    const existing = current.find((entry) => entry.x === point.x && entry.y === point.y);
+    if (existing?.label === activeLabel) {
+      setFeedback(`후보 표시 ${activeLabel}를 (${point.x}, ${point.y})에서 삭제했습니다.`, "correct");
+    } else {
+      setFeedback(`후보 표시 ${activeLabel}를 (${point.x}, ${point.y})에 추가했습니다.`, "correct");
     }
 
     renderAdminBoard();
@@ -1249,7 +1440,7 @@ export function createAdminEditorController({
       applyFullAnswerSequenceToDraft(
         adminState.draft,
         getAdminFullSequence(),
-        BOARD_SIZE,
+        getAdminBoardSize(),
       );
       return;
     }
@@ -1287,7 +1478,7 @@ export function createAdminEditorController({
     }
 
     if (isAiResponseDraft(problem)) {
-      return validateFullAnswerSequence(problem, BOARD_SIZE, occupied) || "";
+      return validateFullAnswerSequence(problem, getAdminBoardSize(), occupied) || "";
     }
 
     if (!problem.correctMove) {

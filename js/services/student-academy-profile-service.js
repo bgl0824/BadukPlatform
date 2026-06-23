@@ -33,10 +33,18 @@ export function getStudentAcademyCardSummary(userId, problems = []) {
  *     gradeSource: string,
  *     gradeSourceLabel: string,
  *   } | null,
+ *   guardianProfile?: {
+ *     guardian_phone?: string,
+ *     attendance_notification_enabled?: boolean,
+ *   } | null,
  * }} [options]
  */
 export function buildStudentAcademyProfileView(options = {}) {
   const officialGradeRecord = options.officialGrade ?? null;
+  const guardianProfile = options.guardianProfile ?? null;
+  const guardianPhone = String(guardianProfile?.guardian_phone ?? "");
+  const attendanceNotificationEnabled =
+    guardianProfile?.attendance_notification_enabled !== false;
 
   return {
     studentName: options.studentName ?? "",
@@ -68,6 +76,12 @@ export function buildStudentAcademyProfileView(options = {}) {
       status: "empty",
       label: "기록 없음",
       note: "성장리포트 전달·상담 공유 이력은 추후 제공됩니다.",
+    },
+    guardianInfo: {
+      guardian_phone: guardianPhone,
+      attendance_notification_enabled: attendanceNotificationEnabled,
+      phoneLabel: guardianPhone ? undefined : "미등록",
+      notificationLabel: attendanceNotificationEnabled ? "사용" : "미사용",
     },
     attendance: {
       status: "pending",

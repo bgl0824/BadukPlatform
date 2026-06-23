@@ -1,4 +1,5 @@
 import { isValidBoardPoint } from "../../game/board-point-validation.js";
+import { getProblemBoardSize } from "../../game/board-size.js";
 import { AI_RESPONSE_SOLVE_MESSAGES } from "./constants.js";
 import { getExpectedAuthorWhite, formatCoordLabel } from "./answer-sequence.js";
 import { isCorrectBlackMove } from "./black-sequence.js";
@@ -48,14 +49,22 @@ export function createAiResponseSolveEngine({
   resetCurrentProblemAfterWrong,
   finishWrongReveal,
   cloneBoardStones,
+  getBoardCandidateLabels,
   markProblemInProgress,
 }) {
+  function getActiveBoardSize(problem = getCurrentProblem?.()) {
+    return getProblemBoardSize(problem ?? {});
+  }
+
   function getSession() {
     return appState.aiResponseSolveSession;
   }
 
   function initSession(problem) {
-    appState.aiResponseSolveSession = createAiResponseSolveSession(problem, boardSize);
+    appState.aiResponseSolveSession = createAiResponseSolveSession(
+      problem,
+      getActiveBoardSize(problem),
+    );
     logAiResponseSolveContext(problem, "initSession");
     console.log("[AI_RESPONSE] session", appState.aiResponseSolveSession);
     syncBoardPreviewContext();
@@ -185,7 +194,9 @@ export function createAiResponseSolveEngine({
   }
 
   function rebuildBoardFromPlayedMoves(problem, playedMoves) {
-    boardController.loadPosition(cloneBoardStones(appState.initialBoardStones ?? problem.stones ?? []));
+    boardController.loadPosition(cloneBoardStones(appState.initialBoardStones ?? problem.stones ?? []), {
+      candidateLabels: getBoardCandidateLabels?.(problem) ?? [],
+    });
     playedMoves.forEach((move) => {
       if (!boardController.hasStone(move)) {
         boardController.addStone(move);
@@ -219,7 +230,7 @@ export function createAiResponseSolveEngine({
     }
 
     const point = { x: expected.x, y: expected.y };
-    if (!isValidBoardPoint(point, boardSize)) {
+    if (!isValidBoardPoint(point, getActiveBoardSize(problem))) {
       console.warn("[AI_RESPONSE] invalid author white coordinate", expected);
       rollbackAuthorWhiteFailure(session, problem);
       return false;
@@ -287,7 +298,7 @@ export function createAiResponseSolveEngine({
     const stones = boardController.getStones();
     const result = await resolveWhiteResponse({
       problem,
-      boardSize,
+      boardSize: getActiveBoardSize(problem),
       stones,
       playedMoves: session.playedMoves,
       initialStones: appState.initialBoardStones ?? problem.stones ?? [],
@@ -324,7 +335,7 @@ export function createAiResponseSolveEngine({
       return false;
     }
 
-    if (!isValidBoardPoint(result.point, boardSize)) {
+    if (!isValidBoardPoint(result.point, getActiveBoardSize(problem))) {
       console.warn("[AI_RESPONSE] invalid KataGo white coordinate", result.point);
       setFeedback("백 응수 좌표가 올바르지 않습니다.", "wrong");
       rollbackFailedKatago(session, problem);
