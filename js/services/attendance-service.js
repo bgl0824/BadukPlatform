@@ -502,6 +502,18 @@ export function getStudentAttendanceCode(academyId, studentId) {
   return normalizeAttendanceCode(entry.code);
 }
 
+export const ATTENDANCE_CODE_MISSING_LABEL = "(----)";
+
+export function formatAttendanceCodeQuickLabel(code) {
+  const normalized = code ? normalizeAttendanceCode(code) : null;
+  return normalized ?? ATTENDANCE_CODE_MISSING_LABEL;
+}
+
+export function formatStudentNameWithAttendanceCode(name, code) {
+  const displayName = String(name ?? "이름 없음").trim() || "이름 없음";
+  return `${displayName} (${formatAttendanceCodeQuickLabel(code)})`;
+}
+
 function getMaxAttendanceCodeNumber(codes) {
   let max = ATTENDANCE_CODE_MIN - 1;
 

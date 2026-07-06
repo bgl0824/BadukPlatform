@@ -22,7 +22,10 @@
   <body data-require-auth="true">
     <main class="app-shell">
       <nav id="main-menu" class="main-menu" aria-label="주 메뉴">
-        <button class="main-menu-button is-active" type="button" data-main-menu="list">문제은행</button>
+        <button class="main-menu-button academy-owner-only-menu is-hidden" type="button" data-main-menu="home">
+          🏠 홈
+        </button>
+        <button class="main-menu-button" type="button" data-main-menu="list">문제은행</button>
         <button class="main-menu-button" type="button" data-main-menu="study">학습중</button>
         <button class="main-menu-button learning-only-menu is-hidden" type="button" data-main-menu="learning">
           학습관리
@@ -267,6 +270,10 @@
             </div>
           </section>
         </section>
+      </section>
+
+      <section id="home-screen" class="home-screen is-hidden" aria-label="원장 홈">
+        <div id="home-dashboard-body" class="home-dashboard-body"></div>
       </section>
 
       <section id="study-screen" class="study-screen is-hidden" aria-label="학습중">

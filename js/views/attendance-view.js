@@ -12,6 +12,8 @@ import {
   getActivePeriods,
   getAllPeriods,
   getDaysInMonth,
+  formatAttendanceCodeQuickLabel,
+  formatStudentNameWithAttendanceCode,
   getStudentAttendanceCode,
   getStudentLastAttendanceDate,
   bulkAssignMissingAttendanceCodes,
@@ -70,7 +72,7 @@ function getPaymentDisplayLabel(paymentDate) {
 
 const STICKY_COLUMNS = [
   { key: "index", label: "번호", width: 44 },
-  { key: "name", label: "이름", width: 76 },
+  { key: "name", label: "이름", width: 96 },
   { key: "frequency", label: "수강횟수", width: 78 },
   { key: "days", label: "등원요일", width: 78 },
   { key: "payment", label: "결제", width: 60 },
@@ -486,6 +488,10 @@ export function createAttendanceView({
     const paymentTitle = meta.payment_date
       ? `${paymentLabel} (클릭하여 미확인으로 변경)`
       : "클릭하여 오늘 날짜로 저장";
+    const studentBaseName = student.name || student.username || "이름 없음";
+    const attendanceCode = getStudentAttendanceCode(academyId, studentId);
+    const attendanceCodeLabel = formatAttendanceCodeQuickLabel(attendanceCode);
+    const studentDisplayName = formatStudentNameWithAttendanceCode(studentBaseName, attendanceCode);
 
     return `
       <td
@@ -497,9 +503,9 @@ export function createAttendanceView({
       <td
         class="attendance-grid-fixed-cell attendance-grid-fixed-cell--name"
         style="--attendance-col-width: ${STICKY_COLUMNS[1].width}px;"
-        title="${escapeHtml(student.name || student.username || "이름 없음")}"
+        title="${escapeHtml(studentDisplayName)}"
       >
-        ${escapeHtml(student.name || student.username || "이름 없음")}
+        <span class="attendance-student-name">${escapeHtml(studentBaseName)}</span><span class="attendance-student-code-hint"> (${escapeHtml(attendanceCodeLabel)})</span>
       </td>
       <td
         class="attendance-grid-fixed-cell attendance-grid-fixed-cell--editable"
@@ -1158,6 +1164,10 @@ export function createAttendanceView({
   async function renderAttendancePanel(options = {}) {
     if (options.resetSection) {
       activeAttendanceSection = ATTENDANCE_SECTIONS.MONTHLY;
+    }
+
+    if (options.section && Object.values(ATTENDANCE_SECTIONS).includes(options.section)) {
+      activeAttendanceSection = options.section;
     }
 
     showAttendanceSection(activeAttendanceSection);

@@ -176,6 +176,7 @@ export function createAcademyView({
     });
 
     setMenuButtonsVisibility(elements.learningMenuButtons, canViewLearningMenu());
+    setMenuButtonsVisibility([elements.homeModeButton], academyMenuVisible);
     setMenuButtonsVisibility([elements.academyModeButton], academyMenuVisible);
     setMenuButtonsVisibility([elements.attendanceModeButton], canViewAttendanceMenu());
     setMenuButtonsVisibility([elements.paymentsModeButton], canViewPaymentsMenu());
@@ -183,13 +184,14 @@ export function createAcademyView({
     updateAcademySubmenuVisibility();
 
     const canStayInMode =
+      (appState.mode === "home" && canViewAcademyMenu()) ||
       (appState.mode === "learning" && canViewLearningMenu()) ||
       (appState.mode === "academy" && canViewAcademyMenu()) ||
       (appState.mode === "attendance" && canViewAttendanceMenu()) ||
       (appState.mode === "payments" && canViewPaymentsMenu()) ||
       (appState.mode === "platform" && canViewPlatformAdminMenu());
 
-    if (["learning", "academy", "attendance", "payments", "platform"].includes(appState.mode) && !canStayInMode) {
+    if (["home", "learning", "academy", "attendance", "payments", "platform"].includes(appState.mode) && !canStayInMode) {
       if (typeof showListMode === "function") {
         showListMode();
       } else {

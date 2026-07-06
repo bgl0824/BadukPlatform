@@ -2,7 +2,7 @@ import { getProblemCandidateLabels } from "../game/candidate-labels.js";
 import { isOxProblem } from "../game/problem-type.js";
 
 const ACADEMY_MODES = ["learning", "academy", "attendance", "payments"];
-const HUB_MENU_MODES = ["list", "learning", "academy", "attendance", "payments", "platform"];
+const HUB_MENU_MODES = ["home", "list", "learning", "academy", "attendance", "payments", "platform"];
 
 export function createSolveView({
   elements,
@@ -26,6 +26,7 @@ export function createSolveView({
   function setMode(mode) {
     appState.mode = mode;
     elements.listModeButton?.classList.toggle("is-active", mode === "list");
+    elements.homeModeButton?.classList.toggle("is-active", mode === "home");
     elements.solveModeButton?.classList.toggle("is-active", mode === "study" || mode === "solve");
     elements.learningModeButton?.classList.toggle("is-active", mode === "learning");
     elements.academyModeButton?.classList.toggle("is-active", mode === "academy");
@@ -42,6 +43,7 @@ export function createSolveView({
     }
     elements.nextButton.classList.toggle("is-hidden", mode !== "solve");
     elements.studyLayout.classList.toggle("is-hidden", mode !== "solve" && mode !== "create");
+    elements.homeScreen?.classList.toggle("is-hidden", mode !== "home");
     elements.studyScreen?.classList.toggle("is-hidden", mode !== "study");
     elements.promotionPaperScreen?.classList.toggle("is-hidden", mode !== "paper");
     elements.problemListScreen.classList.toggle("is-hidden", mode !== "list");

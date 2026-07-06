@@ -19,8 +19,13 @@ import {
   normalizeMemberStatus,
   resolveAcademyScopeId,
   resolveAcademyScopeIds,
+  resolveMemberAcademyId,
   transferStudentsToTeacher,
 } from "../services/academy-service.js";
+import {
+  formatAttendanceCodeQuickLabel,
+  getStudentAttendanceCode,
+} from "../services/attendance-service.js";
 import {
   canAssignStudentTeacher,
   canManageMemberLifecycle,
@@ -1079,6 +1084,23 @@ export function createAcademyMemberController({
     });
   }
 
+  function renderStudentNameWithAttendanceCode(member, { cardMode = "operations" } = {}) {
+    const displayName = member.name || member.username || "이름 없음";
+    const shouldShowAttendanceCode =
+      cardMode === "operations" && normalizeAcademyMemberRole(member.role) === ROLES.student;
+
+    if (!shouldShowAttendanceCode) {
+      return escapeHtml(displayName);
+    }
+
+    const academyId = resolveMemberAcademyId(member);
+    const codeLabel = formatAttendanceCodeQuickLabel(
+      getStudentAttendanceCode(academyId, member.userId),
+    );
+
+    return `${escapeHtml(displayName)} <span class="student-attendance-code-hint" aria-label="출결코드 ${escapeHtml(codeLabel)}">(${escapeHtml(codeLabel)})</span>`;
+  }
+
   /** operations = 운영 summary, learning = 학습 분석 레이아웃 */
   function renderStudentSummaryCard(
     member,
@@ -1107,7 +1129,7 @@ export function createAcademyMemberController({
       <article class="academy-member-card academy-student-card academy-student-card--summary academy-student-card--${cardVariant}${isInactive ? " is-inactive-member" : ""}" data-student-id="${escapeHtml(member.userId)}">
         <div class="student-card-header student-card-header--compact">
           <div>
-            <strong>${escapeHtml(member.name || member.username)}</strong>
+            <strong>${renderStudentNameWithAttendanceCode(member, { cardMode })}</strong>
             ${
               isLearningCard
                 ? ""

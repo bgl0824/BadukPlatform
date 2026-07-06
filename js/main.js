@@ -131,7 +131,16 @@ import {
   getPersistentReviewOffersForLevel,
 } from "./services/review-service.js";
 import { problemService } from "./services/problem-service.js";
-import { resolveAcademyScopeId } from "./services/academy-service.js";
+import {
+  getActivePeriods,
+  getClosestActivePeriod,
+  getStudentMeta,
+  getTodayDateKey,
+  buildMonthKey,
+  isAttendanceMarked,
+} from "./services/attendance-service.js";
+import { listAttendanceSmsLogs } from "./services/attendance-sms-log-service.js";
+import { readAcademyMembers, resolveAcademyScopeId, isActiveMember } from "./services/academy-service.js";
 import { getStudentCurriculumOverview } from "./services/student-curriculum-progress-service.js";
 import { getStudentProjectedGradeSummary } from "./services/student-growth-report-service.js";
 import { fetchStudentOfficialGrade } from "./services/student-official-grade-service.js";
@@ -154,6 +163,7 @@ import { createBoardFeedbackOverlay } from "./ui/board-feedback-overlay.js";
 import { createCategoryCompleteModalController } from "./ui/category-complete-modal-controller.js";
 import { createMockTestUi } from "./ui/mock-test-ui.js";
 import { createStudyView } from "./views/study-view.js";
+import { renderOwnerHomeDashboard } from "./views/home-view.js";
 import { renderMockTestResultsTableHtml } from "./views/mock-test-results-view.js";
 import { buildPromotionPaperPagesHtml } from "./views/promotion-paper-view.js";
 import { computeMockTestTiming } from "./utils/mock-test-time.js";
@@ -932,6 +942,7 @@ function runApplicationBootstrap() {
         showMainMenuTarget,
       });
     });
+    boot.run("bindHomeEvents", () => bindHomeEvents());
     boot.run("bindStudyScreenEvents", () => bindStudyScreenEvents());
     boot.run("bindAcademyMemberEvents", () => bindAcademyMemberEvents());
     boot.run("bindAttendanceEvents", () => bindAttendanceEvents());
@@ -1034,12 +1045,7 @@ async function initializeApp() {
     boot.run("updatePrintUiVisibility", () => updatePrintUiVisibility());
 
     boot.run("showInitialScreen", () => {
-      logScreen("showInitialScreen");
-      if (problems.length > 0) {
-        refreshProblemBank();
-      } else {
-        showEmptyProblemState();
-      }
+      showInitialScreenForUser();
     });
 
     boot.run("syncBoardPreviewContext", () => syncBoardPreviewContext());
@@ -1052,7 +1058,7 @@ async function initializeApp() {
       replaceProblemList(ProblemStore.getDefaultProblems());
       problemBankReady = true;
       syncCategoriesFromProblems();
-      refreshProblemBank();
+      showInitialScreenForUser();
     } catch (recoveryError) {
       console.error("[AppInit] Recovery render failed.", recoveryError);
     }
@@ -1139,6 +1145,41 @@ function bindStudyScreenEvents() {
   });
 }
 
+function bindHomeEvents() {
+  elements.homeScreen?.addEventListener("click", (event) => {
+    const card = event.target.closest("[data-home-target]");
+    if (!card) {
+      return;
+    }
+
+    const target = card.dataset.homeTarget;
+    if (target === "learning" || target === "wrong-notes") {
+      showAcademyMenu("learning");
+      return;
+    }
+
+    if (target === "attendance") {
+      showAcademyMenu("attendance");
+      return;
+    }
+
+    if (target === "sms-logs") {
+      showAcademyMenu("attendance");
+      void renderAttendancePanel?.({ section: "sms-logs" });
+      return;
+    }
+
+    if (target === "payments") {
+      showAcademyMenu("payments");
+      return;
+    }
+
+    if (target === "todos") {
+      showAcademyMenu("attendance");
+    }
+  });
+}
+
 function ensurePromotionPaperPageStyle() {
   if (document.querySelector("#promotion-paper-page-style")) {
     return;
@@ -1162,8 +1203,39 @@ function logScreen(event, detail) {
   console.info(`[Screen] ${event}`, detail);
 }
 
+function shouldDefaultToOwnerHome() {
+  return canManageAcademy(getCurrentUser());
+}
+
+function showInitialScreenForUser() {
+  logScreen("showInitialScreen");
+  if (shouldDefaultToOwnerHome()) {
+    showHomeMode();
+    return;
+  }
+
+  if (problems.length > 0) {
+    refreshProblemBank();
+  } else {
+    showEmptyProblemState();
+  }
+}
+
 function applyInitialListScreen() {
   logScreen("applyInitialListScreen");
+  if (shouldDefaultToOwnerHome()) {
+    appState.mode = "home";
+    setMode("home");
+    studyView.clearStudyHubMeta();
+    elements.meta.textContent = "Home";
+    elements.title.textContent = "원장 홈";
+    elements.description.textContent = "오늘 학원 상황을 확인하세요.";
+    elements.description.classList.remove("is-hidden");
+    elements.learningObjective.textContent = "원장의 하루를 시작하는 화면";
+    void renderOwnerHome();
+    return;
+  }
+
   hideCategoryCompleteModal();
   hideAttendancePanel?.();
   clearReviewSession();
@@ -1333,6 +1405,11 @@ async function refreshStudentProgressFromRemote({ force = false } = {}) {
 }
 
 function refreshScreensAfterProgressSync() {
+  if (appState.mode === "home") {
+    void renderOwnerHome();
+    return;
+  }
+
   if (appState.mode === "study") {
     const progressList = getCurrentUser()?.id
       ? studentProgressService.getStudentProgressByUserId(getCurrentUser().id)
@@ -1347,6 +1424,195 @@ function refreshScreensAfterProgressSync() {
   }
 
   void renderStudentGradeSummaryCard();
+}
+
+function isSameLocalDate(value, target = new Date()) {
+  if (!value) {
+    return false;
+  }
+  const date = new Date(value);
+  return (
+    !Number.isNaN(date.getTime()) &&
+    date.getFullYear() === target.getFullYear() &&
+    date.getMonth() === target.getMonth() &&
+    date.getDate() === target.getDate()
+  );
+}
+
+function formatDashboardDateLabel(value) {
+  if (!value) {
+    return "-";
+  }
+  const date = new Date(value);
+  if (Number.isNaN(date.getTime())) {
+    return "-";
+  }
+  return date.toLocaleString("ko-KR", { month: "numeric", day: "numeric", hour: "2-digit", minute: "2-digit" });
+}
+
+function buildOwnerHomeMetrics({ academyId, studentMembers }) {
+  const today = new Date();
+  const todayDateKey = getTodayDateKey();
+  const monthKey = buildMonthKey(today.getFullYear(), today.getMonth() + 1);
+  const studentIds = studentMembers.map((member) => String(member.userId ?? "")).filter(Boolean);
+  const studentIdSet = new Set(studentIds);
+
+  const allProgress = studentProgressService.readStudentProgress();
+  const academyProgress = allProgress.filter((entry) => studentIdSet.has(String(entry.userId ?? "")));
+
+  let solveAttempts = 0;
+  let solvedAttempts = 0;
+  const learningStudentSet = new Set();
+  const wrongCountByProblem = new Map();
+  const recentWrongRows = [];
+
+  academyProgress.forEach((progress) => {
+    const attempts = Array.isArray(progress.attempts) ? progress.attempts : [];
+    attempts.forEach((attempt) => {
+      if (isSameLocalDate(attempt?.startedAt, today)) {
+        solveAttempts += 1;
+        learningStudentSet.add(String(progress.userId ?? ""));
+      }
+      if (isSameLocalDate(attempt?.solvedAt, today)) {
+        solvedAttempts += 1;
+      }
+
+      const wrongMoves = Array.isArray(attempt?.wrongMoves) ? attempt.wrongMoves : [];
+      wrongMoves.forEach((move) => {
+        if (!isSameLocalDate(move?.playedAt, today)) {
+          return;
+        }
+        const key = String(progress.problemId ?? "");
+        wrongCountByProblem.set(key, (wrongCountByProblem.get(key) ?? 0) + 1);
+        recentWrongRows.push({
+          playedAt: move.playedAt,
+          studentName: progress.userId,
+          problemTitle: progress.problemTitle || progress.problemId || "문제",
+        });
+      });
+    });
+  });
+
+  const activePeriods = getActivePeriods(academyId);
+  const periodIds = activePeriods.map((period) => period.id);
+  let presentStudents = 0;
+  studentIds.forEach((studentId) => {
+    const attended = periodIds.some((periodId) =>
+      isAttendanceMarked(academyId, monthKey, studentId, todayDateKey, periodId),
+    );
+    if (attended) {
+      presentStudents += 1;
+    }
+  });
+
+  const currentPeriodName = getClosestActivePeriod(academyId)?.name ?? "-";
+  const paidCount = studentIds.filter((studentId) => {
+    const paymentDate = getStudentMeta(academyId, studentId).payment_date;
+    if (!paymentDate) {
+      return false;
+    }
+    const date = new Date(paymentDate);
+    return (
+      !Number.isNaN(date.getTime()) &&
+      date.getFullYear() === today.getFullYear() &&
+      date.getMonth() === today.getMonth()
+    );
+  }).length;
+
+  const smsLogs = listAttendanceSmsLogs(academyId, { limit: 200 });
+  const pendingCount = smsLogs.filter((log) => log.status === "pending").length;
+  const sentCount = smsLogs.filter((log) => log.status === "sent").length;
+  const failedCount = smsLogs.filter((log) => log.status === "failed").length;
+
+  const studentNameMap = new Map(studentMembers.map((member) => [String(member.userId), member.name || member.username || member.userId]));
+  const recentWrongItems = recentWrongRows
+    .sort((a, b) => new Date(b.playedAt).getTime() - new Date(a.playedAt).getTime())
+    .slice(0, 4)
+    .map(
+      (row) =>
+        `${formatDashboardDateLabel(row.playedAt)} · ${studentNameMap.get(String(row.studentName)) ?? "학생"} · ${row.problemTitle}`,
+    );
+  const topWrongProblem = [...wrongCountByProblem.entries()].sort((a, b) => b[1] - a[1])[0];
+  if (topWrongProblem) {
+    const topProblemTitle =
+      academyProgress.find((entry) => String(entry.problemId) === String(topWrongProblem[0]))?.problemTitle ??
+      topWrongProblem[0];
+    recentWrongItems.unshift(`오늘 가장 많이 틀린 문제: ${topProblemTitle} (${topWrongProblem[1]}회)`);
+  }
+
+  const todos = [];
+  const unpaidCount = studentIds.length - paidCount;
+  const notLearnedCount = Math.max(0, studentIds.length - learningStudentSet.size);
+  const absentStudents = Math.max(0, studentIds.length - presentStudents);
+  if (unpaidCount > 0) {
+    todos.push(`미결제 ${unpaidCount}명`);
+  }
+  if (pendingCount > 0) {
+    todos.push(`문자 발송 대기 ${pendingCount}건`);
+  }
+  if (absentStudents > 0) {
+    todos.push(`오늘 미출석 ${absentStudents}명`);
+  }
+  if (notLearnedCount > 0) {
+    todos.push(`오늘 학습 안한 학생 ${notLearnedCount}명`);
+  }
+
+  return {
+    learning: {
+      activeStudents: learningStudentSet.size,
+      solveAttempts,
+      accuracyRate: solveAttempts > 0 ? (solvedAttempts / solveAttempts) * 100 : 0,
+    },
+    attendance: {
+      presentStudents,
+      absentStudents,
+      currentPeriodName,
+    },
+    payments: {
+      paidCount,
+      unpaidCount,
+    },
+    sms: {
+      pendingCount,
+      sentCount,
+      failedCount,
+    },
+    wrong: {
+      items: recentWrongItems,
+    },
+    todos,
+  };
+}
+
+async function renderOwnerHome() {
+  if (!elements.homeDashboardBody) {
+    return;
+  }
+
+  const currentUser = getCurrentUser();
+  if (!canManageAcademy(currentUser)) {
+    return;
+  }
+
+  const academyId = resolveAcademyScopeId(currentUser);
+  if (!academyId) {
+    elements.homeDashboardBody.innerHTML =
+      '<p class="home-card-empty">학원 정보를 확인할 수 없습니다. 다시 로그인해 주세요.</p>';
+    return;
+  }
+
+  const studentMembers = readAcademyMembers().filter(
+    (member) =>
+      String(member.academyId ?? "") === academyId &&
+      member.role === "student" &&
+      isActiveMember(member),
+  );
+
+  const metrics = buildOwnerHomeMetrics({ academyId, studentMembers });
+  renderOwnerHomeDashboard(elements.homeDashboardBody, {
+    academyName: String(currentUser?.academyName ?? "").trim() || "우리 바둑학원",
+    ...metrics,
+  });
 }
 
 let studentGradeSummaryRenderSeq = 0;
@@ -2632,6 +2898,11 @@ function showMainMenuTarget(menuTarget) {
     return;
   }
 
+  if (menuTarget === "home") {
+    showHomeMode();
+    return;
+  }
+
   if (menuTarget === "list") {
     showListMode();
     return;
@@ -2683,6 +2954,31 @@ function clearPendingAiMove() {
 
 function showSolveMode() {
   showStudyMode();
+}
+
+function showHomeMode() {
+  const currentUser = getCurrentUser();
+  if (!canManageAcademy(currentUser)) {
+    showListMode();
+    return;
+  }
+
+  logScreen("showHomeMode");
+  hideCategoryCompleteModal();
+  hideAttendancePanel?.();
+  clearReviewSession();
+  clearExamSession();
+  clearPendingAiMove();
+  appState.isAiThinking = false;
+  appState.isSolved = false;
+  appState.playedMoves = [];
+  appState.currentProblemId = null;
+  clearStudySolvePath();
+  aiResponseSolve?.clearSession?.();
+  appState.mode = "home";
+  setMode("home");
+  studyView.clearStudyHubMeta();
+  void renderOwnerHome();
 }
 
 function showListMode() {
@@ -3569,6 +3865,7 @@ function canViewPaymentsMenu() {
 function canAccessAcademyMenu(menuType) {
   const currentUser = getCurrentUser();
   const menuPermissions = {
+    home: canManageAcademy(currentUser),
     learning: canViewLearningMenu(currentUser),
     academy: canViewAcademyMenu(currentUser),
     attendance: canManageAttendance(currentUser),
