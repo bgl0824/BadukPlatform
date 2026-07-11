@@ -1621,6 +1621,44 @@ h2 {
   font-size: 0.88rem;
 }
 
+.home-subtitle {
+  margin: 4px 0 0;
+  color: var(--muted);
+  font-size: 0.9rem;
+  font-weight: 700;
+}
+
+.home-card--static {
+  cursor: default;
+}
+
+.home-card--static:hover {
+  transform: none;
+  box-shadow: none;
+}
+
+.home-card--cta {
+  grid-column: 1 / -1;
+  min-height: 112px;
+  border-color: rgba(47, 111, 78, 0.32);
+  background: linear-gradient(135deg, rgba(47, 111, 78, 0.12), rgba(47, 111, 78, 0.04));
+}
+
+.home-card--cta h3 {
+  font-size: 1.12rem;
+}
+
+.home-card-ellipsis {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.home-student-shell {
+  display: grid;
+  gap: 14px;
+}
+
 .home-cards-grid {
   display: grid;
   gap: 12px;
@@ -2317,36 +2355,62 @@ h2 {
   overflow: hidden;
 }
 
+.attendance-grid-toolbar {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+  flex-wrap: wrap;
+  padding: 8px 10px;
+  border-bottom: 1px solid rgba(47, 111, 78, 0.1);
+  background: rgba(248, 243, 234, 0.72);
+}
+
+.attendance-past-dates-toggle {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  color: var(--primary-dark);
+  font-size: 0.78rem;
+  font-weight: 800;
+  cursor: pointer;
+  user-select: none;
+}
+
+.attendance-past-dates-toggle input {
+  width: 14px;
+  height: 14px;
+  margin: 0;
+  accent-color: var(--primary);
+}
+
+.attendance-grid-toolbar-hint {
+  margin: 0;
+  color: var(--muted);
+  font-size: 0.72rem;
+  line-height: 1.4;
+}
+
+.attendance-grid-hscroll {
+  overflow-x: auto;
+  overflow-y: hidden;
+  width: 100%;
+  height: 14px;
+  border-bottom: 1px solid rgba(47, 111, 78, 0.08);
+  background: rgba(255, 255, 255, 0.82);
+}
+
+.attendance-grid-hscroll-spacer {
+  height: 1px;
+}
+
 .attendance-grid-outer {
   max-height: min(calc(100vh - 250px), 860px);
   overflow-y: auto;
   overflow-x: hidden;
 }
 
-.attendance-grid-split {
-  display: flex;
-  align-items: flex-start;
-  width: 100%;
-  min-width: 0;
-}
-
-.attendance-grid-fixed-pane {
-  flex: 0 0 auto;
-  position: relative;
-  z-index: 6;
-  background: #fffdf8;
-  box-shadow: 4px 0 12px rgba(57, 45, 25, 0.1);
-  pointer-events: auto;
-}
-
-.attendance-grid-fixed-pane .attendance-grid-fixed-cell--editable {
-  position: relative;
-  z-index: 2;
-  pointer-events: auto;
-}
-
 .attendance-grid-scroll-pane {
-  flex: 1 1 auto;
   min-width: 0;
   overflow-x: auto;
   overflow-y: hidden;
@@ -2359,13 +2423,42 @@ h2 {
   table-layout: fixed;
 }
 
-.attendance-grid--fixed {
-  width: max-content;
-}
-
-.attendance-grid--scroll {
+.attendance-grid--unified {
   width: max-content;
   min-width: 100%;
+}
+
+.attendance-grid-sticky-col {
+  position: sticky;
+  left: var(--attendance-sticky-left, 0);
+  z-index: var(--attendance-sticky-z, 12);
+  background-color: #fffdf8;
+  background-clip: padding-box;
+}
+
+.attendance-grid--unified thead .attendance-grid-sticky-col {
+  z-index: var(--attendance-sticky-head-z, 22);
+  background-color: #f8f3ea;
+}
+
+.attendance-grid--unified tbody .attendance-grid-sticky-col {
+  z-index: var(--attendance-sticky-z, 12);
+  background-color: #fffdf8;
+}
+
+.attendance-grid-row:nth-child(even) .attendance-grid-sticky-col {
+  background-color: #fbf7ef;
+}
+
+.attendance-grid-fixed-head--edge,
+.attendance-grid-fixed-cell--edge {
+  border-right: 1px solid rgba(47, 111, 78, 0.22);
+  box-shadow: 6px 0 12px rgba(57, 45, 25, 0.12);
+}
+
+.attendance-grid-scroll-col {
+  position: relative;
+  z-index: 1;
 }
 
 .attendance-grid-head-row th {
@@ -2379,41 +2472,37 @@ h2 {
 
 .attendance-grid-outer .attendance-grid-head-row th {
   position: sticky;
-  z-index: 3;
   box-shadow: 0 1px 0 rgba(57, 45, 25, 0.06);
 }
 
-.attendance-grid-fixed-pane .attendance-grid-head-row th {
+.attendance-grid--unified .attendance-grid-head-row--dates .attendance-grid-scroll-col {
   top: 0;
-  z-index: 6;
-  background: #f8f3ea;
+  z-index: 2;
 }
 
-.attendance-grid-scroll-pane .attendance-grid-head-row--dates th {
-  top: 0;
-  z-index: 4;
-}
-
-.attendance-grid-scroll-pane .attendance-grid-head-row--periods th {
+.attendance-grid--unified .attendance-grid-head-row--counts .attendance-grid-scroll-col {
   top: 30px;
-  z-index: 3;
+  z-index: 2;
+}
+
+.attendance-grid--unified .attendance-grid-head-row--periods .attendance-grid-scroll-col {
+  top: 52px;
+  z-index: 2;
   font-size: 0.68rem;
   font-weight: 700;
   color: var(--muted);
-}
-
-.attendance-grid-head-row--fixed th {
-  height: 56px;
-  padding: 5px 4px;
-  font-size: 0.72rem;
-  font-weight: 800;
-  vertical-align: middle;
 }
 
 .attendance-grid-head-row--dates th {
   height: 30px;
   padding: 4px 4px 3px;
   vertical-align: bottom;
+}
+
+.attendance-grid-head-row--counts th {
+  height: 22px;
+  padding: 2px 2px 1px;
+  vertical-align: middle;
 }
 
 .attendance-grid-head-row--periods th {
@@ -2423,6 +2512,67 @@ h2 {
 
 .attendance-grid-date-head {
   border-left: 1px solid rgba(47, 111, 78, 0.14);
+}
+
+.attendance-grid-date-head.is-saturday,
+.attendance-grid-count-head.is-saturday,
+.attendance-grid-period-head.is-saturday,
+.attendance-grid-check-cell.is-saturday {
+  background-color: rgba(47, 111, 78, 0.07);
+}
+
+.attendance-grid-date-head.is-sunday-like,
+.attendance-grid-count-head.is-sunday-like,
+.attendance-grid-period-head.is-sunday-like,
+.attendance-grid-check-cell.is-sunday-like {
+  background-color: rgba(176, 98, 72, 0.1);
+}
+
+.attendance-grid-row:nth-child(even) .attendance-grid-check-cell.is-saturday {
+  background-color: rgba(47, 111, 78, 0.1);
+}
+
+.attendance-grid-row:nth-child(even) .attendance-grid-check-cell.is-sunday-like {
+  background-color: rgba(176, 98, 72, 0.13);
+}
+
+.attendance-grid-head-row--dates .attendance-grid-date-head.is-saturday,
+.attendance-grid-head-row--counts .attendance-grid-count-head.is-saturday,
+.attendance-grid-head-row--periods .attendance-grid-period-head.is-saturday {
+  background-color: rgba(47, 111, 78, 0.1);
+}
+
+.attendance-grid-head-row--dates .attendance-grid-date-head.is-sunday-like,
+.attendance-grid-head-row--counts .attendance-grid-count-head.is-sunday-like,
+.attendance-grid-head-row--periods .attendance-grid-period-head.is-sunday-like {
+  background-color: rgba(176, 98, 72, 0.12);
+}
+
+.attendance-grid-count-head {
+  min-width: 36px;
+  border-left: 1px solid rgba(47, 111, 78, 0.08);
+  border-bottom: 1px solid rgba(47, 111, 78, 0.1);
+}
+
+.attendance-period-count {
+  display: inline-block;
+  min-width: 1.2em;
+  color: var(--primary-dark);
+  font-size: 0.76rem;
+  font-weight: 900;
+  line-height: 1.1;
+}
+
+.attendance-date-head-holiday {
+  display: block;
+  margin-top: 1px;
+  color: #9a5a45;
+  font-size: 0.58rem;
+  font-weight: 700;
+  line-height: 1.1;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
 }
 
 .attendance-date-head-day {
@@ -2452,15 +2602,20 @@ h2 {
   min-width: var(--attendance-col-width, 80px);
   max-width: var(--attendance-col-width, 80px);
   box-sizing: border-box;
-  background: #fffdf8;
 }
 
 .attendance-grid-fixed-head {
   border-right: 1px solid rgba(47, 111, 78, 0.16);
+  height: 78px;
+  padding: 5px 4px;
+  font-size: 0.72rem;
+  font-weight: 800;
+  vertical-align: middle;
 }
 
 .attendance-grid-fixed-cell {
-  height: 34px;
+  height: 36px;
+  max-height: 36px;
   padding: 4px 4px;
   border-right: 1px solid rgba(47, 111, 78, 0.12);
   border-bottom: 1px solid rgba(47, 111, 78, 0.06);
@@ -2469,11 +2624,8 @@ h2 {
   font-weight: 700;
   text-align: center;
   vertical-align: middle;
-}
-
-.attendance-grid-fixed-head--edge,
-.attendance-grid-fixed-cell--edge {
-  border-right: 0;
+  box-sizing: border-box;
+  overflow: hidden;
 }
 
 .attendance-grid-fixed-cell--name {
@@ -2584,13 +2736,19 @@ h2 {
 }
 
 .attendance-grid-check-cell {
-  height: 34px;
+  height: 36px;
+  max-height: 36px;
   padding: 2px;
   border-left: 1px solid rgba(47, 111, 78, 0.06);
   border-bottom: 1px solid rgba(47, 111, 78, 0.06);
   text-align: center;
   vertical-align: middle;
   box-sizing: border-box;
+  overflow: hidden;
+}
+
+.attendance-grid--unified tbody .attendance-grid-row {
+  height: 36px;
 }
 
 .attendance-check-button {
@@ -4018,6 +4176,19 @@ body.attendance-period-settings-open {
   border-color: color-mix(in srgb, var(--line) 80%, var(--accent) 20%);
 }
 
+.academy-student-card--learning .student-progress-summary div {
+  min-width: 0;
+}
+
+.academy-student-card--learning .student-card-recent-activity-at,
+.academy-student-card--learning .student-card-recent-category {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  text-align: right;
+}
+
 .student-learning-level-panel-meta {
   margin: 0 0 10px;
   color: var(--muted);
@@ -4112,6 +4283,62 @@ body.attendance-period-settings-open {
 .academy-student-card--operations .student-progress-summary dt,
 .academy-student-card--operations .student-progress-summary dd {
   font-size: 0.86rem;
+}
+
+.academy-student-mobile-row {
+  display: none;
+}
+
+.academy-student-mobile-row__identity {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  min-width: 0;
+  flex: 1;
+}
+
+.academy-student-mobile-row__status-dot {
+  flex-shrink: 0;
+  width: 10px;
+  height: 10px;
+  border-radius: 50%;
+  background: var(--primary);
+}
+
+.academy-student-mobile-row.is-inactive-member .academy-student-mobile-row__status-dot {
+  background: rgba(120, 120, 120, 0.55);
+}
+
+.academy-student-mobile-row__name {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  color: var(--primary-dark);
+}
+
+.academy-student-mobile-row.is-inactive-member .academy-student-mobile-row__name {
+  color: var(--muted);
+}
+
+.academy-student-mobile-row__main {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+  min-width: 0;
+}
+
+.academy-student-mobile-row__metrics {
+  margin: 0;
+  font-size: 0.86rem;
+  font-weight: 800;
+  color: var(--muted);
+  white-space: nowrap;
+  flex-shrink: 0;
+}
+
+.academy-student-mobile-row__metric-value.is-attention {
+  color: color-mix(in srgb, var(--danger, #c0392b) 78%, var(--text) 22%);
 }
 
 .academy-student-card--learning .student-learning-detail {
@@ -9083,6 +9310,404 @@ body.attendance-period-settings-open {
 .move-status.is-ai-response-turn {
   color: #1a4f9c;
   font-weight: 700;
+}
+
+/* -------------------------------------------------------------------------- */
+/* Academy student list — mobile only (원생관리 · 학습관리 복습·진단)          */
+/* PC keeps card layout                                                       */
+/* -------------------------------------------------------------------------- */
+
+@media (max-width: 768px) {
+  #academy-students-panel #academy-student-list:has(.academy-student-entry--operations),
+  #academy-students-panel #academy-student-list:has(.academy-student-entry--learning) {
+    display: flex;
+    flex-direction: column;
+    gap: 0;
+    grid-template-columns: unset;
+  }
+
+  #academy-students-panel .academy-student-entry--operations .academy-student-card--desktop,
+  #academy-students-panel .academy-student-entry--learning .academy-student-card--desktop {
+    display: none;
+  }
+
+  #academy-students-panel .academy-student-entry--operations .academy-student-mobile-row,
+  #academy-students-panel .academy-student-entry--learning .academy-student-mobile-row {
+    padding: 14px 0;
+    border-bottom: 1px solid var(--line);
+  }
+
+  #academy-students-panel .academy-student-entry--operations:last-child .academy-student-mobile-row,
+  #academy-students-panel .academy-student-entry--learning:last-child .academy-student-mobile-row {
+    border-bottom: none;
+  }
+
+  #academy-students-panel .academy-student-entry--operations .academy-student-mobile-row {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 12px;
+  }
+
+  #academy-students-panel .academy-student-mobile-row--learning {
+    display: flex;
+    flex-direction: column;
+    align-items: stretch;
+    gap: 10px;
+  }
+
+  #academy-students-panel .academy-student-mobile-row .student-card-actions {
+    display: grid;
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+    gap: 8px;
+    flex-shrink: 0;
+    width: 100%;
+    margin: 0;
+  }
+
+  #academy-students-panel .academy-student-entry--operations .academy-student-mobile-row .student-card-actions {
+    width: auto;
+  }
+
+  #academy-students-panel .academy-student-mobile-row .student-card-actions .secondary-button {
+    min-height: 44px;
+    width: auto;
+    padding: 10px 12px;
+    font-size: 0.82rem;
+    white-space: nowrap;
+  }
+
+  #academy-students-panel .academy-student-mobile-row--learning .student-card-actions .secondary-button {
+    width: 100%;
+  }
+}
+
+/* -------------------------------------------------------------------------- */
+/* Owner mobile UX V1 — academy owner only, max-width 768px                   */
+/* PC layout unchanged; scoped via body.is-academy-owner-ui                   */
+/* -------------------------------------------------------------------------- */
+
+@media (max-width: 768px) {
+  body.is-academy-owner-ui {
+    -webkit-text-size-adjust: 100%;
+  }
+
+  body.is-academy-owner-ui.owner-mobile-menu-open {
+    overflow: hidden;
+  }
+
+  body.is-academy-owner-ui .owner-mobile-topbar {
+    display: flex;
+    align-items: center;
+    gap: 12px;
+    margin-bottom: 12px;
+    padding: 10px 12px;
+    border: 1px solid rgba(47, 111, 78, 0.16);
+    border-radius: 16px;
+    background: rgba(255, 250, 240, 0.96);
+    box-shadow: 0 8px 18px rgba(57, 45, 25, 0.08);
+  }
+
+  body.is-academy-owner-ui .owner-mobile-topbar.is-hidden {
+    display: none !important;
+  }
+
+  body.is-academy-owner-ui .owner-mobile-menu-button {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    gap: 6px;
+    min-height: 48px;
+    min-width: 48px;
+    border: 1px solid rgba(47, 111, 78, 0.22);
+    border-radius: 12px;
+    padding: 0 14px;
+    color: var(--primary-dark);
+    font-size: 0.92rem;
+    font-weight: 900;
+    cursor: pointer;
+    background: #fff;
+  }
+
+  body.is-academy-owner-ui .owner-mobile-menu-icon {
+    font-size: 1.2rem;
+    line-height: 1;
+  }
+
+  body.is-academy-owner-ui .owner-mobile-topbar-title {
+    flex: 1 1 auto;
+    min-width: 0;
+    margin: 0;
+    color: var(--primary-dark);
+    font-size: 1rem;
+    font-weight: 900;
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+  }
+
+  body.is-academy-owner-ui .owner-mobile-menu-backdrop {
+    position: fixed;
+    inset: 0;
+    z-index: 90;
+    background: rgba(30, 24, 16, 0.42);
+    opacity: 0;
+    pointer-events: none;
+    transition: opacity 160ms ease;
+  }
+
+  body.is-academy-owner-ui.owner-mobile-menu-open .owner-mobile-menu-backdrop {
+    opacity: 1;
+    pointer-events: auto;
+  }
+
+  body.is-academy-owner-ui .main-menu {
+    position: fixed;
+    top: 0;
+    left: 0;
+    bottom: 0;
+    z-index: 100;
+    display: flex;
+    flex-direction: column;
+    align-items: stretch;
+    gap: 8px;
+    width: min(86vw, 320px);
+    margin: 0;
+    padding: 72px 14px 20px;
+    border: none;
+    border-right: 1px solid rgba(47, 111, 78, 0.18);
+    border-radius: 0;
+    box-shadow: 8px 0 24px rgba(57, 45, 25, 0.16);
+    overflow-y: auto;
+    transform: translateX(-105%);
+    transition: transform 180ms ease;
+    grid-template-columns: 1fr;
+  }
+
+  body.is-academy-owner-ui.owner-mobile-menu-open .main-menu {
+    transform: translateX(0);
+  }
+
+  body.is-academy-owner-ui .main-menu-button {
+    min-height: 52px;
+    padding: 0 16px;
+    font-size: 0.96rem;
+    text-align: left;
+  }
+
+  body.is-academy-owner-ui .main-menu-button.is-hidden {
+    display: none !important;
+  }
+
+  body.is-academy-owner-ui .app-shell {
+    width: min(100% - 16px, 680px);
+    padding-top: 12px;
+  }
+
+  body.is-academy-owner-ui .hero-card {
+    padding: 16px;
+    padding-top: 14px;
+    margin-bottom: 16px;
+    border-radius: 20px;
+  }
+
+  body.is-academy-owner-ui .hero-card h1 {
+    font-size: clamp(1.35rem, 6vw, 1.8rem);
+  }
+
+  body.is-academy-owner-ui .auth-status-bar {
+    position: static;
+    width: 100%;
+    max-width: none;
+    margin: 0 0 8px;
+    order: 0;
+  }
+
+  body.is-academy-owner-ui .home-cards-grid {
+    display: flex;
+    flex-direction: column;
+    gap: 12px;
+    grid-template-columns: 1fr;
+  }
+
+  body.is-academy-owner-ui .home-card {
+    min-height: 112px;
+    padding: 16px 18px;
+    text-align: left;
+  }
+
+  body.is-academy-owner-ui .home-card--wide {
+    grid-column: auto;
+  }
+
+  body.is-academy-owner-ui .home-card--order-todos {
+    order: 1;
+  }
+
+  body.is-academy-owner-ui .home-card--order-attendance {
+    order: 2;
+  }
+
+  body.is-academy-owner-ui .home-card--order-learning {
+    order: 3;
+  }
+
+  body.is-academy-owner-ui .home-card--order-payments {
+    order: 4;
+  }
+
+  body.is-academy-owner-ui .home-card--order-sms {
+    order: 5;
+  }
+
+  body.is-academy-owner-ui .home-card--order-wrong {
+    order: 6;
+  }
+
+  body.is-academy-owner-ui #academy-student-list,
+  body.is-academy-owner-ui .academy-member-panel.is-learning-members #academy-student-list {
+    grid-template-columns: 1fr;
+    gap: 12px;
+  }
+
+  body.is-academy-owner-ui .academy-member-card {
+    padding: 16px;
+  }
+
+  body.is-academy-owner-ui .student-progress-summary div {
+    align-items: flex-start;
+    flex-direction: column;
+    gap: 4px;
+  }
+
+  body.is-academy-owner-ui .student-progress-summary dd {
+    max-width: 100%;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+  }
+
+  body.is-academy-owner-ui .student-card-actions,
+  body.is-academy-owner-ui .student-card-actions--split {
+    grid-template-columns: 1fr;
+    gap: 10px;
+  }
+
+  body.is-academy-owner-ui .student-card-actions .secondary-button,
+  body.is-academy-owner-ui .student-card-actions .ghost-button,
+  body.is-academy-owner-ui .student-learning-detail-button,
+  body.is-academy-owner-ui .student-review-button,
+  body.is-academy-owner-ui .student-profile-button,
+  body.is-academy-owner-ui .student-growth-report-button {
+    min-height: 48px;
+    width: 100%;
+  }
+
+  body.is-academy-owner-ui #academy-students-panel .academy-student-mobile-row .student-card-actions .secondary-button,
+  body.is-academy-owner-ui #academy-students-panel .academy-student-mobile-row--learning .student-learning-detail-button,
+  body.is-academy-owner-ui #academy-students-panel .academy-student-mobile-row--learning .student-review-button {
+    min-height: 48px;
+    width: auto;
+  }
+
+  body.is-academy-owner-ui #academy-students-panel .academy-student-mobile-row--learning .student-card-actions .secondary-button {
+    width: 100%;
+  }
+
+  body.is-academy-owner-ui .student-assign-teacher-select select {
+    min-height: 48px;
+    font-size: 16px;
+  }
+
+  body.is-academy-owner-ui .student-management-toolbar,
+  body.is-academy-owner-ui .academy-teacher-section-head {
+    grid-template-columns: 1fr;
+    gap: 10px;
+  }
+
+  body.is-academy-owner-ui .student-management-toolbar > label,
+  body.is-academy-owner-ui .student-management-toolbar .filter-toggle-item {
+    width: 100%;
+  }
+
+  body.is-academy-owner-ui .student-management-toolbar input,
+  body.is-academy-owner-ui .student-management-toolbar select,
+  body.is-academy-owner-ui .attendance-meta-input,
+  body.is-academy-owner-ui .auth-button,
+  body.is-academy-owner-ui .primary-button,
+  body.is-academy-owner-ui .secondary-button,
+  body.is-academy-owner-ui .attendance-icon-button,
+  body.is-academy-owner-ui .attendance-today-button {
+    min-height: 48px;
+    font-size: 16px;
+  }
+
+  body.is-academy-owner-ui .academy-management-submenu,
+  body.is-academy-owner-ui .attendance-management-submenu {
+    flex-direction: column;
+    align-items: stretch;
+  }
+
+  body.is-academy-owner-ui .academy-submenu-button {
+    width: 100%;
+    min-height: 48px;
+    border-radius: 12px;
+    text-align: center;
+  }
+
+  body.is-academy-owner-ui .attendance-check-button {
+    width: 36px;
+    height: 36px;
+  }
+
+  body.is-academy-owner-ui .attendance-grid-frame,
+  body.is-academy-owner-ui .attendance-grid-scroll-pane,
+  body.is-academy-owner-ui .attendance-grid-hscroll {
+    -webkit-overflow-scrolling: touch;
+  }
+
+  body.is-academy-owner-ui .attendance-grid-outer {
+    max-height: min(calc(100vh - 220px), 720px);
+  }
+
+  body.is-academy-owner-ui .attendance-summary-strip {
+    grid-template-columns: 1fr;
+    gap: 6px;
+  }
+
+  body.is-academy-owner-ui .academy-menu-card,
+  body.is-academy-owner-ui .academy-section-panel {
+    gap: 14px;
+  }
+
+  body.is-academy-owner-ui .student-account-table__header {
+    display: none;
+  }
+
+  body.is-academy-owner-ui .student-account-row__summary,
+  body.is-academy-owner-ui .student-account-row__static {
+    grid-template-columns: 1fr;
+    gap: 8px;
+  }
+
+  body.is-academy-owner-ui .student-account-cell--manage {
+    justify-self: stretch;
+  }
+
+  body.is-academy-owner-ui .student-account-manage-toggle {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    min-height: 44px;
+    width: 100%;
+  }
+}
+
+@media (min-width: 769px) {
+  body.is-academy-owner-ui .owner-mobile-topbar,
+  body.is-academy-owner-ui .owner-mobile-menu-backdrop {
+    display: none !important;
+  }
 }
 
 @media print {

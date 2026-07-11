@@ -224,6 +224,12 @@ export function canViewLearningMenu(user) {
   return [ROLES.academyOwner, ROLES.teacher].includes(role);
 }
 
+/** 홈 메뉴 — 학원장·선생님·학생 */
+export function canViewHomeMenu(user) {
+  const role = normalizeRole(user?.role);
+  return [ROLES.academyOwner, ROLES.teacher, ROLES.student].includes(role);
+}
+
 /** 학원관리 하위 탭: invites / teachers 는 학원장만 */
 export function canViewAcademySubmenu(user, section) {
   const role = normalizeRole(user?.role);

@@ -471,6 +471,15 @@ export function countTodayAttendance(academyId, monthKey, studentIds, periodIds,
   return count;
 }
 
+export function countAttendanceForDatePeriod(academyId, monthKey, dateKey, periodId) {
+  const store = readStore();
+  const bucket = ensureAcademyBucket(store, academyId);
+  const monthRecords = bucket.records[monthKey] ?? {};
+  const suffix = `::${dateKey}::${periodId}`;
+
+  return Object.keys(monthRecords).filter((key) => key.endsWith(suffix) && monthRecords[key]).length;
+}
+
 /** @typedef {{ code: string, assigned_at?: string }} AttendanceCodeEntry */
 
 const ATTENDANCE_CODE_MIN = 1001;

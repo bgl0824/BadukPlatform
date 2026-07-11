@@ -1108,7 +1108,6 @@ export function createAcademyMemberController({
   ) {
     const actions =
       studentCardActions ?? getStudentCardActionPermissions(getCurrentUser());
-    const assignedTeacherName = getTeacherDisplayName(member.assignedTeacherId, teacherMembers);
     const isInactive = !isActiveMember(member);
     const statusLabel = isInactive ? "비활성" : "활성";
     const isLearningCard = cardMode === "learning";
@@ -1120,21 +1119,13 @@ export function createAcademyMemberController({
     const showAcademyActions = canShowAcademyProfile;
     const cardMetrics = isLearningCard
       ? renderLearningCardMetrics(getStudentLearningDiagnostics(member.userId))
-      : renderAcademyCardMetrics(
-          getStudentAcademyCardSummary(member.userId, getProblems()),
-          assignedTeacherName,
-        );
+      : renderAcademyCardMetrics(getStudentAcademyCardSummary(member.userId, getProblems()));
 
-    return `
-      <article class="academy-member-card academy-student-card academy-student-card--summary academy-student-card--${cardVariant}${isInactive ? " is-inactive-member" : ""}" data-student-id="${escapeHtml(member.userId)}">
+    const desktopCard = `
+      <article class="academy-member-card academy-student-card academy-student-card--summary academy-student-card--desktop academy-student-card--${cardVariant}${isInactive ? " is-inactive-member" : ""}" data-student-id="${escapeHtml(member.userId)}">
         <div class="student-card-header student-card-header--compact">
           <div>
             <strong>${renderStudentNameWithAttendanceCode(member, { cardMode })}</strong>
-            ${
-              isLearningCard
-                ? ""
-                : `<p class="student-assigned-teacher">담당: ${escapeHtml(assignedTeacherName)}</p>`
-            }
           </div>
           <span class="member-status-badge">${statusLabel}</span>
         </div>
@@ -1153,6 +1144,22 @@ export function createAcademyMemberController({
         ${showAcademyActions ? renderStudentAcademyActionButtons(member) : ""}
       </article>
     `;
+
+    if (isLearningCard) {
+      return `
+        <div class="academy-student-entry academy-student-entry--learning" data-student-id="${escapeHtml(member.userId)}">
+          ${desktopCard}
+          ${renderStudentLearningMobileListRow(member, { studentCardActions: actions })}
+        </div>
+      `;
+    }
+
+    return `
+      <div class="academy-student-entry academy-student-entry--operations" data-student-id="${escapeHtml(member.userId)}">
+        ${desktopCard}
+        ${renderStudentAcademyMobileListRow(member, { studentCardActions: actions })}
+      </div>
+    `;
   }
 
   function formatRecentActivityLabel(activityAt) {
@@ -1160,16 +1167,16 @@ export function createAcademyMemberController({
       return "기록 없음";
     }
 
-    if (typeof formatDateTime === "function") {
-      return formatDateTime(activityAt);
-    }
-
     const parsed = new Date(activityAt);
     if (Number.isNaN(parsed.getTime())) {
       return "기록 없음";
     }
 
-    return parsed.toLocaleDateString("ko-KR");
+    const month = String(parsed.getMonth() + 1).padStart(2, "0");
+    const day = String(parsed.getDate()).padStart(2, "0");
+    const hours = String(parsed.getHours()).padStart(2, "0");
+    const minutes = String(parsed.getMinutes()).padStart(2, "0");
+    return `${month}.${day} ${hours}:${minutes}`;
   }
 
   function renderLearningCardMetrics(diagnostics) {
@@ -1189,16 +1196,16 @@ export function createAcademyMemberController({
       </div>
       <div>
         <dt>최근 학습일</dt>
-        <dd>${escapeHtml(formatRecentActivityLabel(diagnostics.recentActivityAt))}</dd>
+        <dd class="student-card-recent-activity-at">${escapeHtml(formatRecentActivityLabel(diagnostics.recentActivityAt))}</dd>
       </div>
       <div>
         <dt>최근 학습</dt>
-        <dd>${escapeHtml(diagnostics.recentCategory ?? "기록 없음")}</dd>
+        <dd class="student-card-recent-category" title="${escapeHtml(diagnostics.recentCategory ?? "기록 없음")}">${escapeHtml(diagnostics.recentCategory ?? "기록 없음")}</dd>
       </div>
     `;
   }
 
-  function renderAcademyCardMetrics(summary, assignedTeacherName) {
+  function renderAcademyCardMetrics(summary) {
     return `
       <div>
         <dt>현재 과정</dt>
@@ -1207,14 +1214,6 @@ export function createAcademyMemberController({
       <div>
         <dt>참고 예상급수</dt>
         <dd>${escapeHtml(summary.projectedGradeLabel)}</dd>
-      </div>
-      <div>
-        <dt>담당 선생</dt>
-        <dd>${escapeHtml(assignedTeacherName)}</dd>
-      </div>
-      <div>
-        <dt>최근 학습</dt>
-        <dd>${escapeHtml(summary.recentCategory ?? "기록 없음")}</dd>
       </div>
     `;
   }
@@ -1285,6 +1284,63 @@ export function createAcademyMemberController({
         >
           성장리포트
         </button>
+      </div>
+    `;
+  }
+
+  /** 모바일 원생관리(operations) 전용 — 이름·활성 상태 + 프로필/성장리포트 */
+  function renderStudentAcademyMobileListRow(member, { studentCardActions } = {}) {
+    const actions = studentCardActions ?? getStudentCardActionPermissions(getCurrentUser());
+    const isInactive = !isActiveMember(member);
+    const statusLabel = isInactive ? "비활성" : "활성";
+    const displayName = member.name || member.username || "이름 없음";
+    const showAcademyActions = actions.canViewDetails && !isInactive;
+
+    return `
+      <div class="academy-student-mobile-row${isInactive ? " is-inactive-member" : ""}" data-student-id="${escapeHtml(member.userId)}" role="listitem">
+        <div class="academy-student-mobile-row__identity">
+          <span class="academy-student-mobile-row__status-dot" aria-label="${statusLabel}"></span>
+          <strong class="academy-student-mobile-row__name">${escapeHtml(displayName)}</strong>
+        </div>
+        ${showAcademyActions ? renderStudentAcademyActionButtons(member) : ""}
+      </div>
+    `;
+  }
+
+  /** 모바일 학습관리(learning) 전용 — 이름·활성·오답/복습 + 학습상세/오답노트 */
+  function renderStudentLearningMobileListRow(member, { studentCardActions } = {}) {
+    const actions = studentCardActions ?? getStudentCardActionPermissions(getCurrentUser());
+    const isInactive = !isActiveMember(member);
+    const statusLabel = isInactive ? "비활성" : "활성";
+    const displayName = member.name || member.username || "이름 없음";
+    const diagnostics = getStudentLearningDiagnostics(member.userId);
+    const wrongNoteCount = Number(diagnostics.wrongNoteCount ?? 0);
+    const reviewNeededCount = Number(diagnostics.reviewNeededCount ?? 0);
+    const canShowDetails = actions.canViewDetails;
+    const canShowWrongNotes = actions.canViewWrongNotes;
+    const showLearningActions = (canShowDetails || canShowWrongNotes) && !isInactive;
+
+    return `
+      <div class="academy-student-mobile-row academy-student-mobile-row--learning${isInactive ? " is-inactive-member" : ""}" data-student-id="${escapeHtml(member.userId)}" role="listitem">
+        <div class="academy-student-mobile-row__main">
+          <div class="academy-student-mobile-row__identity">
+            <span class="academy-student-mobile-row__status-dot" aria-label="${statusLabel}"></span>
+            <strong class="academy-student-mobile-row__name">${escapeHtml(displayName)}</strong>
+          </div>
+          <p class="academy-student-mobile-row__metrics" aria-label="오답 ${wrongNoteCount}개, 복습 필요 ${reviewNeededCount}개">
+            오답 <span class="academy-student-mobile-row__metric-value${wrongNoteCount > 0 ? " is-attention" : ""}">${wrongNoteCount}</span>
+            |
+            복습 <span class="academy-student-mobile-row__metric-value${reviewNeededCount > 0 ? " is-attention" : ""}">${reviewNeededCount}</span>
+          </p>
+        </div>
+        ${
+          showLearningActions
+            ? renderStudentLearningActionButtons(member, {
+                canViewDetails: canShowDetails,
+                canViewWrongNotes: canShowWrongNotes,
+              })
+            : ""
+        }
       </div>
     `;
   }

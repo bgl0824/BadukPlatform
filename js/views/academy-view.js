@@ -12,6 +12,7 @@ export function createAcademyView({
   appState,
   getCurrentUser,
   canViewLearningMenu,
+  canViewHomeMenu,
   canViewAcademyMenu,
   canViewAcademySubmenu,
   canViewAttendanceMenu,
@@ -176,7 +177,7 @@ export function createAcademyView({
     });
 
     setMenuButtonsVisibility(elements.learningMenuButtons, canViewLearningMenu());
-    setMenuButtonsVisibility([elements.homeModeButton], academyMenuVisible);
+    setMenuButtonsVisibility([elements.homeModeButton], canViewHomeMenu());
     setMenuButtonsVisibility([elements.academyModeButton], academyMenuVisible);
     setMenuButtonsVisibility([elements.attendanceModeButton], canViewAttendanceMenu());
     setMenuButtonsVisibility([elements.paymentsModeButton], canViewPaymentsMenu());
@@ -184,7 +185,7 @@ export function createAcademyView({
     updateAcademySubmenuVisibility();
 
     const canStayInMode =
-      (appState.mode === "home" && canViewAcademyMenu()) ||
+      (appState.mode === "home" && canViewHomeMenu()) ||
       (appState.mode === "learning" && canViewLearningMenu()) ||
       (appState.mode === "academy" && canViewAcademyMenu()) ||
       (appState.mode === "attendance" && canViewAttendanceMenu()) ||

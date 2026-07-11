@@ -3,6 +3,7 @@ import {
   buildMonthKey,
   clonePeriodDrafts,
   countMonthAttendanceTotal,
+  countAttendanceForDatePeriod,
   countStudentMonthAttendance,
   countTodayAttendance,
   createDefaultPeriodDraft,
@@ -37,6 +38,11 @@ import {
   resolveAcademyScopeId,
   selectAcademyMembersForUser,
 } from "../services/academy-service.js";
+import {
+  getAttendanceDayToneClass,
+  getKoreanPublicHoliday,
+  resolveAttendanceDayTone,
+} from "../services/korean-public-holidays.js";
 import { createAttendanceCheckKiosk } from "../attendance/attendance-check-kiosk.js";
 import {
   buildKioskConnectUrlForCurrentOrigin,
@@ -79,6 +85,39 @@ const STICKY_COLUMNS = [
   { key: "total", label: "총 출석수", width: 68 },
 ];
 
+const STICKY_COLUMN_LEFTS = STICKY_COLUMNS.map((_, index) =>
+  STICKY_COLUMNS.slice(0, index).reduce((sum, column) => sum + column.width, 0),
+);
+
+function getStickyColumnStyle(index) {
+  const column = STICKY_COLUMNS[index];
+  const bodyZIndex = 12 + index;
+  const headZIndex = 22 + index;
+  return `--attendance-col-width: ${column.width}px; --attendance-sticky-left: ${STICKY_COLUMN_LEFTS[index]}px; --attendance-sticky-z: ${bodyZIndex}; --attendance-sticky-head-z: ${headZIndex};`;
+}
+
+function getAttendanceDayColumnClass(year, month, day) {
+  return getAttendanceDayToneClass(resolveAttendanceDayTone(year, month, day));
+}
+
+function isSelectedCurrentMonth(year, month, referenceDate = new Date()) {
+  return year === referenceDate.getFullYear() && month === referenceDate.getMonth() + 1;
+}
+
+function resolveVisibleAttendanceDays(year, month, showPastDates) {
+  const dayCount = getDaysInMonth(year, month);
+  const today = new Date();
+  const startDay =
+    !showPastDates && isSelectedCurrentMonth(year, month, today) ? today.getDate() : 1;
+  const days = [];
+
+  for (let day = startDay; day <= dayCount; day += 1) {
+    days.push(day);
+  }
+
+  return days;
+}
+
 export function createAttendanceView({
   elements,
   getCurrentUser,
@@ -89,6 +128,7 @@ export function createAttendanceView({
   let renderGeneration = 0;
   let codesRenderGeneration = 0;
   let periodsSectionOpen = false;
+  let showPastAttendanceDates = false;
   let activeAttendanceSection = ATTENDANCE_SECTIONS.MONTHLY;
   /** @type {import("../services/attendance-service.js").AttendancePeriod[] | null} */
   let periodSettingsDraft = null;
@@ -138,6 +178,7 @@ export function createAttendanceView({
     const date = new Date(selectedYear, selectedMonth - 1 + delta, 1);
     selectedYear = date.getFullYear();
     selectedMonth = date.getMonth() + 1;
+    showPastAttendanceDates = false;
     void renderAttendanceMonthlyPanel();
   }
 
@@ -145,6 +186,7 @@ export function createAttendanceView({
     const today = getTodayParts();
     selectedYear = today.year;
     selectedMonth = today.month;
+    showPastAttendanceDates = false;
     void renderAttendanceMonthlyPanel();
   }
 
@@ -414,9 +456,15 @@ export function createAttendanceView({
   function buildDateHeaderMarkup(year, month, day) {
     const date = new Date(year, month - 1, day);
     const weekday = ["일", "월", "화", "수", "목", "금", "토"][date.getDay()] ?? "";
+    const holiday = getKoreanPublicHoliday(buildDateKey(year, month, day));
     return `
       <span class="attendance-date-head-day">${month}/${day}</span>
       <span class="attendance-date-head-weekday">${weekday}</span>
+      ${
+        holiday
+          ? `<span class="attendance-date-head-holiday" title="${escapeHtml(holiday.name)}">${escapeHtml(holiday.name)}</span>`
+          : ""
+      }
     `;
   }
 
@@ -425,9 +473,10 @@ export function createAttendanceView({
       const isEdge = index === STICKY_COLUMNS.length - 1;
       return `
         <th
-          class="attendance-grid-fixed-head${isEdge ? " attendance-grid-fixed-head--edge" : ""}"
+          class="attendance-grid-fixed-head attendance-grid-sticky-col${isEdge ? " attendance-grid-fixed-head--edge" : ""}"
+          rowspan="3"
           scope="col"
-          style="--attendance-col-width: ${column.width}px;"
+          style="${getStickyColumnStyle(index)}"
         >
           ${escapeHtml(column.label)}
         </th>
@@ -435,33 +484,55 @@ export function createAttendanceView({
     }).join("");
   }
 
-  function buildScrollHeaderCells(periods, year, month) {
-    const dayCount = getDaysInMonth(year, month);
+  function buildScrollHeaderCells(periods, year, month, visibleDays, academyId, monthKey) {
     const dateHeaders = [];
+    const countHeaders = [];
     const periodHeaders = [];
 
-    for (let day = 1; day <= dayCount; day += 1) {
+    visibleDays.forEach((day) => {
+      const dayColumnClass = getAttendanceDayColumnClass(year, month, day);
+      const dateKey = buildDateKey(year, month, day);
       dateHeaders.push(`
         <th
-          class="attendance-grid-date-head"
+          class="attendance-grid-date-head attendance-grid-scroll-col${dayColumnClass ? ` ${dayColumnClass}` : ""}"
           colspan="${periods.length}"
           scope="colgroup"
+          data-attendance-day="${day}"
         >
           ${buildDateHeaderMarkup(year, month, day)}
         </th>
       `);
 
       periods.forEach((period) => {
+        const attendanceCount = countAttendanceForDatePeriod(
+          academyId,
+          monthKey,
+          dateKey,
+          period.id,
+        );
+        countHeaders.push(`
+          <th
+            class="attendance-grid-count-head attendance-grid-scroll-col${dayColumnClass ? ` ${dayColumnClass}` : ""}"
+            scope="col"
+            data-attendance-count
+            data-date-key="${escapeHtml(dateKey)}"
+            data-period-id="${escapeHtml(period.id)}"
+            aria-label="${escapeHtml(formatAttendanceDateLabel(year, month, day))} ${escapeHtml(period.name)} 출석 ${attendanceCount}명"
+          >
+            <span class="attendance-period-count">${attendanceCount}</span>
+          </th>
+        `);
         periodHeaders.push(`
-          <th class="attendance-grid-period-head" scope="col" title="${escapeHtml(period.name)} ${escapeHtml(period.start_time)}~${escapeHtml(period.end_time)}">
+          <th class="attendance-grid-period-head attendance-grid-scroll-col${dayColumnClass ? ` ${dayColumnClass}` : ""}" scope="col" title="${escapeHtml(period.name)} ${escapeHtml(period.start_time)}~${escapeHtml(period.end_time)}">
             ${escapeHtml(period.name)}
           </th>
         `);
       });
-    }
+    });
 
     return {
       dateHeaders: dateHeaders.join(""),
+      countHeaders: countHeaders.join(""),
       periodHeaders: periodHeaders.join(""),
     };
   }
@@ -495,21 +566,21 @@ export function createAttendanceView({
 
     return `
       <td
-        class="attendance-grid-fixed-cell"
-        style="--attendance-col-width: ${STICKY_COLUMNS[0].width}px;"
+        class="attendance-grid-fixed-cell attendance-grid-sticky-col"
+        style="${getStickyColumnStyle(0)}"
       >
         ${rowIndex}
       </td>
       <td
-        class="attendance-grid-fixed-cell attendance-grid-fixed-cell--name"
-        style="--attendance-col-width: ${STICKY_COLUMNS[1].width}px;"
+        class="attendance-grid-fixed-cell attendance-grid-fixed-cell--name attendance-grid-sticky-col"
+        style="${getStickyColumnStyle(1)}"
         title="${escapeHtml(studentDisplayName)}"
       >
         <span class="attendance-student-name">${escapeHtml(studentBaseName)}</span><span class="attendance-student-code-hint"> (${escapeHtml(attendanceCodeLabel)})</span>
       </td>
       <td
-        class="attendance-grid-fixed-cell attendance-grid-fixed-cell--editable"
-        style="--attendance-col-width: ${STICKY_COLUMNS[2].width}px;"
+        class="attendance-grid-fixed-cell attendance-grid-fixed-cell--editable attendance-grid-sticky-col"
+        style="${getStickyColumnStyle(2)}"
       >
         <input
           class="attendance-meta-input attendance-meta-input--count"
@@ -525,8 +596,8 @@ export function createAttendanceView({
         />
       </td>
       <td
-        class="attendance-grid-fixed-cell attendance-grid-fixed-cell--editable"
-        style="--attendance-col-width: ${STICKY_COLUMNS[3].width}px;"
+        class="attendance-grid-fixed-cell attendance-grid-fixed-cell--editable attendance-grid-sticky-col"
+        style="${getStickyColumnStyle(3)}"
       >
         <input
           class="attendance-meta-input attendance-meta-input--days"
@@ -540,8 +611,8 @@ export function createAttendanceView({
         />
       </td>
       <td
-        class="attendance-grid-fixed-cell attendance-grid-fixed-cell--editable"
-        style="--attendance-col-width: ${STICKY_COLUMNS[4].width}px;"
+        class="attendance-grid-fixed-cell attendance-grid-fixed-cell--editable attendance-grid-sticky-col"
+        style="${getStickyColumnStyle(4)}"
       >
         <button
           type="button"
@@ -555,8 +626,8 @@ export function createAttendanceView({
         </button>
       </td>
       <td
-        class="attendance-grid-fixed-cell attendance-grid-fixed-cell--edge attendance-grid-fixed-cell--total"
-        style="--attendance-col-width: ${STICKY_COLUMNS[5].width}px;"
+        class="attendance-grid-fixed-cell attendance-grid-fixed-cell--edge attendance-grid-fixed-cell--total attendance-grid-sticky-col"
+        style="${getStickyColumnStyle(5)}"
         data-attendance-student-total="${escapeHtml(studentId)}"
       >
         ${totalAttendance}
@@ -571,12 +642,13 @@ export function createAttendanceView({
     periods,
     year,
     month,
+    visibleDays,
   }) {
-    const dayCount = getDaysInMonth(year, month);
     const checkCells = [];
 
-    for (let day = 1; day <= dayCount; day += 1) {
+    visibleDays.forEach((day) => {
       const dateKey = buildDateKey(year, month, day);
+      const dayColumnClass = getAttendanceDayColumnClass(year, month, day);
       periods.forEach((period) => {
         const checked = isAttendanceMarked(
           academyId,
@@ -586,7 +658,7 @@ export function createAttendanceView({
           period.id,
         );
         checkCells.push(`
-          <td class="attendance-grid-check-cell">
+          <td class="attendance-grid-check-cell attendance-grid-scroll-col${dayColumnClass ? ` ${dayColumnClass}` : ""}">
             <button
               type="button"
               class="attendance-check-button${checked ? " is-checked" : ""}"
@@ -602,7 +674,7 @@ export function createAttendanceView({
           </td>
         `);
       });
-    }
+    });
 
     return checkCells.join("");
   }
@@ -614,42 +686,125 @@ export function createAttendanceView({
     periods,
     year,
     month,
+    visibleDays,
   }) {
     const periodIds = periods.map((period) => period.id);
-    const fixedRows = [];
-    const scrollRows = [];
 
-    students.forEach((student, index) => {
-      const rowIndex = index + 1;
-      fixedRows.push(`
-        <tr class="attendance-grid-row">
-          ${buildFixedStudentCells({
-            student,
-            rowIndex,
-            academyId,
-            monthKey,
-            periodIds,
-          })}
-        </tr>
-      `);
-      scrollRows.push(`
-        <tr class="attendance-grid-row">
-          ${buildScrollCheckCells({
-            student,
-            academyId,
-            monthKey,
-            periods,
-            year,
-            month,
-          })}
-        </tr>
-      `);
-    });
+    return students
+      .map((student, index) => {
+        const rowIndex = index + 1;
+        return `
+          <tr class="attendance-grid-row">
+            ${buildFixedStudentCells({
+              student,
+              rowIndex,
+              academyId,
+              monthKey,
+              periodIds,
+            })}
+            ${buildScrollCheckCells({
+              student,
+              academyId,
+              monthKey,
+              periods,
+              year,
+              month,
+              visibleDays,
+            })}
+          </tr>
+        `;
+      })
+      .join("");
+  }
 
-    return {
-      fixedRows: fixedRows.join(""),
-      scrollRows: scrollRows.join(""),
+  function buildPastDatesToggleMarkup(year, month) {
+    if (!isSelectedCurrentMonth(year, month)) {
+      return "";
+    }
+
+    return `
+      <label class="attendance-past-dates-toggle">
+        <input
+          type="checkbox"
+          data-attendance-action="toggle-past-dates"
+          ${showPastAttendanceDates ? "checked" : ""}
+        />
+        <span>이전 날짜 펼치기</span>
+      </label>
+    `;
+  }
+
+  function setupAttendanceGridScrolling(gridRoot) {
+    gridRoot.__attendanceScrollCleanup?.();
+    const abortController = new AbortController();
+    const { signal } = abortController;
+    gridRoot.__attendanceScrollCleanup = () => abortController.abort();
+
+    const mainPane = gridRoot.querySelector('[data-attendance-hscroll="main"]');
+    const topPane = gridRoot.querySelector('[data-attendance-hscroll="top"]');
+    const spacer = gridRoot.querySelector("[data-attendance-hscroll-spacer]");
+    const table = mainPane?.querySelector(".attendance-grid--unified");
+
+    if (!mainPane || !topPane || !spacer || !table) {
+      return;
+    }
+
+    const syncSpacerWidth = () => {
+      spacer.style.width = `${table.scrollWidth}px`;
     };
+
+    syncSpacerWidth();
+
+    let syncing = false;
+    const syncScrollLeft = (source, target) => {
+      if (syncing) {
+        return;
+      }
+      syncing = true;
+      target.scrollLeft = source.scrollLeft;
+      syncing = false;
+    };
+
+    mainPane.addEventListener("scroll", () => syncScrollLeft(mainPane, topPane), { signal, passive: true });
+    topPane.addEventListener("scroll", () => syncScrollLeft(topPane, mainPane), { signal, passive: true });
+
+    if (typeof ResizeObserver === "function") {
+      const resizeObserver = new ResizeObserver(() => {
+        syncSpacerWidth();
+      });
+      resizeObserver.observe(table);
+      signal.addEventListener("abort", () => resizeObserver.disconnect());
+    }
+  }
+
+  function scrollAttendanceGridToToday(gridRoot, year, month) {
+    const mainPane = gridRoot.querySelector('[data-attendance-hscroll="main"]');
+    if (!mainPane) {
+      return;
+    }
+
+    const today = getTodayParts();
+    if (!isSelectedCurrentMonth(year, month)) {
+      mainPane.scrollLeft = 0;
+      return;
+    }
+
+    if (!showPastAttendanceDates) {
+      mainPane.scrollLeft = 0;
+      return;
+    }
+
+    const todayHeader = gridRoot.querySelector(`[data-attendance-day="${today.day}"]`);
+    if (!todayHeader) {
+      return;
+    }
+
+    const stickyOffset = STICKY_COLUMN_LEFTS.at(-1) + STICKY_COLUMNS.at(-1).width;
+    mainPane.scrollLeft = Math.max(0, todayHeader.offsetLeft - stickyOffset);
+    const topPane = gridRoot.querySelector('[data-attendance-hscroll="top"]');
+    if (topPane) {
+      topPane.scrollLeft = mainPane.scrollLeft;
+    }
   }
 
   function buildGridMarkup({
@@ -668,48 +823,64 @@ export function createAttendanceView({
       return `<p class="attendance-empty-state">활성화된 수업부가 없습니다.</p>`;
     }
 
+    const isCurrentMonth = isSelectedCurrentMonth(year, month);
+    const visibleDays = resolveVisibleAttendanceDays(year, month, showPastAttendanceDates);
     const fixedHeaders = buildFixedHeaderCells();
-    const scrollHeaders = buildScrollHeaderCells(periods, year, month);
-    const { fixedRows, scrollRows } = buildStudentRowsMarkup({
+    const scrollHeaders = buildScrollHeaderCells(
+      periods,
+      year,
+      month,
+      visibleDays,
+      academyId,
+      monthKey,
+    );
+    const studentRows = buildStudentRowsMarkup({
       students,
       academyId,
       monthKey,
       periods,
       year,
       month,
+      visibleDays,
     });
 
     return `
-      <div class="attendance-grid-frame" tabindex="0" aria-label="월간 출석부">
+      <div class="attendance-grid-frame" tabindex="0" aria-label="월간 출석부" data-attendance-grid-root>
+        <div class="attendance-grid-toolbar">
+          ${buildPastDatesToggleMarkup(year, month)}
+          <p class="attendance-grid-toolbar-hint">${
+            isCurrentMonth
+              ? "오늘 날짜부터 표시됩니다. 이전 날짜는 펼치기로 확인할 수 있습니다."
+              : "가로 스크롤로 날짜별·수업부별 출석을 확인합니다."
+          }</p>
+        </div>
+        <div
+          class="attendance-grid-hscroll attendance-grid-hscroll--top"
+          data-attendance-hscroll="top"
+          aria-hidden="true"
+          tabindex="-1"
+        >
+          <div class="attendance-grid-hscroll-spacer" data-attendance-hscroll-spacer></div>
+        </div>
         <div class="attendance-grid-outer">
-          <div class="attendance-grid-split">
-            <div class="attendance-grid-fixed-pane" aria-hidden="false">
-              <table class="attendance-grid attendance-grid--fixed">
-                <thead>
-                  <tr class="attendance-grid-head-row attendance-grid-head-row--fixed">
-                    ${fixedHeaders}
-                  </tr>
-                </thead>
-                <tbody>
-                  ${fixedRows}
-                </tbody>
-              </table>
-            </div>
-            <div class="attendance-grid-scroll-pane">
-              <table class="attendance-grid attendance-grid--scroll">
-                <thead>
-                  <tr class="attendance-grid-head-row attendance-grid-head-row--dates">
-                    ${scrollHeaders.dateHeaders}
-                  </tr>
-                  <tr class="attendance-grid-head-row attendance-grid-head-row--periods">
-                    ${scrollHeaders.periodHeaders}
-                  </tr>
-                </thead>
-                <tbody>
-                  ${scrollRows}
-                </tbody>
-              </table>
-            </div>
+          <div class="attendance-grid-scroll-pane" data-attendance-hscroll="main">
+            <table class="attendance-grid attendance-grid--unified">
+              <thead>
+                <tr class="attendance-grid-head-row attendance-grid-head-row--dates">
+                  ${fixedHeaders}
+                  ${scrollHeaders.dateHeaders}
+                </tr>
+                <tr class="attendance-grid-head-row attendance-grid-head-row--counts">
+                  ${scrollHeaders.countHeaders}
+                </tr>
+                <tr class="attendance-grid-head-row attendance-grid-head-row--periods">
+                  ${scrollHeaders.periodHeaders}
+                </tr>
+              </thead>
+              <tbody>
+                ${studentRows}
+              </tbody>
+            </table>
           </div>
         </div>
       </div>
@@ -810,7 +981,7 @@ export function createAttendanceView({
         <section class="attendance-grid-section" aria-label="월간 출석부">
           <div class="attendance-grid-section-head">
             <h4>월간 출석부</h4>
-            <p>가로 스크롤로 날짜별·수업부별 출석을 체크합니다.</p>
+            <p>상·하단 가로 스크롤로 날짜별·수업부별 출석을 체크합니다.</p>
           </div>
           ${buildGridMarkup({
             students,
@@ -828,6 +999,14 @@ export function createAttendanceView({
     periodDetails?.addEventListener("toggle", () => {
       periodsSectionOpen = periodDetails.open;
     });
+
+    const gridRoot = body.querySelector("[data-attendance-grid-root]");
+    if (gridRoot) {
+      setupAttendanceGridScrolling(gridRoot);
+      requestAnimationFrame(() => {
+        scrollAttendanceGridToToday(gridRoot, selectedYear, selectedMonth);
+      });
+    }
   }
 
   function buildAttendanceCodesTableMarkup({ students, members, academyId, monthKey, periods }) {
@@ -1173,6 +1352,28 @@ export function createAttendanceView({
     showAttendanceSection(activeAttendanceSection);
   }
 
+  function refreshAttendancePeriodCount(root, { academyId, monthKey, dateKey, periodId }) {
+    const countCell = root.querySelector(
+      `[data-attendance-count][data-date-key="${dateKey}"][data-period-id="${periodId}"]`,
+    );
+    if (!countCell) {
+      return;
+    }
+
+    const count = countAttendanceForDatePeriod(academyId, monthKey, dateKey, periodId);
+    const countNode = countCell.querySelector(".attendance-period-count");
+    if (countNode) {
+      countNode.textContent = String(count);
+    }
+
+    const period = getActivePeriods(academyId).find((item) => item.id === periodId);
+    const [yearText, monthText, dayText] = String(dateKey).split("-");
+    countCell.setAttribute(
+      "aria-label",
+      `${formatAttendanceDateLabel(Number(yearText), Number(monthText), Number(dayText))} ${period?.name ?? "수업부"} 출석 ${count}명`,
+    );
+  }
+
   function refreshAttendanceSummaries({
     academyId,
     monthKey,
@@ -1282,6 +1483,12 @@ export function createAttendanceView({
       students,
       periods,
       todayAttendanceCount,
+    });
+    refreshAttendancePeriodCount(root, {
+      academyId,
+      monthKey,
+      dateKey,
+      periodId,
     });
   }
 
@@ -1468,6 +1675,16 @@ export function createAttendanceView({
       periods,
       todayAttendanceCount,
     });
+
+    const root = elements.attendancePanelBody;
+    if (root) {
+      refreshAttendancePeriodCount(root, {
+        academyId,
+        monthKey,
+        dateKey,
+        periodId,
+      });
+    }
   }
 
   function handleAttendancePanelInput(event) {
@@ -1531,6 +1748,16 @@ export function createAttendanceView({
     }
   }
 
+  function handleAttendancePanelChange(event) {
+    const target = event.target;
+    if (!target?.matches?.('[data-attendance-action="toggle-past-dates"]')) {
+      return;
+    }
+
+    showPastAttendanceDates = Boolean(target.checked);
+    void renderAttendanceMonthlyPanel();
+  }
+
   function bindAttendanceEvents() {
     if (!elements.attendancePanel || elements.attendancePanel.dataset.attendanceEventsBound === "true") {
       return;
@@ -1539,6 +1766,7 @@ export function createAttendanceView({
     elements.attendancePanel.dataset.attendanceEventsBound = "true";
     elements.attendancePanel.addEventListener("click", handleAttendancePanelClick);
     elements.attendancePanel.addEventListener("input", handleAttendancePanelInput);
+    elements.attendancePanel.addEventListener("change", handleAttendancePanelChange);
     elements.attendancePanel.addEventListener("change", handleAttendancePanelInput);
     elements.attendancePanel.addEventListener("blur", handleAttendancePanelBlur, true);
   }

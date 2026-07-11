@@ -21,8 +21,30 @@
   </head>
   <body data-require-auth="true">
     <main class="app-shell">
+      <header
+        id="owner-mobile-topbar"
+        class="owner-mobile-topbar is-hidden"
+        aria-hidden="true"
+      >
+        <button
+          id="owner-mobile-menu-button"
+          class="owner-mobile-menu-button"
+          type="button"
+          aria-expanded="false"
+          aria-controls="main-menu"
+        >
+          <span class="owner-mobile-menu-icon" aria-hidden="true">☰</span>
+          <span class="owner-mobile-menu-label">메뉴</span>
+        </button>
+        <p id="owner-mobile-topbar-title" class="owner-mobile-topbar-title">Home</p>
+      </header>
+      <div
+        id="owner-mobile-menu-backdrop"
+        class="owner-mobile-menu-backdrop"
+        aria-hidden="true"
+      ></div>
       <nav id="main-menu" class="main-menu" aria-label="주 메뉴">
-        <button class="main-menu-button academy-owner-only-menu is-hidden" type="button" data-main-menu="home">
+        <button class="main-menu-button home-menu-button is-hidden" type="button" data-main-menu="home">
           🏠 홈
         </button>
         <button class="main-menu-button" type="button" data-main-menu="list">문제은행</button>
@@ -272,7 +294,7 @@
         </section>
       </section>
 
-      <section id="home-screen" class="home-screen is-hidden" aria-label="원장 홈">
+      <section id="home-screen" class="home-screen is-hidden" aria-label="홈">
         <div id="home-dashboard-body" class="home-dashboard-body"></div>
       </section>
 

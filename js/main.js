@@ -51,6 +51,7 @@ import {
   canEnterAdminMode,
   canViewAcademyMenu,
   canViewAcademySubmenu,
+  canViewHomeMenu,
   canViewLearningMenu,
   canViewPayments,
   canViewPlatformAdminMenu,
@@ -163,7 +164,17 @@ import { createBoardFeedbackOverlay } from "./ui/board-feedback-overlay.js";
 import { createCategoryCompleteModalController } from "./ui/category-complete-modal-controller.js";
 import { createMockTestUi } from "./ui/mock-test-ui.js";
 import { createStudyView } from "./views/study-view.js";
-import { renderOwnerHomeDashboard } from "./views/home-view.js";
+import {
+  buildStudentHomeMetrics,
+  buildTeacherHomeMetrics,
+  getTeacherAssignedStudentMembers,
+} from "./services/home-dashboard-service.js";
+import { createOwnerMobileNav } from "./ui/owner-mobile-nav.js";
+import {
+  renderOwnerHomeDashboard,
+  renderStudentHomeDashboard,
+  renderTeacherHomeDashboard,
+} from "./views/home-view.js";
 import { renderMockTestResultsTableHtml } from "./views/mock-test-results-view.js";
 import { buildPromotionPaperPagesHtml } from "./views/promotion-paper-view.js";
 import { computeMockTestTiming } from "./utils/mock-test-time.js";
@@ -361,10 +372,13 @@ function handleInvalidBoardPlay(point, evaluation) {
 }
 let solveView;
 let problemBankReady = false;
+let ownerMobileNav = null;
+
 const setMode = (mode) => {
   solveView.setMode(mode);
   syncBoardPreviewContext();
   void renderStudentGradeSummaryCard();
+  ownerMobileNav?.updateMobileScreenTitle(mode);
 };
 
 const {
@@ -715,6 +729,7 @@ const academyView = createAcademyView({
   appState,
   getCurrentUser,
   canViewLearningMenu: () => canViewLearningMenu(getCurrentUser()),
+  canViewHomeMenu: () => canViewHomeMenu(getCurrentUser()),
   canViewAcademyMenu: () => canViewAcademyMenu(getCurrentUser()),
   canViewAcademySubmenu: (section) => canViewAcademySubmenu(getCurrentUser(), section),
   canViewAttendanceMenu,
@@ -760,6 +775,13 @@ const platformAdminController = createPlatformAdminController({
 const { showPlatformAdminMenu, bindPlatformAdminEvents } = platformAdminController;
 
 updatePlatformAdminMenuVisibility = platformAdminController.updatePlatformAdminMenuVisibility;
+
+ownerMobileNav = createOwnerMobileNav({
+  elements,
+  getCurrentUser,
+  canManageAcademy,
+  appState,
+});
 
 const createView = createProblemCreatorView({
   elements,
@@ -904,6 +926,7 @@ window.BadukAppHooks = {
       authSessionNotifyFrame = 0;
       invalidateStudentProgressHydrateCache();
       updateAcademyMenuVisibility();
+      ownerMobileNav?.syncOwnerMobileUi();
       updateAdminVisibility();
       void refreshStudentProgressFromRemote().then(() => {
         refreshScreensAfterProgressSync();
@@ -943,6 +966,7 @@ function runApplicationBootstrap() {
       });
     });
     boot.run("bindHomeEvents", () => bindHomeEvents());
+    boot.run("bindOwnerMobileNavEvents", () => ownerMobileNav?.bindOwnerMobileNavEvents());
     boot.run("bindStudyScreenEvents", () => bindStudyScreenEvents());
     boot.run("bindAcademyMemberEvents", () => bindAcademyMemberEvents());
     boot.run("bindAttendanceEvents", () => bindAttendanceEvents());
@@ -1040,7 +1064,10 @@ async function initializeApp() {
     boot.run("syncCategoriesFromProblems", () => syncCategoriesFromProblems());
     boot.run("renderCategoryManager", () => renderCategoryManager());
     boot.run("renderCreatorCategoryOptions", () => renderCreatorCategoryOptions());
-    boot.run("updateAcademyMenuVisibility", () => updateAcademyMenuVisibility());
+    boot.run("updateAcademyMenuVisibility", () => {
+      updateAcademyMenuVisibility();
+      ownerMobileNav?.syncOwnerMobileUi();
+    });
     boot.run("updateAdminVisibility", () => updateAdminVisibility());
     boot.run("updatePrintUiVisibility", () => updatePrintUiVisibility());
 
@@ -1152,7 +1179,22 @@ function bindHomeEvents() {
       return;
     }
 
+    ownerMobileNav?.closeMobileMenu();
+
     const target = card.dataset.homeTarget;
+    const currentUser = getCurrentUser();
+    const role = normalizeRole(currentUser?.role);
+
+    if (target === "study-start") {
+      showStudyMode();
+      return;
+    }
+
+    if (target === "wrong-notes" && role === ROLES.student) {
+      showStudyMode();
+      return;
+    }
+
     if (target === "learning" || target === "wrong-notes") {
       showAcademyMenu("learning");
       return;
@@ -1175,6 +1217,10 @@ function bindHomeEvents() {
     }
 
     if (target === "todos") {
+      if (role === ROLES.teacher) {
+        showAcademyMenu("learning");
+        return;
+      }
       showAcademyMenu("attendance");
     }
   });
@@ -1203,13 +1249,55 @@ function logScreen(event, detail) {
   console.info(`[Screen] ${event}`, detail);
 }
 
-function shouldDefaultToOwnerHome() {
-  return canManageAcademy(getCurrentUser());
+function shouldDefaultToHome() {
+  return canViewHomeMenu(getCurrentUser());
+}
+
+function getHomeChromeCopy(user = getCurrentUser()) {
+  const role = normalizeRole(user?.role);
+  if (role === ROLES.academyOwner) {
+    return {
+      meta: "Home",
+      title: "원장 홈",
+      description: "오늘 학원 상황을 확인하세요.",
+      objective: "원장의 하루를 시작하는 화면",
+    };
+  }
+  if (role === ROLES.teacher) {
+    return {
+      meta: "Home",
+      title: "선생님 홈",
+      description: "담당 학생의 학습과 출결을 확인하세요.",
+      objective: "담당 학생 중심의 오늘 현황",
+    };
+  }
+  if (role === ROLES.student) {
+    return {
+      meta: "Home",
+      title: "학습 홈",
+      description: "오늘의 학습을 시작해 보세요.",
+      objective: "나의 학습 현황을 한눈에 확인하는 화면",
+    };
+  }
+  return null;
+}
+
+function applyHomeChrome(user = getCurrentUser()) {
+  const copy = getHomeChromeCopy(user);
+  if (!copy) {
+    return;
+  }
+
+  elements.meta.textContent = copy.meta;
+  elements.title.textContent = copy.title;
+  elements.description.textContent = copy.description;
+  elements.description.classList.remove("is-hidden");
+  elements.learningObjective.textContent = copy.objective;
 }
 
 function showInitialScreenForUser() {
   logScreen("showInitialScreen");
-  if (shouldDefaultToOwnerHome()) {
+  if (shouldDefaultToHome()) {
     showHomeMode();
     return;
   }
@@ -1223,16 +1311,12 @@ function showInitialScreenForUser() {
 
 function applyInitialListScreen() {
   logScreen("applyInitialListScreen");
-  if (shouldDefaultToOwnerHome()) {
+  if (shouldDefaultToHome()) {
     appState.mode = "home";
     setMode("home");
     studyView.clearStudyHubMeta();
-    elements.meta.textContent = "Home";
-    elements.title.textContent = "원장 홈";
-    elements.description.textContent = "오늘 학원 상황을 확인하세요.";
-    elements.description.classList.remove("is-hidden");
-    elements.learningObjective.textContent = "원장의 하루를 시작하는 화면";
-    void renderOwnerHome();
+    applyHomeChrome();
+    void renderHomeDashboard();
     return;
   }
 
@@ -1406,7 +1490,7 @@ async function refreshStudentProgressFromRemote({ force = false } = {}) {
 
 function refreshScreensAfterProgressSync() {
   if (appState.mode === "home") {
-    void renderOwnerHome();
+    void renderHomeDashboard();
     return;
   }
 
@@ -1613,6 +1697,70 @@ async function renderOwnerHome() {
     academyName: String(currentUser?.academyName ?? "").trim() || "우리 바둑학원",
     ...metrics,
   });
+}
+
+async function renderTeacherHome() {
+  if (!elements.homeDashboardBody) {
+    return;
+  }
+
+  const currentUser = getCurrentUser();
+  if (normalizeRole(currentUser?.role) !== ROLES.teacher) {
+    return;
+  }
+
+  const academyId = resolveAcademyScopeId(currentUser);
+  if (!academyId) {
+    elements.homeDashboardBody.innerHTML =
+      '<p class="home-card-empty">학원 정보를 확인할 수 없습니다. 다시 로그인해 주세요.</p>';
+    return;
+  }
+
+  const assignedStudents = getTeacherAssignedStudentMembers(currentUser);
+  const metrics = buildTeacherHomeMetrics({ academyId, studentMembers: assignedStudents });
+  renderTeacherHomeDashboard(elements.homeDashboardBody, {
+    teacherName: String(currentUser?.name ?? currentUser?.username ?? "선생님").trim() || "선생님",
+    academyName: String(currentUser?.academyName ?? "").trim() || "우리 바둑학원",
+    ...metrics,
+  });
+}
+
+async function renderStudentHome() {
+  if (!elements.homeDashboardBody) {
+    return;
+  }
+
+  const currentUser = getCurrentUser();
+  if (!currentUser?.id || normalizeRole(currentUser?.role) !== ROLES.student) {
+    return;
+  }
+
+  await refreshStudentProgressFromRemote();
+  const metrics = buildStudentHomeMetrics(currentUser.id, problems);
+  renderStudentHomeDashboard(elements.homeDashboardBody, {
+    studentName: String(currentUser?.name ?? currentUser?.username ?? "학생").trim() || "학생",
+    ...metrics,
+  });
+}
+
+async function renderHomeDashboard() {
+  const currentUser = getCurrentUser();
+  if (!canViewHomeMenu(currentUser)) {
+    return;
+  }
+
+  const role = normalizeRole(currentUser?.role);
+  if (role === ROLES.academyOwner) {
+    await renderOwnerHome();
+    return;
+  }
+  if (role === ROLES.teacher) {
+    await renderTeacherHome();
+    return;
+  }
+  if (role === ROLES.student) {
+    await renderStudentHome();
+  }
 }
 
 let studentGradeSummaryRenderSeq = 0;
@@ -2958,7 +3106,7 @@ function showSolveMode() {
 
 function showHomeMode() {
   const currentUser = getCurrentUser();
-  if (!canManageAcademy(currentUser)) {
+  if (!canViewHomeMenu(currentUser)) {
     showListMode();
     return;
   }
@@ -2978,7 +3126,8 @@ function showHomeMode() {
   appState.mode = "home";
   setMode("home");
   studyView.clearStudyHubMeta();
-  void renderOwnerHome();
+  applyHomeChrome(currentUser);
+  void renderHomeDashboard();
 }
 
 function showListMode() {
@@ -3865,7 +4014,7 @@ function canViewPaymentsMenu() {
 function canAccessAcademyMenu(menuType) {
   const currentUser = getCurrentUser();
   const menuPermissions = {
-    home: canManageAcademy(currentUser),
+    home: canViewHomeMenu(currentUser),
     learning: canViewLearningMenu(currentUser),
     academy: canViewAcademyMenu(currentUser),
     attendance: canManageAttendance(currentUser),
