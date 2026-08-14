@@ -10,6 +10,10 @@ import {
 import { normalizeRole, ROLES } from "../permissions/permission-service.js";
 import { getSupabaseClient, isSupabaseConfigured } from "./supabase-client.js";
 import {
+  isSupabaseAuthError,
+  runSupabaseQueryWithAuthRetry,
+} from "./supabase-auth-retry.js";
+import {
   normalizeAcademyMemberRole,
   readAcademyMembers,
   saveAcademyMembers,
@@ -64,11 +68,13 @@ export async function fetchAcademyMemberByUserId(userId) {
   }
 
   const client = getSupabaseClient();
-  const { data, error } = await client
-    .from(SUPABASE_ACADEMY_MEMBERS_TABLE)
-    .select("*")
-    .eq("user_id", userId)
-    .maybeSingle();
+  const { data, error } = await runSupabaseQueryWithAuthRetry(() =>
+    client
+      .from(SUPABASE_ACADEMY_MEMBERS_TABLE)
+      .select("*")
+      .eq("user_id", userId)
+      .maybeSingle(),
+  );
 
   if (error || !data) {
     return null;
@@ -192,9 +198,24 @@ export async function fetchAcademyMembersFromSupabase({ academyId, academyIds, u
     query = query.in("academy_id", uniqueScopeIds);
   }
 
-  const { data, error } = await query;
+  const { data, error } = await runSupabaseQueryWithAuthRetry(() => query);
 
   if (error) {
+    if (isSupabaseAuthError(error)) {
+      debugWarn(ACADEMY, "members fetch auth failed", {
+        source: DEBUG_SOURCES.supabase,
+        academyId: scopeLabel,
+        message: error.message,
+      });
+      return {
+        ok: false,
+        source: "supabase",
+        members: [],
+        authError: true,
+        message: error.message,
+      };
+    }
+
     const localMembers = uniqueScopeIds.length
       ? readAcademyMembers().filter((member) =>
           uniqueScopeIds.includes(String(member.academyId ?? "").trim()),

@@ -76,6 +76,10 @@ export async function hydrateCategoryRegistry(defaultNames = DEFAULT_CATEGORY_NA
   );
   const remote = await fetchCategoriesFromSupabase();
 
+  if (remote.authError) {
+    throw new Error(remote.message || "Supabase session expired while loading categories.");
+  }
+
   if (remote.ok && remote.categories.length > 0) {
     saveCategories(remote.categories);
     const after = readCategories();

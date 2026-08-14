@@ -92,6 +92,7 @@ const contents = `(function () {
     authorWhiteResponseDelayMs: ${authorWhiteResponseDelayMs},
     supabaseUrl: ${JSON.stringify(supabaseUrl)},
     supabaseKey: ${JSON.stringify(supabaseKey)},
+    smsTestApiUrl: ${JSON.stringify(process.env.SMS_TEST_API_URL || "/api/sms/send-test")},
     debugLogs: false,
     debugAuth: false,
   };

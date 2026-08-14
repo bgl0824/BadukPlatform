@@ -480,6 +480,18 @@ export function countAttendanceForDatePeriod(academyId, monthKey, dateKey, perio
   return Object.keys(monthRecords).filter((key) => key.endsWith(suffix) && monthRecords[key]).length;
 }
 
+/** 특정 날짜·수업부에 출석 기록이 있는 학생 ID 목록 (기존 records만 사용) */
+export function listAttendanceStudentIdsForDatePeriod(academyId, monthKey, dateKey, periodId) {
+  const store = readStore();
+  const bucket = ensureAcademyBucket(store, academyId);
+  const monthRecords = bucket.records[monthKey] ?? {};
+  const suffix = `::${dateKey}::${periodId}`;
+
+  return Object.keys(monthRecords)
+    .filter((key) => key.endsWith(suffix) && monthRecords[key])
+    .map((key) => key.slice(0, key.length - suffix.length));
+}
+
 /** @typedef {{ code: string, assigned_at?: string }} AttendanceCodeEntry */
 
 const ATTENDANCE_CODE_MIN = 1001;

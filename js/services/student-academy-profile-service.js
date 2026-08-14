@@ -1,15 +1,19 @@
 import { getStudentCurriculumOverview } from "./student-curriculum-progress-service.js";
 import { getStudentProjectedGradeSummary } from "./student-growth-report-service.js";
+import { getStudentCardPaymentSummary } from "./student-payment-service.js";
 
 /**
  * 학원관리 카드용 관리 요약 (목록에서 확인하는 운영·전달 요약).
  *
  * @param {string} userId
  * @param {object[]} problems
+ * @param {{ academyId?: string }} [options]
  */
-export function getStudentAcademyCardSummary(userId, problems = []) {
+export function getStudentAcademyCardSummary(userId, problems = [], options = {}) {
   const curriculum = getStudentCurriculumOverview(userId, problems);
   const projectedGrade = getStudentProjectedGradeSummary(userId, problems);
+  const academyId = String(options.academyId ?? "").trim();
+  const payment = academyId ? getStudentCardPaymentSummary(academyId, userId) : null;
 
   return {
     activeLevelGroup: curriculum.activeLevelGroup,
@@ -17,6 +21,7 @@ export function getStudentAcademyCardSummary(userId, problems = []) {
     statusLabel: curriculum.activeLevelGroupStatusLabel,
     recentCategory: curriculum.recentCategory,
     projectedGradeLabel: projectedGrade.projectedGradeLabel ?? "참고 어려움",
+    payment,
   };
 }
 
@@ -37,11 +42,24 @@ export function getStudentAcademyCardSummary(userId, problems = []) {
  *     guardian_phone?: string,
  *     attendance_notification_enabled?: boolean,
  *   } | null,
+ *   paymentProfile?: {
+ *     settings?: { monthly_fee?: number | null, billing_day?: number | null },
+ *     monthlyFeeLabel?: string,
+ *     billingDayLabel?: string,
+ *     invoices?: Array<{
+ *       billingMonth: string,
+ *       historyLabel: string,
+ *       status: string,
+ *       statusLabel: string,
+ *       amountLabel: string,
+ *     }>,
+ *   } | null,
  * }} [options]
  */
 export function buildStudentAcademyProfileView(options = {}) {
   const officialGradeRecord = options.officialGrade ?? null;
   const guardianProfile = options.guardianProfile ?? null;
+  const paymentProfile = options.paymentProfile ?? null;
   const guardianPhone = String(guardianProfile?.guardian_phone ?? "");
   const attendanceNotificationEnabled =
     guardianProfile?.attendance_notification_enabled !== false;
@@ -88,10 +106,12 @@ export function buildStudentAcademyProfileView(options = {}) {
       label: "준비 중",
       note: "출결 관리는 추후 제공됩니다.",
     },
-    paymentStatus: {
-      status: "pending",
-      label: "준비 중",
-      note: "결제·수강료 확인은 추후 제공됩니다.",
+    payment: {
+      monthly_fee: paymentProfile?.settings?.monthly_fee ?? null,
+      billing_day: paymentProfile?.settings?.billing_day ?? null,
+      monthlyFeeLabel: paymentProfile?.monthlyFeeLabel ?? "미설정",
+      billingDayLabel: paymentProfile?.billingDayLabel ?? "미설정",
+      invoices: Array.isArray(paymentProfile?.invoices) ? paymentProfile.invoices : [],
     },
   };
 }

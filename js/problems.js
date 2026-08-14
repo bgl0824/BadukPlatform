@@ -172,15 +172,37 @@ async function migrateLegacyProblems() {
 }
 
 async function loadProblems({ seedDefaults = true } = {}) {
-  const client = getSupabaseClient();
-  const { data, error } = await client
-    .from(SUPABASE_PROBLEMS_TABLE)
-    .select("*")
-    .order("display_order", { ascending: true })
-    .order("created_at", { ascending: true });
+  const fetchProblemRows = async () => {
+    const client = getSupabaseClient();
+    const { data, error } = await client
+      .from(SUPABASE_PROBLEMS_TABLE)
+      .select("*")
+      .order("display_order", { ascending: true })
+      .order("created_at", { ascending: true });
 
-  if (error) {
-    throw error;
+    if (error) {
+      throw error;
+    }
+
+    return data;
+  };
+
+  let data;
+  try {
+    const { withSupabaseQueryRetry } = await import("./services/supabase-auth-retry.js");
+    data = await withSupabaseQueryRetry(fetchProblemRows);
+  } catch (importError) {
+    // Classic script dynamic import is document-relative; try module path from /js/.
+    try {
+      const { withSupabaseQueryRetry } = await import("/js/services/supabase-auth-retry.js");
+      data = await withSupabaseQueryRetry(fetchProblemRows);
+    } catch (fallbackImportError) {
+      console.warn(
+        "[ProblemStore] auth retry helper unavailable, loading without retry.",
+        importError || fallbackImportError,
+      );
+      data = await fetchProblemRows();
+    }
   }
 
   if (data.length === 0 && seedDefaults && DEFAULT_PROBLEMS.length > 0) {

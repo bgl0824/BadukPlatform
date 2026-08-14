@@ -50,6 +50,7 @@ import { deleteMemberAccountFully } from "./services/user-delete-service.js";
 (function () {
 const AUTH_STORAGE_KEY = "BADUK_AUTH_USER";
 const USERS_STORAGE_KEY = "BADUK_AUTH_USERS";
+const REMEMBER_USERNAME_KEY = "BADUK_REMEMBER_USERNAME";
 const elements = {
   statusBar: document.querySelector("#auth-status-bar"),
   loginModal: document.querySelector("#login-modal"),
@@ -58,6 +59,7 @@ const elements = {
   signupForm: document.querySelector("#signup-form"),
   loginUsername: document.querySelector("#login-username"),
   loginPassword: document.querySelector("#login-password"),
+  loginRememberUsername: document.querySelector("#login-remember-username"),
   signupUsername: document.querySelector("#signup-username"),
   signupUsernameLabel: document.querySelector("#signup-username-label"),
   signupUsernameMessage: document.querySelector("#signup-username-message"),
@@ -71,6 +73,7 @@ const elements = {
   signupInviteHelp: document.querySelector("#signup-invite-help"),
   signupFullOnlyFields: document.querySelectorAll(".signup-full-only"),
   signupInviteOnlyFields: document.querySelectorAll(".signup-invite-only"),
+  signupAddressFields: document.querySelector("#signup-address-fields"),
   signupPostcode: document.querySelector("#signup-postcode"),
   signupAddress: document.querySelector("#signup-address"),
   signupAddressDetail: document.querySelector("#signup-address-detail"),
@@ -156,12 +159,20 @@ function ensureAuthStateListener() {
       resolveInitialAuthSession = null;
     }
 
-    handleSupabaseAuthEvent(event, user);
+    // Supabase auth holds an exclusive lock while this callback runs.
+    // Never call Supabase client APIs (auth/db/storage) synchronously here.
+    window.setTimeout(() => {
+      handleSupabaseAuthEvent(event, user);
+    }, 0);
   });
 }
 
 function handleSupabaseAuthEvent(event, user) {
   if (!authBootstrapSettled) {
+    return;
+  }
+
+  if (event === "TOKEN_REFRESHED") {
     return;
   }
 
@@ -188,6 +199,8 @@ function notifyAppAuthSessionChanged() {
 }
 
 async function bootstrapAuth() {
+  const bootStartedAt = performance.now();
+  console.info("[APP] bootstrapAuth start +0ms");
   hideTemporaryAdminEntry();
 
   if (!isSupabaseConfigured()) {
@@ -197,6 +210,9 @@ async function bootstrapAuth() {
       localStorage.removeItem(AUTH_STORAGE_KEY);
     }
     authBootstrapSettled = true;
+    console.info(
+      `[APP] bootstrapAuth end (no supabase) +${Math.round(performance.now() - bootStartedAt)}ms`,
+    );
     return handleAuthRedirects();
   }
 
@@ -209,6 +225,10 @@ async function bootstrapAuth() {
       initialAuthSessionPromise,
       new Promise((resolve) => window.setTimeout(() => resolve(null), 3000)),
     ]);
+    console.info(
+      `[APP] bootstrapAuth INITIAL_SESSION race done +${Math.round(performance.now() - bootStartedAt)}ms`,
+      { hasUser: Boolean(initialAuth?.user) },
+    );
 
     if (initialAuth?.user) {
       await applySupabaseUser(initialAuth.user, { notifyApp: false });
@@ -228,6 +248,9 @@ async function bootstrapAuth() {
   }
 
   authBootstrapSettled = true;
+  console.info(
+    `[APP] bootstrapAuth end +${Math.round(performance.now() - bootStartedAt)}ms`,
+  );
   return handleAuthRedirects();
 }
 
@@ -309,6 +332,10 @@ function bindAuthEvents() {
   authEventsBound = true;
 
   elements.loginForm?.addEventListener("submit", handleLoginSubmit);
+  restoreRememberedUsername();
+  if (isAuthPage && elements.loginUsername && !elements.loginUsername.value) {
+    window.setTimeout(() => elements.loginUsername.focus(), 0);
+  }
   elements.signupForm?.addEventListener("submit", handleSignupSubmit);
   elements.accountSettingsForm?.addEventListener("submit", handleAccountSettingsSubmit);
   elements.signupDuplicateButton?.addEventListener("click", checkSignupUsername);
@@ -397,6 +424,12 @@ function renderAuthStatus() {
     return;
   }
 
+  // 로그인 랜딩 페이지는 폼이 항상 노출되므로 진입 버튼을 그리지 않음
+  if (isAuthPage) {
+    elements.statusBar.innerHTML = "";
+    return;
+  }
+
   elements.statusBar.innerHTML = "";
 
   if (currentUser) {
@@ -422,6 +455,39 @@ function renderAuthStatus() {
       window.location.href = "./signup.html";
     }),
   );
+}
+
+function restoreRememberedUsername() {
+  if (!elements.loginUsername) {
+    return;
+  }
+
+  try {
+    const remembered = String(localStorage.getItem(REMEMBER_USERNAME_KEY) ?? "").trim();
+    if (!remembered) {
+      return;
+    }
+
+    elements.loginUsername.value = remembered;
+    if (elements.loginRememberUsername) {
+      elements.loginRememberUsername.checked = true;
+    }
+  } catch {
+    // ignore storage errors
+  }
+}
+
+function persistRememberedUsername(username) {
+  try {
+    const shouldRemember = Boolean(elements.loginRememberUsername?.checked);
+    if (shouldRemember && username) {
+      localStorage.setItem(REMEMBER_USERNAME_KEY, username);
+    } else {
+      localStorage.removeItem(REMEMBER_USERNAME_KEY);
+    }
+  } catch {
+    // ignore storage errors
+  }
 }
 
 function updateAdminModeVisibility() {
@@ -614,6 +680,7 @@ async function handleLoginSubmit(event) {
     }
 
     storeUser(appUser);
+    persistRememberedUsername(username);
     elements.loginPassword.value = "";
     completeAuthFlow();
   });
@@ -938,31 +1005,51 @@ function getSignupPayload() {
   const selectedType = document.querySelector('[name="user_type"]:checked');
   const inviteFromHidden = normalizeInviteCode(elements.signupInviteCodeHidden?.value ?? "");
   const inviteFromInput = normalizeInviteCode(elements.signupInviteCode?.value ?? "");
+  const userType = selectedType?.value ?? "individual";
+  const includeAddress = userType === "academy" && !isInviteSignupEntry();
 
   return {
     username: normalizeUsername(elements.signupUsername.value),
     password: elements.signupPassword.value,
     name: elements.signupName?.value.trim() ?? "",
     phone: elements.signupPhone?.value.trim() ?? "",
-    userType: selectedType?.value ?? "individual",
+    userType,
     academyName: elements.signupAcademyName?.value.trim() ?? "",
     inviteCode: inviteSignupEntry ? inviteFromHidden || getInviteCodeFromUrl() : inviteFromInput,
-    postcode: elements.signupPostcode?.value.trim() ?? "",
-    address: elements.signupAddress?.value.trim() ?? "",
-    addressDetail: elements.signupAddressDetail?.value.trim() ?? "",
+    postcode: includeAddress ? elements.signupPostcode?.value.trim() ?? "" : "",
+    address: includeAddress ? elements.signupAddress?.value.trim() ?? "" : "",
+    addressDetail: includeAddress ? elements.signupAddressDetail?.value.trim() ?? "" : "",
   };
 }
 
+function clearSignupAddressFields() {
+  if (elements.signupPostcode) {
+    elements.signupPostcode.value = "";
+  }
+  if (elements.signupAddress) {
+    elements.signupAddress.value = "";
+  }
+  if (elements.signupAddressDetail) {
+    elements.signupAddressDetail.value = "";
+  }
+}
+
 function updateAcademyFieldVisibility() {
-  if (!elements.academyField || isInviteSignupEntry()) {
+  if (isInviteSignupEntry()) {
     return;
   }
 
   const selectedType = document.querySelector('[name="user_type"]:checked')?.value;
-  const shouldShow = selectedType === "academy";
-  elements.academyField.classList.toggle("is-hidden", !shouldShow);
-  if (!shouldShow && elements.signupAcademyName) {
-    elements.signupAcademyName.value = "";
+  const shouldShowAcademyFields = selectedType === "academy";
+
+  elements.academyField?.classList.toggle("is-hidden", !shouldShowAcademyFields);
+  elements.signupAddressFields?.classList.toggle("is-hidden", !shouldShowAcademyFields);
+
+  if (!shouldShowAcademyFields) {
+    if (elements.signupAcademyName) {
+      elements.signupAcademyName.value = "";
+    }
+    clearSignupAddressFields();
   }
 }
 

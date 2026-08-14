@@ -78,6 +78,12 @@ import {
   saveStudentGuardianProfile,
 } from "../services/student-guardian-profile-service.js";
 import {
+  getStudentCardPaymentSummary,
+  getStudentPaymentProfileSummary,
+  markInvoiceRequested,
+  saveStudentPaymentSettings,
+} from "../services/student-payment-service.js";
+import {
   getOfficialGradeSourceSelectOptions,
 } from "../services/official-grade-source-service.js";
 import {
@@ -220,6 +226,12 @@ export function createAcademyMemberController({
         return;
       }
 
+      const paymentRequestButton = event.target.closest("[data-payment-card-action]");
+      if (paymentRequestButton) {
+        handleStudentCardPaymentAction(paymentRequestButton);
+        return;
+      }
+
       const deactivateButton = event.target.closest("[data-deactivate-student-id]");
       if (deactivateButton) {
         handleDeactivateStudent(deactivateButton.dataset.deactivateStudentId);
@@ -309,6 +321,16 @@ export function createAcademyMemberController({
           return;
         }
         void handleGuardianProfileSave(studentId);
+        return;
+      }
+
+      const paymentSaveButton = event.target.closest("[data-payment-action='save']");
+      if (paymentSaveButton) {
+        const studentId = activeAcademyProfileState.studentId;
+        if (!studentId) {
+          return;
+        }
+        void handlePaymentProfileSave(studentId);
       }
     });
     elements.studentAcademyProfileModal?.addEventListener("focusout", (event) => {
@@ -1117,9 +1139,19 @@ export function createAcademyMemberController({
     const canShowAcademyProfile = !isLearningCard && actions.canViewDetails;
     const showLearningActions = canShowDetails || canShowWrongNotes;
     const showAcademyActions = canShowAcademyProfile;
+    const academyIdForCard = resolveMemberAcademyId(member) || getAcademyId();
+    const academyCardSummary = isLearningCard
+      ? null
+      : getStudentAcademyCardSummary(member.userId, getProblems(), {
+          academyId: academyIdForCard,
+        });
     const cardMetrics = isLearningCard
       ? renderLearningCardMetrics(getStudentLearningDiagnostics(member.userId))
-      : renderAcademyCardMetrics(getStudentAcademyCardSummary(member.userId, getProblems()));
+      : renderAcademyCardMetrics(academyCardSummary);
+    const paymentRow =
+      !isLearningCard && !isInactive
+        ? renderStudentCardPaymentRow(academyCardSummary?.payment, member.userId)
+        : "";
 
     const desktopCard = `
       <article class="academy-member-card academy-student-card academy-student-card--summary academy-student-card--desktop academy-student-card--${cardVariant}${isInactive ? " is-inactive-member" : ""}" data-student-id="${escapeHtml(member.userId)}">
@@ -1133,6 +1165,7 @@ export function createAcademyMemberController({
         <dl class="student-progress-summary student-progress-summary--summary student-progress-summary--${cardVariant}">
           ${cardMetrics}
         </dl>
+        ${paymentRow}
         ${
           showLearningActions
             ? renderStudentLearningActionButtons(member, {
@@ -1218,6 +1251,80 @@ export function createAcademyMemberController({
     `;
   }
 
+  function renderStudentCardPaymentRow(payment, studentId) {
+    if (!payment) {
+      return "";
+    }
+
+    const status = payment.status;
+    let middleMarkup = "";
+
+    if (status === "paid") {
+      middleMarkup = payment.paidAtShortLabel
+        ? `<span class="student-card-payment-row__paid-date">${escapeHtml(payment.paidAtShortLabel)}</span>`
+        : `<span class="student-card-payment-row__paid-date is-empty">—</span>`;
+    } else if (status === "requested") {
+      middleMarkup = `
+        <button
+          type="button"
+          class="secondary-button student-card-payment-action-button"
+          data-payment-card-action="resend"
+          data-student-id="${escapeHtml(studentId)}"
+          data-billing-month="${escapeHtml(payment.billingMonth)}"
+        >
+          다시보내기
+        </button>
+      `;
+    } else {
+      middleMarkup = `
+        <button
+          type="button"
+          class="secondary-button student-card-payment-action-button"
+          data-payment-card-action="request"
+          data-student-id="${escapeHtml(studentId)}"
+          data-billing-month="${escapeHtml(payment.billingMonth)}"
+        >
+          결제요청
+        </button>
+      `;
+    }
+
+    return `
+      <div class="student-card-payment-row" data-student-payment-row="${escapeHtml(studentId)}">
+        <span class="student-card-payment-row__label">💳 ${escapeHtml(payment.tuitionLabel)}</span>
+        ${middleMarkup}
+        <span class="student-payment-status-badge is-${escapeHtml(status)}" aria-label="${escapeHtml(payment.statusLabel)}">
+          <span class="student-payment-status-badge__dot" aria-hidden="true"></span>
+          ${escapeHtml(payment.statusLabel)}
+        </span>
+      </div>
+    `;
+  }
+
+  function handleStudentCardPaymentAction(button) {
+    const action = String(button.dataset.paymentCardAction ?? "").trim();
+    const studentId = String(button.dataset.studentId ?? "").trim();
+    const billingMonth = String(button.dataset.billingMonth ?? "").trim();
+    const academyId = getAcademyId();
+
+    if (!academyId || !studentId || !billingMonth) {
+      return;
+    }
+
+    if (action !== "request" && action !== "resend") {
+      return;
+    }
+
+    // 문자·결제링크 발송은 이후 단계. 상태만 requested로 반영.
+    const result = markInvoiceRequested(academyId, studentId, billingMonth);
+    if (!result.ok) {
+      window.alert(result.message ?? "결제 요청을 처리하지 못했습니다.");
+      return;
+    }
+
+    renderAcademyStudents();
+  }
+
   function renderStudentLearningActionButtons(
     member,
     { canViewDetails = false, canViewWrongNotes = false } = {},
@@ -1288,19 +1395,26 @@ export function createAcademyMemberController({
     `;
   }
 
-  /** 모바일 원생관리(operations) 전용 — 이름·활성 상태 + 프로필/성장리포트 */
+  /** 모바일 원생관리(operations) 전용 — 이름·활성·결제상태 + 프로필/성장리포트 */
   function renderStudentAcademyMobileListRow(member, { studentCardActions } = {}) {
     const actions = studentCardActions ?? getStudentCardActionPermissions(getCurrentUser());
     const isInactive = !isActiveMember(member);
     const statusLabel = isInactive ? "비활성" : "활성";
     const displayName = member.name || member.username || "이름 없음";
     const showAcademyActions = actions.canViewDetails && !isInactive;
+    const academyId = resolveMemberAcademyId(member) || getAcademyId();
+    const payment = academyId ? getStudentCardPaymentSummary(academyId, member.userId) : null;
+    const paymentMarkup =
+      payment && !isInactive ? renderStudentCardPaymentRow(payment, member.userId) : "";
 
     return `
-      <div class="academy-student-mobile-row${isInactive ? " is-inactive-member" : ""}" data-student-id="${escapeHtml(member.userId)}" role="listitem">
-        <div class="academy-student-mobile-row__identity">
-          <span class="academy-student-mobile-row__status-dot" aria-label="${statusLabel}"></span>
-          <strong class="academy-student-mobile-row__name">${escapeHtml(displayName)}</strong>
+      <div class="academy-student-mobile-row academy-student-mobile-row--operations${isInactive ? " is-inactive-member" : ""}" data-student-id="${escapeHtml(member.userId)}" role="listitem">
+        <div class="academy-student-mobile-row__main">
+          <div class="academy-student-mobile-row__identity">
+            <span class="academy-student-mobile-row__status-dot" aria-label="${statusLabel}"></span>
+            <strong class="academy-student-mobile-row__name">${escapeHtml(displayName)}</strong>
+          </div>
+          ${paymentMarkup}
         </div>
         ${showAcademyActions ? renderStudentAcademyActionButtons(member) : ""}
       </div>
@@ -2779,11 +2893,15 @@ export function createAcademyMemberController({
     const guardianProfile = academyId
       ? getStudentGuardianProfile(academyId, studentId)
       : null;
+    const paymentProfile = academyId
+      ? getStudentPaymentProfileSummary(academyId, studentId)
+      : null;
 
     return buildStudentAcademyProfileView({
       studentName,
       officialGrade,
       guardianProfile,
+      paymentProfile,
     });
   }
 
@@ -2909,6 +3027,112 @@ export function createAcademyMemberController({
     `;
   }
 
+  function renderPaymentProfileSection(payment) {
+    const monthlyFeeValue =
+      payment?.monthly_fee === null || payment?.monthly_fee === undefined
+        ? ""
+        : String(payment.monthly_fee);
+    const billingDayValue =
+      payment?.billing_day === null || payment?.billing_day === undefined
+        ? ""
+        : String(payment.billing_day);
+    const invoices = Array.isArray(payment?.invoices) ? payment.invoices : [];
+    const historyMarkup =
+      invoices.length === 0
+        ? `<p class="student-payment-history-empty">아직 결제 이력이 없습니다. 청구일과 수강료를 저장하면 현재 청구월이 생성됩니다.</p>`
+        : `
+          <ul class="student-payment-history-list" aria-label="결제 이력">
+            ${invoices
+              .map(
+                (invoice) => `
+                  <li class="student-payment-history-row">
+                    <span class="student-payment-history-row__month">${escapeHtml(invoice.historyLabel)}</span>
+                    <span class="student-payment-status-badge is-${escapeHtml(invoice.status)}">
+                      <span class="student-payment-status-badge__dot" aria-hidden="true"></span>
+                      ${escapeHtml(invoice.statusLabel)}
+                    </span>
+                  </li>
+                `,
+              )
+              .join("")}
+          </ul>
+        `;
+
+    return `
+      <section class="student-academy-profile-section student-academy-profile-section--payment">
+        <h3>결제·수강료</h3>
+        <form class="student-payment-profile-form" data-payment-form>
+          <label class="student-payment-field">
+            <span class="student-payment-field-label">월 수강료</span>
+            <div class="student-payment-field-input-wrap">
+              <input
+                type="number"
+                inputmode="numeric"
+                min="0"
+                step="1000"
+                placeholder="170000"
+                value="${escapeHtml(monthlyFeeValue)}"
+                data-payment-field="monthly_fee"
+              />
+              <span class="student-payment-field-suffix">원</span>
+            </div>
+          </label>
+          <label class="student-payment-field">
+            <span class="student-payment-field-label">청구일</span>
+            <div class="student-payment-field-input-wrap">
+              <span class="student-payment-field-prefix">매월</span>
+              <input
+                type="number"
+                inputmode="numeric"
+                min="1"
+                max="28"
+                placeholder="25"
+                value="${escapeHtml(billingDayValue)}"
+                data-payment-field="billing_day"
+              />
+              <span class="student-payment-field-suffix">일</span>
+            </div>
+          </label>
+          <div class="student-payment-form-footer">
+            <button type="button" class="primary-button" data-payment-action="save">
+              저장
+            </button>
+          </div>
+        </form>
+        <div class="student-payment-history">
+          <h4 class="student-payment-history-title">결제 이력</h4>
+          ${historyMarkup}
+        </div>
+        <p class="student-academy-profile-section-note">결제 완료는 PG(Webhook)로 자동 반영됩니다. 수동 완료 버튼은 제공하지 않습니다.</p>
+      </section>
+    `;
+  }
+
+  async function handlePaymentProfileSave(studentId) {
+    const academyId = getAcademyId();
+    if (!academyId) {
+      window.alert("학원 정보를 확인할 수 없습니다.");
+      return;
+    }
+
+    const root = elements.studentAcademyProfileSections;
+    const feeInput = root?.querySelector("[data-payment-field='monthly_fee']");
+    const dayInput = root?.querySelector("[data-payment-field='billing_day']");
+
+    const result = saveStudentPaymentSettings(academyId, studentId, {
+      monthly_fee: feeInput?.value ?? "",
+      billing_day: dayInput?.value ?? "",
+    });
+
+    if (!result.ok) {
+      window.alert(result.message ?? "결제·수강료 정보를 저장하지 못했습니다.");
+      return;
+    }
+
+    await refreshAcademyProfileSections(studentId);
+    renderAcademyStudents();
+  }
+
   async function handleGuardianProfileSave(studentId) {
     const academyId = getAcademyId();
     if (!academyId) {
@@ -2963,12 +3187,7 @@ export function createAcademyMemberController({
           note: profile.attendance.note,
           status: profile.attendance.status,
         })}
-        ${renderAcademyProfileHubSection({
-          title: "결제·수강료",
-          value: profile.paymentStatus.label,
-          note: profile.paymentStatus.note,
-          status: profile.paymentStatus.status,
-        })}
+        ${renderPaymentProfileSection(profile.payment)}
       </nav>
     `;
   }

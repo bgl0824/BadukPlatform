@@ -11,6 +11,14 @@ import {
 import { normalizeRole } from "../permissions/permission-service.js";
 import { getSupabaseClient, isSupabaseConfigured } from "./supabase-client.js";
 
+export {
+  ensureSupabaseSessionReady,
+  isSupabaseAuthError,
+  refreshSupabaseSession,
+  runSupabaseQueryWithAuthRetry,
+  withSupabaseQueryRetry,
+} from "./supabase-auth-retry.js";
+
 const AUTH = DEBUG_CHANNELS.auth;
 
 export { isSupabaseConfigured, getSupabaseClient };

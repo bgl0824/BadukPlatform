@@ -1,0 +1,722 @@
+/* ═══════════════════════════════════════════════════════════════
+   시험지 계열 전용 스타일 (기출 / 모의 / 승급심사)
+   교재용·상세용 print-builder 와 완전 분리
+   ═══════════════════════════════════════════════════════════════ */
+
+/* ── 화면 미리보기 (시험지 열람 UI) ── */
+
+.promotion-paper-screen,
+.exam-paper-screen {
+  display: grid;
+  gap: 14px;
+  margin-bottom: 20px;
+  padding: 18px;
+  border-radius: 16px;
+  border: 1px solid rgba(47, 111, 78, 0.14);
+  background: rgba(255, 255, 255, 0.95);
+}
+
+.promotion-paper-screen-bar,
+.exam-paper-screen-bar {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 12px;
+}
+
+.promotion-paper-description,
+.exam-paper-description {
+  margin: 4px 0 0;
+  color: var(--muted, #5c5348);
+  font-size: 0.9rem;
+}
+
+.promotion-paper-actions,
+.exam-paper-actions {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 8px 12px;
+}
+
+.promotion-paper-print-option,
+.exam-paper-print-option {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  margin: 0;
+  font-size: 0.88rem;
+  color: var(--muted, #5c5348);
+  cursor: pointer;
+  user-select: none;
+}
+
+.promotion-paper-print-option input,
+.exam-paper-print-option input {
+  margin: 0;
+  cursor: pointer;
+}
+
+.promotion-paper-print-area,
+.exam-paper-print-area {
+  width: 100%;
+  overflow-x: auto;
+  background: #fff;
+}
+
+/* ── 8월 승급심사 시험지 기준 비율 (reference) ── */
+.exam-paper-pages--promotion {
+  --ep-ref-page-w: 297mm;
+  --ep-ref-page-h: 210mm;
+  /* 인쇄 영역(8mm margin) 기준은 @media print 에서 덮어씀 */
+  --ep-ref-header-row-h: 13mm;
+  --ep-ref-notice-h: 5.5mm;
+  --ep-ref-problem-row-h: 74mm;
+  --ep-ref-closing-h: 15mm;
+  --ep-ref-cell-w: calc(var(--ep-ref-page-w) / 5);
+  --ep-ref-caption-h: 9mm;
+  --ep-ref-board-size: calc(var(--ep-ref-cell-w) * 0.96);
+}
+
+.exam-paper-page--promotion {
+  width: var(--ep-ref-page-w);
+  min-height: var(--ep-ref-page-h);
+  margin-left: auto;
+  margin-right: auto;
+  background: #fff;
+  box-sizing: border-box;
+  overflow: hidden;
+}
+
+.exam-paper-page--promotion + .exam-paper-page--promotion {
+  margin-top: 20px;
+}
+
+/* ── 승급심사 단일 표 (응시정보 + 안내 + 문제) ── */
+.ep-sheet {
+  width: 100%;
+  border-collapse: collapse;
+  table-layout: fixed;
+  border: 1px solid #111;
+}
+
+.ep-sheet th,
+.ep-sheet td {
+  border: 1px solid #111;
+  box-sizing: border-box;
+  vertical-align: middle;
+}
+
+.ep-sheet-meta-row {
+  height: var(--ep-ref-header-row-h);
+}
+
+.ep-sheet-grade {
+  text-align: center;
+  background: #f5f5f5;
+  font-weight: 700;
+  padding: 2mm 3mm;
+}
+
+.ep-sheet-grade-label {
+  display: block;
+  font-size: 0.66rem;
+  font-weight: 600;
+}
+
+.ep-sheet-grade-value {
+  display: block;
+  margin-top: 2px;
+  font-size: 0.84rem;
+  font-weight: 700;
+}
+
+.ep-sheet-label {
+  width: auto;
+  min-width: 8%;
+  text-align: center;
+  background: #f5f5f5;
+  font-weight: 700;
+  font-size: 0.72rem;
+  white-space: nowrap;
+  padding: 1mm 2mm;
+}
+
+.ep-sheet-write {
+  min-height: calc(var(--ep-ref-header-row-h) - 1mm);
+  background: #fff;
+}
+
+.ep-sheet-orgs {
+  text-align: center;
+  font-size: 0.68rem;
+  line-height: 1.45;
+  padding: 2mm 3mm;
+  word-break: keep-all;
+}
+
+.ep-sheet-org-line {
+  display: block;
+  font-weight: 700;
+}
+
+.ep-sheet-date {
+  display: block;
+  margin-top: 2px;
+  font-size: 0.62rem;
+  color: #333;
+}
+
+.ep-sheet-notice-row .ep-sheet-notice {
+  height: var(--ep-ref-notice-h);
+  padding: 0 3mm;
+  font-size: 0.66rem;
+  line-height: var(--ep-ref-notice-h);
+  background: #fafafa;
+  border: none;
+  border-top: 1px solid #111;
+}
+
+.ep-sheet-problem-row {
+  height: var(--ep-ref-problem-row-h);
+}
+
+.ep-sheet-problem-row .ep-cell {
+  height: var(--ep-ref-problem-row-h);
+  min-height: var(--ep-ref-problem-row-h);
+  max-height: var(--ep-ref-problem-row-h);
+  padding: 0;
+  vertical-align: top;
+  background: #fff;
+}
+
+.ep-sheet-closing-row .ep-sheet-closing {
+  height: var(--ep-ref-closing-h);
+  padding: 0 4mm;
+  font-size: 0.72rem;
+  line-height: var(--ep-ref-closing-h);
+  text-align: center;
+  background: #fafafa;
+  border: none;
+  border-top: 1px solid #111;
+}
+
+/* ── 문제 셀 공통 (승급심사 reference 비율) ── */
+.exam-paper-pages--promotion .ep-cell-wrap {
+  display: flex;
+  flex-direction: column;
+  height: 100%;
+  min-height: 100%;
+  overflow: hidden;
+}
+
+.exam-paper-pages--promotion .ep-caption {
+  flex: 0 0 var(--ep-ref-caption-h);
+  height: var(--ep-ref-caption-h);
+  margin: 0;
+  padding: 0 1.5mm;
+  overflow: hidden;
+  font-size: 0.72rem;
+  line-height: 1.25;
+  border-bottom: 1px solid #111;
+  box-sizing: border-box;
+  display: flex;
+  align-items: center;
+  gap: 0.5mm;
+}
+
+.exam-paper-pages--promotion .ep-caption-num {
+  flex: 0 0 auto;
+  font-weight: 700;
+}
+
+.exam-paper-pages--promotion .ep-caption-prompt {
+  flex: 1 1 auto;
+  min-width: 0;
+  display: -webkit-box;
+  -webkit-box-orient: vertical;
+  -webkit-line-clamp: 2;
+  overflow: hidden;
+  line-height: 1.25;
+}
+
+.exam-paper-pages--promotion .ep-board-body {
+  flex: 1 1 auto;
+  min-height: 0;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  overflow: hidden;
+}
+
+.exam-paper-pages--promotion .exam-paper-board,
+.exam-paper-pages--promotion .promotion-paper-board {
+  width: var(--ep-ref-board-size);
+  height: var(--ep-ref-board-size);
+  max-width: 100%;
+  flex: 0 0 auto;
+  overflow: hidden;
+  background: #f3d08a;
+  border: none;
+  box-sizing: border-box;
+  print-color-adjust: exact;
+  -webkit-print-color-adjust: exact;
+  transform: translateY(-2mm);
+}
+
+.exam-paper-pages--promotion .exam-paper-board img,
+.exam-paper-pages--promotion .promotion-paper-board img {
+  display: block;
+  width: 100%;
+  height: 100%;
+  object-fit: contain;
+}
+
+/* ── 기출 / 모의 (기존 헤더 + 그리드) ── */
+.exam-paper-pages:not(.exam-paper-pages--promotion) {
+  --ep-print-width: 297mm;
+  --ep-print-height: 210mm;
+  --ep-caption-h: 4.5mm;
+  --ep-board-size: 56mm;
+  --ep-cell-gap: 1mm;
+  --ep-row-h: calc(var(--ep-caption-h) + var(--ep-board-size) + var(--ep-cell-gap));
+  --ep-cell-w: calc(var(--ep-print-width) / 5);
+  --ep-cell-height: var(--ep-row-h);
+  --ep-notice-block: 5mm;
+  --ep-closing-block: 8mm;
+}
+
+.exam-paper-page:not(.exam-paper-page--promotion) {
+  background: #fff;
+  border: 1px solid #111;
+  padding: 0;
+  box-sizing: border-box;
+  width: var(--ep-print-width);
+  min-height: var(--ep-print-height);
+  margin-left: auto;
+  margin-right: auto;
+  overflow: hidden;
+}
+
+.exam-paper-page:not(.exam-paper-page--promotion) + .exam-paper-page:not(.exam-paper-page--promotion) {
+  margin-top: 20px;
+}
+
+.ep-front-header {
+  margin-bottom: 0;
+}
+
+.ep-header-table {
+  width: 100%;
+  border-collapse: collapse;
+  table-layout: fixed;
+}
+
+.ep-header-table th,
+.ep-header-table td {
+  border: 1px solid #111;
+  padding: 3px 6px;
+  font-size: 0.72rem;
+  vertical-align: middle;
+  height: 22px;
+  box-sizing: border-box;
+}
+
+.ep-header-cell--title {
+  width: 28%;
+  background: #f5f5f5;
+  text-align: center;
+  vertical-align: middle;
+}
+
+.ep-header-title-main {
+  margin: 0;
+  font-size: 0.82rem;
+  font-weight: 700;
+  line-height: 1.25;
+  word-break: keep-all;
+}
+
+.ep-header-title-sub {
+  margin: 2px 0 0;
+  font-size: 0.72rem;
+  font-weight: 400;
+}
+
+.ep-header-label {
+  width: 9%;
+  background: #f5f5f5;
+  font-weight: 700;
+  text-align: center;
+  white-space: nowrap;
+}
+
+.ep-header-value {
+  text-align: left;
+}
+
+.ep-header-value--write {
+  min-width: 48px;
+}
+
+.ep-notice {
+  margin: 0;
+  padding: 3px 8px;
+  border: 1px solid #111;
+  border-top: none;
+  font-size: 0.66rem;
+  line-height: 1.35;
+  min-height: var(--ep-notice-block, 5mm);
+  box-sizing: border-box;
+  background: #fafafa;
+}
+
+.ep-grid {
+  width: 100%;
+  border-collapse: collapse;
+  table-layout: fixed;
+  border: 1px solid #111;
+  border-top: none;
+}
+
+.ep-grid tr + tr .ep-cell {
+  border-top: 1px solid #111;
+}
+
+.ep-cell {
+  width: 20%;
+  height: var(--ep-cell-height);
+  min-height: var(--ep-cell-height);
+  max-height: var(--ep-cell-height);
+  padding: 0;
+  vertical-align: top;
+  border-right: 1px solid #111;
+  background: #fff;
+  box-sizing: border-box;
+  overflow: hidden;
+}
+
+.ep-cell:last-child {
+  border-right: none;
+}
+
+.exam-paper-pages:not(.exam-paper-pages--promotion) .ep-cell-wrap {
+  display: flex;
+  flex-direction: column;
+  height: var(--ep-cell-height);
+  min-height: var(--ep-cell-height);
+  max-height: var(--ep-cell-height);
+  padding: 0 0 var(--ep-cell-gap);
+  box-sizing: border-box;
+  overflow: hidden;
+}
+
+.exam-paper-pages:not(.exam-paper-pages--promotion) .ep-caption {
+  flex: 0 0 var(--ep-caption-h);
+  height: var(--ep-caption-h);
+  margin: 0;
+  padding: 0 2px;
+  overflow: hidden;
+  white-space: nowrap;
+  text-overflow: ellipsis;
+  font-size: 0.56rem;
+  line-height: var(--ep-caption-h);
+  border-bottom: 1px solid #111;
+  box-sizing: border-box;
+}
+
+.exam-paper-pages:not(.exam-paper-pages--promotion) .ep-caption-num {
+  font-size: 0.58rem;
+  font-weight: 700;
+}
+
+.exam-paper-pages:not(.exam-paper-pages--promotion) .ep-board-body {
+  flex: 0 0 var(--ep-board-size);
+  width: 100%;
+  height: var(--ep-board-size);
+  display: flex;
+  align-items: flex-start;
+  justify-content: center;
+  overflow: hidden;
+}
+
+.exam-paper-pages:not(.exam-paper-pages--promotion) .exam-paper-board,
+.exam-paper-pages:not(.exam-paper-pages--promotion) .promotion-paper-board {
+  width: var(--ep-board-size);
+  height: var(--ep-board-size);
+  max-width: 100%;
+  overflow: hidden;
+  background: #f3d08a;
+  border: none;
+  box-sizing: border-box;
+  print-color-adjust: exact;
+  -webkit-print-color-adjust: exact;
+}
+
+.exam-paper-board img,
+.promotion-paper-board img {
+  display: block;
+  width: 100%;
+  height: 100%;
+  max-width: 100%;
+  max-height: 100%;
+  object-fit: contain;
+  print-color-adjust: exact;
+  -webkit-print-color-adjust: exact;
+}
+
+.ep-closing-notice {
+  margin: 0;
+  min-height: var(--ep-closing-block);
+  padding: 0 8px;
+  border: 1px solid #111;
+  border-top: none;
+  font-size: 0.72rem;
+  line-height: var(--ep-closing-block);
+  text-align: center;
+  background: #fafafa;
+  box-sizing: border-box;
+}
+
+.ep-cell--empty {
+  background: #fff;
+}
+
+.exam-paper-empty,
+.promotion-paper-empty {
+  margin: 0;
+  font-size: 0.9rem;
+  color: var(--muted, #5c5348);
+}
+
+@media (max-width: 900px) {
+  .promotion-paper-screen-bar,
+  .exam-paper-screen-bar {
+    flex-direction: column;
+  }
+}
+
+/* ═══════════════════════════════════════════════════════════════
+   시험지 인쇄 전용 (@page named — print-builder 와 분리)
+   ═══════════════════════════════════════════════════════════════ */
+
+@media print {
+  @page exam-paper-landscape {
+    size: A4 landscape;
+    margin: 8mm;
+  }
+
+  body.exam-paper-print .exam-paper-page,
+  body.exam-paper-print .promotion-paper-page,
+  body.promotion-paper-print .exam-paper-page,
+  body.promotion-paper-print .promotion-paper-page {
+    page: exam-paper-landscape;
+  }
+
+  body.exam-paper-print .app-shell,
+  body.promotion-paper-print .app-shell {
+    display: block !important;
+    max-width: none !important;
+    width: 100% !important;
+    padding: 0 !important;
+    margin: 0 !important;
+  }
+
+  body.exam-paper-print .app-shell > *:not(#promotion-paper-screen),
+  body.promotion-paper-print .app-shell > *:not(#promotion-paper-screen) {
+    display: none !important;
+  }
+
+  body.exam-paper-print .promotion-paper-screen-bar,
+  body.exam-paper-print .promotion-paper-actions,
+  body.exam-paper-print .exam-paper-screen-bar,
+  body.exam-paper-print .exam-paper-actions,
+  body.promotion-paper-print .promotion-paper-screen-bar,
+  body.promotion-paper-print .promotion-paper-actions {
+    display: none !important;
+  }
+
+  body.exam-paper-print .promotion-paper-screen,
+  body.exam-paper-print .exam-paper-screen,
+  body.promotion-paper-print .promotion-paper-screen {
+    display: block !important;
+    width: 100% !important;
+    box-sizing: border-box;
+    margin: 0;
+    padding: 0;
+    border: none;
+    border-radius: 0;
+    background: #fff;
+  }
+
+  body.exam-paper-print .promotion-paper-print-area,
+  body.exam-paper-print .exam-paper-print-area,
+  body.promotion-paper-print .promotion-paper-print-area {
+    width: 100%;
+    overflow: visible;
+  }
+
+  /* ── 승급심사 reference (인쇄 영역 281×194mm) ── */
+  body.exam-paper-print .exam-paper-pages--promotion,
+  body.promotion-paper-print .exam-paper-pages--promotion {
+    --ep-ref-page-w: 281mm;
+    --ep-ref-page-h: 194mm;
+    --ep-ref-header-row-h: 13mm;
+    --ep-ref-notice-h: 5.5mm;
+    --ep-ref-problem-row-h: 74mm;
+    --ep-ref-closing-h: 15mm;
+    --ep-ref-cell-w: calc(var(--ep-ref-page-w) / 5);
+    --ep-ref-caption-h: 9mm;
+    --ep-ref-board-size: calc(var(--ep-ref-cell-w) * 0.96);
+  }
+
+  body.exam-paper-print .exam-paper-page--promotion,
+  body.promotion-paper-print .exam-paper-page--promotion {
+    width: 100%;
+    min-height: var(--ep-ref-page-h);
+    border: none;
+    padding: 0;
+    overflow: visible;
+  }
+
+  body.exam-paper-print .exam-paper-page--promotion + .exam-paper-page--promotion,
+  body.promotion-paper-print .exam-paper-page--promotion + .exam-paper-page--promotion {
+    margin-top: 0;
+  }
+
+  body.exam-paper-print .exam-paper-page--1.exam-paper-page--promotion,
+  body.promotion-paper-print .exam-paper-page--1.exam-paper-page--promotion {
+    break-after: page;
+    page-break-after: always;
+  }
+
+  body.exam-paper-print .ep-sheet,
+  body.exam-paper-print .ep-sheet th,
+  body.exam-paper-print .ep-sheet td,
+  body.promotion-paper-print .ep-sheet,
+  body.promotion-paper-print .ep-sheet th,
+  body.promotion-paper-print .ep-sheet td {
+    border-color: #000 !important;
+  }
+
+  body.exam-paper-print .exam-paper-pages--promotion .ep-sheet-label,
+  body.promotion-paper-print .exam-paper-pages--promotion .ep-sheet-label {
+    font-size: 7pt;
+  }
+
+  body.exam-paper-print .exam-paper-pages--promotion .ep-sheet-grade-value,
+  body.promotion-paper-print .exam-paper-pages--promotion .ep-sheet-grade-value {
+    font-size: 8.5pt;
+  }
+
+  body.exam-paper-print .exam-paper-pages--promotion .ep-sheet-orgs,
+  body.promotion-paper-print .exam-paper-pages--promotion .ep-sheet-orgs {
+    font-size: 7pt;
+  }
+
+  body.exam-paper-print .exam-paper-pages--promotion .ep-sheet-notice,
+  body.promotion-paper-print .exam-paper-pages--promotion .ep-sheet-notice {
+    font-size: 6.5pt;
+  }
+
+  body.exam-paper-print .exam-paper-pages--promotion .ep-caption,
+  body.promotion-paper-print .exam-paper-pages--promotion .ep-caption {
+    font-size: 7.5pt;
+  }
+
+  body.exam-paper-print .exam-paper-pages--promotion .ep-sheet-closing,
+  body.promotion-paper-print .exam-paper-pages--promotion .ep-sheet-closing {
+    font-size: 7.5pt;
+  }
+
+  body.exam-paper-print-monochrome .exam-paper-board,
+  body.exam-paper-print-monochrome .promotion-paper-board,
+  body.promotion-paper-print-monochrome .exam-paper-board,
+  body.promotion-paper-print-monochrome .promotion-paper-board {
+    background: #fff !important;
+  }
+
+  body.exam-paper-print .exam-paper-pages--promotion .exam-paper-board,
+  body.exam-paper-print .exam-paper-pages--promotion .exam-paper-board canvas,
+  body.exam-paper-print .exam-paper-pages--promotion .exam-paper-board img,
+  body.exam-paper-print .exam-paper-pages--promotion .promotion-paper-board,
+  body.exam-paper-print .exam-paper-pages--promotion .promotion-paper-board canvas,
+  body.exam-paper-print .exam-paper-pages--promotion .promotion-paper-board img,
+  body.promotion-paper-print .exam-paper-pages--promotion .exam-paper-board,
+  body.promotion-paper-print .exam-paper-pages--promotion .promotion-paper-board,
+  body.promotion-paper-print .exam-paper-pages--promotion .promotion-paper-board canvas,
+  body.promotion-paper-print .exam-paper-pages--promotion .promotion-paper-board img {
+    visibility: visible !important;
+    print-color-adjust: exact;
+    -webkit-print-color-adjust: exact;
+  }
+
+  body.exam-paper-print .exam-paper-pages--promotion .exam-paper-board img,
+  body.exam-paper-print .exam-paper-pages--promotion .promotion-paper-board img,
+  body.promotion-paper-print .exam-paper-pages--promotion .exam-paper-board img,
+  body.promotion-paper-print .exam-paper-pages--promotion .promotion-paper-board img {
+    display: block !important;
+    width: 100% !important;
+    height: 100% !important;
+    object-fit: contain;
+  }
+
+  /* ── 기출 / 모의 인쇄 ── */
+  body.exam-paper-print .exam-paper-pages:not(.exam-paper-pages--promotion),
+  body.promotion-paper-print .exam-paper-pages:not(.exam-paper-pages--promotion) {
+    --ep-print-width: 281mm;
+    --ep-print-height: 194mm;
+    --ep-caption-h: 4.5mm;
+    --ep-board-size: 56mm;
+    --ep-cell-gap: 1mm;
+    --ep-row-h: calc(var(--ep-caption-h) + var(--ep-board-size) + var(--ep-cell-gap));
+    --ep-cell-height: var(--ep-row-h);
+    --ep-closing-block: 8mm;
+  }
+
+  body.exam-paper-print .exam-paper-page:not(.exam-paper-page--promotion),
+  body.promotion-paper-print .exam-paper-page:not(.exam-paper-page--promotion) {
+    border: none;
+    padding: 0;
+    width: 100%;
+    min-height: var(--ep-print-height);
+    overflow: visible;
+  }
+
+  body.exam-paper-print .exam-paper-page--1:not(.exam-paper-page--promotion),
+  body.promotion-paper-print .exam-paper-page--1:not(.exam-paper-page--promotion) {
+    break-after: page;
+    page-break-after: always;
+  }
+
+  body.exam-paper-print .ep-header-table,
+  body.exam-paper-print .ep-header-table th,
+  body.exam-paper-print .ep-header-table td,
+  body.promotion-paper-print .ep-header-table,
+  body.promotion-paper-print .ep-header-table th,
+  body.promotion-paper-print .ep-header-table td,
+  body.exam-paper-print .ep-grid,
+  body.exam-paper-print .ep-grid th,
+  body.exam-paper-print .ep-grid td,
+  body.promotion-paper-print .ep-grid,
+  body.promotion-paper-print .ep-grid th,
+  body.promotion-paper-print .ep-grid td {
+    border-color: #000 !important;
+  }
+
+  body.exam-paper-print .exam-paper-board,
+  body.exam-paper-print .promotion-paper-board,
+  body.promotion-paper-print .exam-paper-board,
+  body.promotion-paper-print .promotion-paper-board {
+    overflow: hidden;
+    background: #f3d08a !important;
+    border: none !important;
+  }
+
+  body.exam-paper-print-monochrome .exam-paper-pages:not(.exam-paper-pages--promotion) .exam-paper-board,
+  body.exam-paper-print-monochrome .exam-paper-pages:not(.exam-paper-pages--promotion) .promotion-paper-board,
+  body.promotion-paper-print-monochrome .exam-paper-pages:not(.exam-paper-pages--promotion) .exam-paper-board,
+  body.promotion-paper-print-monochrome .exam-paper-pages:not(.exam-paper-pages--promotion) .promotion-paper-board {
+    background: #fff !important;
+  }
+}

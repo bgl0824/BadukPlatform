@@ -7,6 +7,9 @@
   "functions": {
     "api/katago/respond.js": {
       "maxDuration": 30
+    },
+    "api/sms/send-test.js": {
+      "maxDuration": 15
     }
   },
   "rewrites": [

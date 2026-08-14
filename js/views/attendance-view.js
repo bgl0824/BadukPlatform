@@ -21,6 +21,7 @@ import {
   getStudentMeta,
   getTodayDateKey,
   isAttendanceMarked,
+  listAttendanceStudentIdsForDatePeriod,
   saveAcademyPeriods,
   saveStudentMeta,
   toggleAttendanceMark,
@@ -31,6 +32,11 @@ import {
   listAttendanceSmsLogs,
   queueAttendanceCheckInSmsLog,
 } from "../services/attendance-sms-log-service.js";
+import {
+  buildAligoTestMessage,
+  fetchAligoSmsConfigStatus,
+  sendAligoTestSms,
+} from "../services/aligo-sms-client.js";
 import { formatGuardianPhoneDisplay } from "../services/student-guardian-profile-service.js";
 import {
   readAcademyMembers,
@@ -130,8 +136,37 @@ export function createAttendanceView({
   let periodsSectionOpen = false;
   let showPastAttendanceDates = false;
   let activeAttendanceSection = ATTENDANCE_SECTIONS.MONTHLY;
+  /** @type {"today" | "period" | "monthly"} 모바일 월간 섹션 내부 화면 */
+  let mobileAttendanceScreen = "today";
+  /** @type {string | null} */
+  let mobileSelectedPeriodId = null;
   /** @type {import("../services/attendance-service.js").AttendancePeriod[] | null} */
   let periodSettingsDraft = null;
+
+  const OWNER_MOBILE_MAX_WIDTH = 768;
+
+  function shouldUseMobileTodayAttendance() {
+    return (
+      document.body.classList.contains("is-academy-owner-ui") &&
+      window.matchMedia(`(max-width: ${OWNER_MOBILE_MAX_WIDTH}px)`).matches
+    );
+  }
+
+  function syncMobileAttendanceSubmenuLabel() {
+    const monthlyButton = elements.attendanceManagementSubmenu?.querySelector(
+      '[data-attendance-section="monthly"]',
+    );
+    if (!monthlyButton) {
+      return;
+    }
+
+    monthlyButton.textContent = shouldUseMobileTodayAttendance() ? "오늘 출결" : "월간 출석부";
+  }
+
+  function resetMobileAttendanceScreen() {
+    mobileAttendanceScreen = "today";
+    mobileSelectedPeriodId = null;
+  }
 
   const attendanceCheckKiosk = createAttendanceCheckKiosk({
     mount: elements.attendanceCheckBody,
@@ -153,7 +188,7 @@ export function createAttendanceView({
     onAttendanceSaved: (payload) => {
       refreshMonthlyAttendanceAfterCheckIn(payload);
       if (activeAttendanceSection === ATTENDANCE_SECTIONS.SMS_LOGS) {
-        renderSmsLogsPanel();
+        void renderSmsLogsPanel();
       }
     },
     features: {
@@ -174,12 +209,19 @@ export function createAttendanceView({
     };
   }
 
+  function getMonthlyPanelRenderOptions() {
+    return {
+      showMobileBack:
+        shouldUseMobileTodayAttendance() && mobileAttendanceScreen === "monthly",
+    };
+  }
+
   function shiftMonth(delta) {
     const date = new Date(selectedYear, selectedMonth - 1 + delta, 1);
     selectedYear = date.getFullYear();
     selectedMonth = date.getMonth() + 1;
     showPastAttendanceDates = false;
-    void renderAttendanceMonthlyPanel();
+    void renderAttendanceMonthlyPanel(getMonthlyPanelRenderOptions());
   }
 
   function goToTodayMonth() {
@@ -187,7 +229,7 @@ export function createAttendanceView({
     selectedYear = today.year;
     selectedMonth = today.month;
     showPastAttendanceDates = false;
-    void renderAttendanceMonthlyPanel();
+    void renderAttendanceMonthlyPanel(getMonthlyPanelRenderOptions());
   }
 
   function buildPeriodListMarkup(periods) {
@@ -424,7 +466,15 @@ export function createAttendanceView({
 
     saveAcademyPeriods(academyId, periodSettingsDraft);
     closePeriodSettings();
-    await renderAttendanceMonthlyPanel();
+    if (
+      shouldUseMobileTodayAttendance() &&
+      activeAttendanceSection === ATTENDANCE_SECTIONS.MONTHLY &&
+      mobileAttendanceScreen !== "monthly"
+    ) {
+      renderMonthlySectionForViewport();
+      return;
+    }
+    await renderAttendanceMonthlyPanel(getMonthlyPanelRenderOptions());
   }
 
   function buildSummaryStripMarkup({
@@ -887,7 +937,7 @@ export function createAttendanceView({
     `;
   }
 
-  async function renderAttendanceMonthlyPanel() {
+  async function renderAttendanceMonthlyPanel({ showMobileBack = false } = {}) {
     const body = elements.attendancePanelBody;
     if (!body) {
       return;
@@ -928,8 +978,23 @@ export function createAttendanceView({
       ? countTodayAttendance(academyId, monthKey, studentIds, periods.map((p) => p.id), today.dateKey)
       : null;
 
+    const mobileBackMarkup = showMobileBack
+      ? `
+        <div class="attendance-mobile-nav-bar">
+          <button
+            type="button"
+            class="secondary-button attendance-mobile-back-button"
+            data-attendance-action="mobile-back-today"
+          >
+            ← 오늘 출결
+          </button>
+        </div>
+      `
+      : "";
+
     body.innerHTML = `
       <div class="attendance-panel-stack">
+        ${mobileBackMarkup}
         <section class="attendance-control-bar" aria-label="월 선택">
           <div class="attendance-month-nav">
             <button
@@ -1007,6 +1072,186 @@ export function createAttendanceView({
         scrollAttendanceGridToToday(gridRoot, selectedYear, selectedMonth);
       });
     }
+  }
+
+  async function renderMobileTodayAttendance() {
+    const body = elements.attendancePanelBody;
+    if (!body) {
+      return;
+    }
+
+    const generation = ++renderGeneration;
+    const currentUser = getCurrentUser?.() ?? null;
+    const academyId = resolveAcademyScopeId(currentUser);
+    const today = getTodayParts();
+    const monthKey = buildMonthKey(today.year, today.month);
+    const dateLabel = formatAttendanceDateLabel(today.year, today.month, today.day);
+
+    body.innerHTML = `
+      <div class="attendance-panel-loading" aria-live="polite">오늘 출결을 불러오는 중입니다…</div>
+    `;
+
+    if (!academyId) {
+      body.innerHTML = `<p class="attendance-empty-state">학원 정보를 확인할 수 없습니다. 학원장 계정으로 다시 로그인해 주세요.</p>`;
+      return;
+    }
+
+    await refreshAcademyMembersCache(academyId, { user: currentUser });
+    if (generation !== renderGeneration) {
+      return;
+    }
+
+    const periods = getActivePeriods(academyId);
+    const periodCards =
+      periods.length === 0
+        ? `<p class="attendance-empty-state">활성화된 수업부가 없습니다.</p>`
+        : periods
+            .map((period) => {
+              const count = countAttendanceForDatePeriod(
+                academyId,
+                monthKey,
+                today.dateKey,
+                period.id,
+              );
+              return `
+                <article class="attendance-today-period-row">
+                  <div class="attendance-today-period-row__info">
+                    <strong class="attendance-today-period-row__name">${escapeHtml(period.name)}</strong>
+                    <span class="attendance-today-period-row__count">(${count}명)</span>
+                  </div>
+                  <button
+                    type="button"
+                    class="secondary-button attendance-today-view-button"
+                    data-attendance-action="mobile-view-period"
+                    data-period-id="${escapeHtml(period.id)}"
+                  >
+                    보기
+                  </button>
+                </article>
+              `;
+            })
+            .join("");
+
+    body.innerHTML = `
+      <div class="attendance-today-panel" aria-label="오늘 출결">
+        <header class="attendance-today-header">
+          <h3 class="attendance-today-title">오늘 출결</h3>
+          <p class="attendance-today-date">${escapeHtml(dateLabel)}</p>
+        </header>
+        <div class="attendance-today-period-list" role="list">
+          ${periodCards}
+        </div>
+        <div class="attendance-today-footer">
+          <button
+            type="button"
+            class="secondary-button attendance-open-monthly-button"
+            data-attendance-action="mobile-open-monthly"
+          >
+            월간 출석부
+          </button>
+        </div>
+      </div>
+    `;
+  }
+
+  async function renderMobilePeriodAttendanceList() {
+    const body = elements.attendancePanelBody;
+    if (!body) {
+      return;
+    }
+
+    const generation = ++renderGeneration;
+    const currentUser = getCurrentUser?.() ?? null;
+    const academyId = resolveAcademyScopeId(currentUser);
+    const today = getTodayParts();
+    const monthKey = buildMonthKey(today.year, today.month);
+    const periodId = String(mobileSelectedPeriodId ?? "").trim();
+
+    body.innerHTML = `
+      <div class="attendance-panel-loading" aria-live="polite">출석 학생을 불러오는 중입니다…</div>
+    `;
+
+    if (!academyId || !periodId) {
+      resetMobileAttendanceScreen();
+      void renderMobileTodayAttendance();
+      return;
+    }
+
+    await refreshAcademyMembersCache(academyId, { user: currentUser });
+    if (generation !== renderGeneration) {
+      return;
+    }
+
+    const periods = getActivePeriods(academyId);
+    const period = periods.find((item) => item.id === periodId) ?? getAllPeriods(academyId).find((item) => item.id === periodId);
+    const periodName = period?.name ?? "수업부";
+    const attendedIds = new Set(
+      listAttendanceStudentIdsForDatePeriod(academyId, monthKey, today.dateKey, periodId),
+    );
+    const members = readAcademyMembers();
+    const attendedStudents = selectAcademyMembersForUser(members, currentUser, {
+      role: "student",
+    })
+      .filter((student) => attendedIds.has(String(student.userId)))
+      .sort((a, b) => String(a.name ?? "").localeCompare(String(b.name ?? ""), "ko"));
+
+    const studentListMarkup =
+      attendedStudents.length === 0
+        ? `<p class="attendance-empty-state">출석한 학생이 없습니다.</p>`
+        : `
+          <ul class="attendance-today-student-list" aria-label="${escapeHtml(periodName)} 출석 학생">
+            ${attendedStudents
+              .map((student) => {
+                const displayName = String(student.name ?? student.username ?? "이름 없음").trim() || "이름 없음";
+                return `
+                  <li class="attendance-today-student-row">
+                    <span class="attendance-today-student-row__status-dot" aria-hidden="true"></span>
+                    <strong class="attendance-today-student-row__name">${escapeHtml(displayName)}</strong>
+                  </li>
+                `;
+              })
+              .join("")}
+          </ul>
+        `;
+
+    body.innerHTML = `
+      <div class="attendance-today-panel attendance-today-panel--period" aria-label="${escapeHtml(periodName)} 출석 학생">
+        <div class="attendance-mobile-nav-bar">
+          <button
+            type="button"
+            class="secondary-button attendance-mobile-back-button"
+            data-attendance-action="mobile-back-today"
+          >
+            ← 오늘 출결
+          </button>
+        </div>
+        <header class="attendance-today-header">
+          <h3 class="attendance-today-title">${escapeHtml(periodName)} 출석 학생</h3>
+          <p class="attendance-today-date">${attendedStudents.length}명</p>
+        </header>
+        ${studentListMarkup}
+      </div>
+    `;
+  }
+
+  function renderMonthlySectionForViewport() {
+    if (!shouldUseMobileTodayAttendance()) {
+      resetMobileAttendanceScreen();
+      void renderAttendanceMonthlyPanel();
+      return;
+    }
+
+    if (mobileAttendanceScreen === "monthly") {
+      void renderAttendanceMonthlyPanel({ showMobileBack: true });
+      return;
+    }
+
+    if (mobileAttendanceScreen === "period") {
+      void renderMobilePeriodAttendanceList();
+      return;
+    }
+
+    void renderMobileTodayAttendance();
   }
 
   function buildAttendanceCodesTableMarkup({ students, members, academyId, monthKey, periods }) {
@@ -1145,34 +1390,54 @@ export function createAttendanceView({
     });
   }
 
-  function renderSmsLogsPanel() {
-    const body = elements.attendanceSmsLogsBody;
-    if (!body) {
-      return;
-    }
+  function buildSmsTestPanelMarkup(configStatus = null) {
+    const configured = configStatus?.configured === true;
+    const configLine = configured
+      ? `설정됨 · 발신 ${escapeHtml(configStatus.senderMasked || "****")} · 계정 ${escapeHtml(configStatus.userIdMasked || "***")}`
+      : `미설정${
+          Array.isArray(configStatus?.missing) && configStatus.missing.length
+            ? ` (${escapeHtml(configStatus.missing.join(", "))})`
+            : ""
+        }`;
 
-    const currentUser = getCurrentUser?.() ?? null;
-    const academyId = resolveAcademyScopeId(currentUser);
-    if (!academyId) {
-      body.innerHTML = `<p class="attendance-empty-state">학원 정보를 확인할 수 없습니다. 학원장 계정으로 다시 로그인해 주세요.</p>`;
-      return;
-    }
+    return `
+      <section class="attendance-sms-test-panel" aria-label="테스트 문자 발송">
+        <header class="attendance-sms-test-header">
+          <div>
+            <h4>테스트 문자 발송</h4>
+            <p>원장 전용 · 보호자 연락처와 무관하게 입력한 번호 1곳으로만 발송합니다.</p>
+          </div>
+          <p class="attendance-sms-test-config${configured ? " is-ready" : " is-missing"}" data-sms-test-config>
+            Aligo API: ${configLine}
+          </p>
+        </header>
+        <form class="attendance-sms-test-form" data-sms-test-form>
+          <label class="attendance-sms-test-field">
+            <span>수신번호</span>
+            <input
+              type="tel"
+              inputmode="numeric"
+              autocomplete="tel"
+              placeholder="010-0000-0000"
+              data-sms-test-receiver
+              maxlength="13"
+            />
+          </label>
+          <p class="attendance-sms-test-preview" data-sms-test-preview>${escapeHtml(buildAligoTestMessage())}</p>
+          <div class="attendance-sms-test-actions">
+            <button type="submit" class="primary-button" data-sms-test-submit ${configured ? "" : "disabled"}>
+              테스트 문자 발송
+            </button>
+          </div>
+          <p class="attendance-sms-test-result" data-sms-test-result aria-live="polite"></p>
+        </form>
+      </section>
+    `;
+  }
 
-    const logs = listAttendanceSmsLogs(academyId);
-
+  function buildSmsLogsTableMarkup(logs) {
     if (logs.length === 0) {
-      body.innerHTML = `
-        <div class="attendance-sms-logs-panel">
-          <header class="attendance-sms-logs-header">
-            <div class="attendance-sms-logs-header-text">
-              <h4>문자 로그</h4>
-              <p>출석 처리 시 보호자에게 발송 예정인 문자 내역입니다. (실제 발송은 API 연동 후 진행)</p>
-            </div>
-          </header>
-          <p class="attendance-empty-state">아직 발송 예정 문자가 없습니다.</p>
-        </div>
-      `;
-      return;
+      return `<p class="attendance-empty-state">아직 발송 예정 문자가 없습니다.</p>`;
     }
 
     const rows = logs
@@ -1197,30 +1462,108 @@ export function createAttendanceView({
       })
       .join("");
 
+    return `
+      <div class="attendance-sms-logs-table-wrap">
+        <table class="attendance-sms-logs-table">
+          <thead>
+            <tr>
+              <th scope="col">발송 예정 시간</th>
+              <th scope="col">학생명</th>
+              <th scope="col">보호자 연락처</th>
+              <th scope="col">메시지 내용</th>
+              <th scope="col">상태</th>
+            </tr>
+          </thead>
+          <tbody>${rows}</tbody>
+        </table>
+      </div>
+    `;
+  }
+
+  async function renderSmsLogsPanel() {
+    const body = elements.attendanceSmsLogsBody;
+    if (!body) {
+      return;
+    }
+
+    const currentUser = getCurrentUser?.() ?? null;
+    const academyId = resolveAcademyScopeId(currentUser);
+    if (!academyId) {
+      body.innerHTML = `<p class="attendance-empty-state">학원 정보를 확인할 수 없습니다. 학원장 계정으로 다시 로그인해 주세요.</p>`;
+      return;
+    }
+
     body.innerHTML = `
       <div class="attendance-sms-logs-panel">
+        ${buildSmsTestPanelMarkup()}
         <header class="attendance-sms-logs-header">
           <div class="attendance-sms-logs-header-text">
             <h4>문자 로그</h4>
             <p>출석 처리 시 보호자에게 발송 예정인 문자 내역입니다. (실제 발송은 API 연동 후 진행)</p>
           </div>
         </header>
-        <div class="attendance-sms-logs-table-wrap">
-          <table class="attendance-sms-logs-table">
-            <thead>
-              <tr>
-                <th scope="col">발송 예정 시간</th>
-                <th scope="col">학생명</th>
-                <th scope="col">보호자 연락처</th>
-                <th scope="col">메시지 내용</th>
-                <th scope="col">상태</th>
-              </tr>
-            </thead>
-            <tbody>${rows}</tbody>
-          </table>
-        </div>
+        <p class="attendance-empty-state">설정 확인 중…</p>
       </div>
     `;
+
+    const configStatus = await fetchAligoSmsConfigStatus();
+    const logs = listAttendanceSmsLogs(academyId);
+
+    body.innerHTML = `
+      <div class="attendance-sms-logs-panel">
+        ${buildSmsTestPanelMarkup(configStatus)}
+        <header class="attendance-sms-logs-header">
+          <div class="attendance-sms-logs-header-text">
+            <h4>문자 로그</h4>
+            <p>출석 처리 시 보호자에게 발송 예정인 문자 내역입니다. (실제 발송은 API 연동 후 진행)</p>
+          </div>
+        </header>
+        ${buildSmsLogsTableMarkup(logs)}
+      </div>
+    `;
+  }
+
+  async function handleSmsTestSubmit(event) {
+    event.preventDefault();
+    const form = event.target.closest("[data-sms-test-form]");
+    if (!form || !elements.attendanceSmsLogsBody?.contains(form)) {
+      return;
+    }
+
+    const receiverInput = form.querySelector("[data-sms-test-receiver]");
+    const submitButton = form.querySelector("[data-sms-test-submit]");
+    const resultNode = form.querySelector("[data-sms-test-result]");
+    const receiver = String(receiverInput?.value ?? "").trim();
+
+    if (resultNode) {
+      resultNode.className = "attendance-sms-test-result is-pending";
+      resultNode.textContent = "발송 중…";
+    }
+    if (submitButton) {
+      submitButton.disabled = true;
+    }
+
+    const result = await sendAligoTestSms({
+      receiver,
+      msg: buildAligoTestMessage(),
+    });
+
+    if (submitButton) {
+      submitButton.disabled = false;
+    }
+
+    if (!resultNode) {
+      return;
+    }
+
+    if (result.ok) {
+      resultNode.className = "attendance-sms-test-result is-success";
+      resultNode.textContent = `✅ 문자 발송 성공${result.message ? ` — ${result.message}` : ""}`;
+      return;
+    }
+
+    resultNode.className = "attendance-sms-test-result is-error";
+    resultNode.textContent = `❌ 문자 발송 실패 — ${result.message || "알 수 없는 오류"}`;
   }
 
   function renderKioskManagementPanel() {
@@ -1312,9 +1655,12 @@ export function createAttendanceView({
     });
 
     if (normalized === ATTENDANCE_SECTIONS.MONTHLY) {
-      void renderAttendanceMonthlyPanel();
+      syncMobileAttendanceSubmenuLabel();
+      renderMonthlySectionForViewport();
       return;
     }
+
+    syncMobileAttendanceSubmenuLabel();
 
     if (normalized === ATTENDANCE_SECTIONS.CODES) {
       void renderAttendanceCodesPanel();
@@ -1335,7 +1681,7 @@ export function createAttendanceView({
     }
 
     if (normalized === ATTENDANCE_SECTIONS.SMS_LOGS) {
-      renderSmsLogsPanel();
+      void renderSmsLogsPanel();
       return;
     }
   }
@@ -1343,12 +1689,17 @@ export function createAttendanceView({
   async function renderAttendancePanel(options = {}) {
     if (options.resetSection) {
       activeAttendanceSection = ATTENDANCE_SECTIONS.MONTHLY;
+      resetMobileAttendanceScreen();
     }
 
     if (options.section && Object.values(ATTENDANCE_SECTIONS).includes(options.section)) {
       activeAttendanceSection = options.section;
+      if (options.section === ATTENDANCE_SECTIONS.MONTHLY) {
+        resetMobileAttendanceScreen();
+      }
     }
 
+    syncMobileAttendanceSubmenuLabel();
     showAttendanceSection(activeAttendanceSection);
   }
 
@@ -1432,6 +1783,15 @@ export function createAttendanceView({
     periodId,
     monthKey,
   }) {
+    if (
+      shouldUseMobileTodayAttendance() &&
+      activeAttendanceSection === ATTENDANCE_SECTIONS.MONTHLY &&
+      mobileAttendanceScreen !== "monthly"
+    ) {
+      renderMonthlySectionForViewport();
+      return;
+    }
+
     const [yearText, monthText] = String(dateKey).split("-");
     const year = Number(yearText);
     const month = Number(monthText);
@@ -1495,6 +1855,9 @@ export function createAttendanceView({
   function handleAttendancePanelClick(event) {
     const sectionButton = event.target.closest("[data-attendance-section]");
     if (sectionButton && elements.attendanceManagementSubmenu?.contains(sectionButton)) {
+      if (sectionButton.dataset.attendanceSection === ATTENDANCE_SECTIONS.MONTHLY) {
+        resetMobileAttendanceScreen();
+      }
       showAttendanceSection(sectionButton.dataset.attendanceSection);
       return;
     }
@@ -1512,6 +1875,33 @@ export function createAttendanceView({
     const action = actionButton.dataset.attendanceAction;
     const currentUser = getCurrentUser?.() ?? null;
     const academyId = resolveAcademyScopeId(currentUser);
+
+    if (action === "mobile-view-period") {
+      mobileSelectedPeriodId = String(actionButton.dataset.periodId ?? "").trim() || null;
+      if (!mobileSelectedPeriodId) {
+        return;
+      }
+      mobileAttendanceScreen = "period";
+      void renderMobilePeriodAttendanceList();
+      return;
+    }
+
+    if (action === "mobile-open-monthly") {
+      mobileAttendanceScreen = "monthly";
+      mobileSelectedPeriodId = null;
+      const today = getTodayParts();
+      selectedYear = today.year;
+      selectedMonth = today.month;
+      showPastAttendanceDates = false;
+      void renderAttendanceMonthlyPanel({ showMobileBack: true });
+      return;
+    }
+
+    if (action === "mobile-back-today") {
+      resetMobileAttendanceScreen();
+      void renderMobileTodayAttendance();
+      return;
+    }
 
     if (action === "open-period-settings") {
       if (!academyId) {
@@ -1755,7 +2145,7 @@ export function createAttendanceView({
     }
 
     showPastAttendanceDates = Boolean(target.checked);
-    void renderAttendanceMonthlyPanel();
+    void renderAttendanceMonthlyPanel(getMonthlyPanelRenderOptions());
   }
 
   function bindAttendanceEvents() {
@@ -1769,6 +2159,11 @@ export function createAttendanceView({
     elements.attendancePanel.addEventListener("change", handleAttendancePanelChange);
     elements.attendancePanel.addEventListener("change", handleAttendancePanelInput);
     elements.attendancePanel.addEventListener("blur", handleAttendancePanelBlur, true);
+    elements.attendancePanel.addEventListener("submit", (event) => {
+      if (event.target?.closest?.("[data-sms-test-form]")) {
+        void handleSmsTestSubmit(event);
+      }
+    });
   }
 
   function hideAttendancePanel() {

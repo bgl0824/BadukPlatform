@@ -18,7 +18,16 @@ import {
   normalizeExamSetVisibility,
   normalizeExamSetRole,
   resolveExamSetRoleByType,
+  getExamHostOrganizationOptions,
+  PROMOTION_EXAM_VARIANTS,
+  formatExamVariantLabel,
+  normalizeExamHostOrganization,
 } from "../services/exam-set-constants.js";
+import {
+  KOREA_PROVINCES,
+  getCitiesForProvince,
+  suggestSponsorOrganization,
+} from "../data/korea-regions.js";
 import { examSetService } from "../services/exam-set-service.js";
 import {
   formatGradeLevelLabel,
@@ -44,6 +53,11 @@ function createEmptyDraft({ user }) {
     availableFrom: "",
     availableUntil: "",
     examDate: "",
+    hostOrganization: "",
+    sponsorOrganization: "",
+    regionProvince: "",
+    regionCity: "",
+    examVariant: "",
     sortOrder: 0,
     createdBy: user?.id ?? "",
     orderedProblemIds: [],
@@ -251,6 +265,31 @@ export function createExamSetManager({
       return;
     }
 
+    if (target.id === "admin-exam-set-host") {
+      draft.hostOrganization = normalizeExamHostOrganization(target.value);
+      return;
+    }
+
+    if (target.id === "admin-exam-set-region-province") {
+      draft.regionProvince = target.value.trim();
+      draft.regionCity = "";
+      draft.sponsorOrganization = "";
+      renderExamSetEditor();
+      return;
+    }
+
+    if (target.id === "admin-exam-set-region-city") {
+      draft.regionCity = target.value.trim();
+      draft.sponsorOrganization = suggestSponsorOrganization(draft.regionCity);
+      renderExamSetEditor();
+      return;
+    }
+
+    if (target.id === "admin-exam-set-sponsor") {
+      draft.sponsorOrganization = target.value.trim();
+      return;
+    }
+
     if (target.id === "admin-exam-picker-grade-filter") {
       draft.pickerGradeFilter = target.value;
       renderPickerProblems();
@@ -307,6 +346,11 @@ export function createExamSetManager({
 
     if (action === "generate-random-20") {
       void generateRandomPromotionPaperQuestions();
+      return;
+    }
+
+    if (action === "generate-ab-variants") {
+      void generatePromotionPaperVariants();
       return;
     }
 
@@ -433,7 +477,7 @@ export function createExamSetManager({
         description: detail.set.description,
         gradeLevel: detail.set.gradeLevel,
         type: detail.set.type,
-        setRole: resolveExamSetRoleByType(detail.set.type),
+        setRole: normalizeExamSetRole(detail.set.setRole ?? resolveExamSetRoleByType(detail.set.type)),
         visibility: detail.set.visibility,
         status: detail.set.status,
         academyId: detail.set.academyId ?? "",
@@ -441,6 +485,11 @@ export function createExamSetManager({
         availableFrom: detail.set.availableFrom ?? "",
         availableUntil: detail.set.availableUntil ?? "",
         examDate: detail.set.examDate ?? "",
+        hostOrganization: detail.set.hostOrganization ?? "",
+        sponsorOrganization: detail.set.sponsorOrganization ?? "",
+        regionProvince: detail.set.regionProvince ?? "",
+        regionCity: detail.set.regionCity ?? "",
+        examVariant: detail.set.examVariant ?? "",
         sortOrder: detail.set.sortOrder ?? 0,
         createdBy: detail.set.createdBy,
         orderedProblemIds: detail.questions.map((q) => q.problemId),
@@ -558,6 +607,11 @@ export function createExamSetManager({
       availableFrom: draft.availableFrom || null,
       availableUntil: draft.availableUntil || null,
       examDate: draft.examDate || null,
+      hostOrganization: draft.hostOrganization || null,
+      sponsorOrganization: draft.sponsorOrganization || null,
+      regionProvince: draft.regionProvince || null,
+      regionCity: draft.regionCity || null,
+      examVariant: draft.examVariant || null,
       sortOrder: draft.sortOrder,
       createdBy: draft.createdBy,
     };
@@ -677,6 +731,11 @@ export function createExamSetManager({
       availableFrom: draft.availableFrom || null,
       availableUntil: draft.availableUntil || null,
       examDate: draft.examDate || null,
+      hostOrganization: draft.hostOrganization || null,
+      sponsorOrganization: draft.sponsorOrganization || null,
+      regionProvince: draft.regionProvince || null,
+      regionCity: draft.regionCity || null,
+      examVariant: draft.examVariant || null,
       sortOrder: draft.sortOrder,
       createdBy: draft.createdBy,
     };
@@ -972,6 +1031,81 @@ export function createExamSetManager({
     }
   }
 
+  async function generatePromotionPaperVariants() {
+    const draft = ensureExamSetState().draft;
+    if (!draft) {
+      return;
+    }
+    if (draft.setRole !== EXAM_SET_ROLE.promotionPaper) {
+      setFeedback("승급심사 시험지에서만 사용할 수 있습니다.", "wrong");
+      return;
+    }
+
+    const validation = validateExamSetBeforeSave(draft);
+    if (!validation.ok) {
+      setFeedback(validation.message, "wrong");
+      window.alert?.(validation.message);
+      return;
+    }
+
+    const state = ensureExamSetState();
+    const gradeLabel = draft.gradeLevel
+      ? formatGradeLevelLabel(draft.gradeLevel)
+      : "급수 미지정";
+    const examName = validation.title.replace(/\s*[AB]형\s*$/u, "").trim() || gradeLabel;
+
+    const sharedFields = {
+      description: draft.description ?? "",
+      gradeLevel: draft.gradeLevel,
+      type: draft.type,
+      setRole: draft.setRole,
+      visibility: draft.visibility,
+      status: draft.status,
+      academyId: draft.academyId,
+      sourceExamSetId: draft.sourceExamSetId,
+      availableFrom: draft.availableFrom || null,
+      availableUntil: draft.availableUntil || null,
+      examDate: draft.examDate || null,
+      hostOrganization: draft.hostOrganization || null,
+      sponsorOrganization: draft.sponsorOrganization || null,
+      regionProvince: draft.regionProvince || null,
+      regionCity: draft.regionCity || null,
+      sortOrder: draft.sortOrder,
+      createdBy: draft.createdBy,
+    };
+
+    const problemIds = [...draft.orderedProblemIds];
+    const createdIds = [];
+
+    try {
+      for (const variant of PROMOTION_EXAM_VARIANTS) {
+        const variantLabel = formatExamVariantLabel(variant);
+        const saved = await examSetService.saveExamSet({
+          user: getCurrentUser(),
+          examSet: {
+            id: createExamSetId(),
+            title: examName,
+            ...sharedFields,
+            examVariant: variant,
+          },
+          orderedProblemIds: problemIds,
+        });
+        createdIds.push(saved.set.id);
+        mergeSetIntoLocalList(state, saved.set, saved.questionCount ?? problemIds.length);
+      }
+
+      setFeedback(
+        `「${gradeLabel}」 A형·B형 시험지 2개를 생성했습니다. (현재는 동일 20문항 · 향후 자동추출 예정)`,
+        "correct",
+      );
+      await selectExamSet(createdIds[0]);
+    } catch (error) {
+      console.error("[ExamSetManager] generate A/B variants failed", error);
+      setFeedback(error?.message ?? "A/B형 시험지 생성에 실패했습니다.", "wrong");
+      window.alert?.(error?.message ?? "A/B형 시험지 생성에 실패했습니다.");
+    }
+  }
+
   function renderExamSetManager() {
     bindExamSetEvents();
     bindExamSetCardEvents();
@@ -1008,6 +1142,10 @@ export function createExamSetManager({
           status === EXAM_SET_STATUS.published
             ? "admin-exam-set-badge is-published"
             : "admin-exam-set-badge is-draft";
+        const variantLabel = formatExamVariantLabel(set.examVariant);
+        const variantBadge = variantLabel
+          ? `<span class="admin-exam-set-badge is-variant">${escapeHtml(variantLabel)}</span>`
+          : "";
         return `
           <button
             type="button"
@@ -1019,9 +1157,10 @@ export function createExamSetManager({
             <span class="admin-exam-set-badges">
               <span class="${statusClass}">${escapeHtml(formatExamSetStatusLabel(set.status))}</span>
               <span class="admin-exam-set-badge is-role">${escapeHtml(formatExamSetRoleLabel(set.setRole))}</span>
+              ${variantBadge}
               <span class="admin-exam-set-badge is-visibility">${escapeHtml(formatExamSetVisibilityLabel(set.visibility))}</span>
             </span>
-            <span class="admin-exam-set-list-meta">${escapeHtml(gradeLabel)} · ${escapeHtml(formatExamSetTypeLabel(set.type))} · ${set.questionCount ?? 0}문제</span>
+            <span class="admin-exam-set-list-meta">${escapeHtml(gradeLabel)}${variantLabel ? ` · ${escapeHtml(variantLabel)}` : ""} · ${escapeHtml(formatExamSetTypeLabel(set.type))} · ${set.questionCount ?? 0}문제</span>
           </button>`;
       })
       .join("");
@@ -1041,6 +1180,13 @@ export function createExamSetManager({
 
     const categories = ["전체", ...getOrderedCategoryNames()];
     const isPromotionPaper = draft.setRole === EXAM_SET_ROLE.promotionPaper;
+    const variantLabel = formatExamVariantLabel(draft.examVariant);
+    const promotionVariantHint = isPromotionPaper
+      ? variantLabel
+        ? `<p class="admin-exam-set-variant-readonly">시험형: <strong>${escapeHtml(variantLabel)}</strong> (급수별 A/B형은 「A/B형 시험지 생성」으로 만듭니다)</p>`
+        : `<p class="admin-exam-set-variant-readonly">승급심사는 급수별 <strong>A형 · B형</strong> 두 세트로 생성합니다. 20문항 구성 후 「A/B형 시험지 생성」을 사용하세요.</p>`
+      : "";
+    const cityOptions = getCitiesForProvince(draft.regionProvince);
     const sourceCandidates = ensureExamSetState().sets.filter((set) => {
       return set.id !== draft.id && set.setRole === EXAM_SET_ROLE.questionBank;
     });
@@ -1102,6 +1248,58 @@ export function createExamSetManager({
           <label>공개 종료
             <input id="admin-exam-set-available-until" type="datetime-local" value="${escapeHtml(toDatetimeLocalValue(draft.availableUntil))}" />
           </label>
+        </div>
+        <fieldset class="admin-exam-set-fieldset">
+          <legend>시험지 출력 정보</legend>
+          ${promotionVariantHint}
+          <div class="admin-exam-set-form-row">
+            <label>주최
+              <select id="admin-exam-set-host">
+                <option value="">선택</option>
+                ${getExamHostOrganizationOptions()
+                  .map(
+                    (o) =>
+                      `<option value="${escapeHtml(o.value)}"${draft.hostOrganization === o.value ? " selected" : ""}>${escapeHtml(o.label)}</option>`,
+                  )
+                  .join("")}
+              </select>
+            </label>
+          </div>
+          <div class="admin-exam-set-form-row">
+            <label>시·도
+              <select id="admin-exam-set-region-province">
+                <option value="">선택</option>
+                ${KOREA_PROVINCES.map(
+                  (name) =>
+                    `<option value="${escapeHtml(name)}"${draft.regionProvince === name ? " selected" : ""}>${escapeHtml(name)}</option>`,
+                ).join("")}
+              </select>
+            </label>
+            <label>시·군·구
+              <select id="admin-exam-set-region-city"${cityOptions.length ? "" : " disabled"}>
+                <option value="">선택</option>
+                ${cityOptions
+                  .map(
+                    (name) =>
+                      `<option value="${escapeHtml(name)}"${draft.regionCity === name ? " selected" : ""}>${escapeHtml(name)}</option>`,
+                  )
+                  .join("")}
+              </select>
+            </label>
+          </div>
+          <label>주관기관
+            <input id="admin-exam-set-sponsor" type="text" value="${escapeHtml(draft.sponsorOrganization ?? "")}" placeholder="예: 화성시바둑협회" />
+          </label>
+        </fieldset>`
+            : ""
+        }
+        ${
+          !isPromotionPaper && (draft.type === "mock_test" || draft.type === "past_exam")
+            ? `
+        <div class="admin-exam-set-form-row">
+          <label>시험일 (시험지 출력)
+            <input id="admin-exam-set-date" type="date" value="${escapeHtml(draft.examDate ?? "")}" />
+          </label>
         </div>`
             : ""
         }
@@ -1127,6 +1325,7 @@ export function createExamSetManager({
           <button type="button" class="primary-button" data-exam-set-action="save">${escapeHtml(getExamSetSaveButtonLabel(draft.status))}</button>
           <button type="button" class="secondary-button" data-exam-set-action="delete"${draft.id ? "" : " disabled"}>삭제</button>
           <button type="button" class="secondary-button" data-exam-set-action="generate-random-20"${isPromotionPaper ? "" : " disabled"}>기출 기반 랜덤 20</button>
+          <button type="button" class="secondary-button" data-exam-set-action="generate-ab-variants"${isPromotionPaper ? "" : " disabled"}>A/B형 시험지 생성</button>
         </div>
       </div>
       <section class="admin-exam-set-questions" aria-label="세트 문제">

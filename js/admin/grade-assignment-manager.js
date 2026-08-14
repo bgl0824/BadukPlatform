@@ -17,10 +17,10 @@ export function createGradeAssignmentManager({
   escapeHtml,
   getFilteredProblems,
   renderProblemList,
-  reloadProblemsFromStore,
   getProblemStoreErrorMessage,
 }) {
   let eventsBound = false;
+  let bulkApplying = false;
 
   function isGradeAssignmentMode() {
     return adminState.isEnabled && isCurrentUserAdmin() && adminState.listPanel === "grades";
@@ -43,7 +43,6 @@ export function createGradeAssignmentManager({
     return getGradeAssignmentState().selectedProblemIds.has(problemId);
   }
 
-  /** display_order 기준 카테고리 전체 (범위 선택용) */
   function getCategoryEntriesInLearningOrder() {
     const category = String(appState.selectedCategory ?? "").trim();
     if (!category || category === "전체") {
@@ -55,13 +54,93 @@ export function createGradeAssignmentManager({
     });
   }
 
-  /** 현재 카드에 보이는 문제 (필터·정렬 반영) */
   function getVisibleCardEntries() {
     if (!isGradeAssignmentMode()) {
       return [];
     }
 
     return getFilteredProblems();
+  }
+
+  function applyGradeToMemory(problemId, gradeLevel) {
+    const problem = problems.find((entry) => entry.id === problemId);
+    if (!problem) {
+      return;
+    }
+
+    if (gradeLevel) {
+      problem.gradeLevel = gradeLevel;
+    } else {
+      delete problem.gradeLevel;
+    }
+  }
+
+  function updateProblemCardGradeUi(card, problem) {
+    const select = card.querySelector("[data-inline-grade-problem-id]");
+    if (select && !select.disabled) {
+      select.value = normalizeGradeLevelCode(problem.gradeLevel) ?? "";
+    }
+  }
+
+  function patchGradeCards(problemIds) {
+    if (!isGradeAssignmentMode() || !elements.problemCards) {
+      return;
+    }
+
+    problemIds.forEach((problemId) => {
+      const problem = problems.find((entry) => entry.id === problemId);
+      const card = elements.problemCards.querySelector(
+        `[data-problem-id="${CSS.escape(problemId)}"]`,
+      );
+      if (!problem || !card) {
+        return;
+      }
+
+      if (!matchesGradeAssignmentListFilter(problem)) {
+        card.remove();
+        getGradeAssignmentState().selectedProblemIds.delete(problemId);
+        return;
+      }
+
+      updateProblemCardGradeUi(card, problem);
+      syncGradeCardSelectionState(card, isProblemSelectedForGrade(problemId));
+    });
+
+    updateGradeSummaryText();
+    updateGradeListSummary();
+  }
+
+  function updateGradeListSummary() {
+    if (!isGradeAssignmentMode() || !elements.listSummary) {
+      return;
+    }
+
+    const category = String(appState.selectedCategory ?? "").trim();
+    const levelGroup = getActiveLevelGroup();
+    const categoryLabel =
+      category && category !== "전체" ? `${levelGroup} · ${category}` : `${levelGroup} 전체`;
+    const visibleCount = getVisibleCardEntries().length;
+    const selectedCount = getGradeAssignmentState().selectedProblemIds.size;
+
+    elements.listSummary.textContent =
+      !category || category === "전체"
+        ? "급수 배정: 상단에서 카테고리를 선택하세요."
+        : `${categoryLabel} · 급수 배정 선택 ${selectedCount}개 / 표시 ${visibleCount}개`;
+  }
+
+  function setBulkApplying(isApplying) {
+    bulkApplying = isApplying;
+    const applyButton = elements.adminGradeApplyButton;
+    if (applyButton) {
+      applyButton.disabled = isApplying;
+      applyButton.textContent = isApplying ? "적용 중..." : "선택 문제 급수 적용";
+    }
+    if (elements.adminGradeTargetSelect) {
+      elements.adminGradeTargetSelect.disabled = isApplying;
+    }
+    if (elements.adminGradeClearButton) {
+      elements.adminGradeClearButton.disabled = isApplying;
+    }
   }
 
   function bindGradeAssignmentEvents() {
@@ -138,6 +217,7 @@ export function createGradeAssignmentManager({
     toggleProblemSelection(checkbox.dataset.gradeAssignSelect, checkbox.checked);
     syncGradeCardSelectionState(checkbox.closest(".problem-card"), checkbox.checked);
     updateGradeSummaryText();
+    updateGradeListSummary();
   }
 
   function toggleProblemSelection(problemId, isSelected) {
@@ -159,6 +239,19 @@ export function createGradeAssignmentManager({
     }
 
     card.classList.toggle("is-grade-assign-selected", isSelected);
+    const checkbox = card.querySelector("[data-grade-assign-select]");
+    if (checkbox) {
+      checkbox.checked = Boolean(isSelected);
+    }
+  }
+
+  function syncAllVisibleGradeSelections() {
+    getVisibleCardEntries().forEach(({ problem }) => {
+      const card = elements.problemCards?.querySelector(
+        `[data-problem-id="${CSS.escape(problem.id)}"]`,
+      );
+      syncGradeCardSelectionState(card, isProblemSelectedForGrade(problem.id));
+    });
   }
 
   function selectRange() {
@@ -187,7 +280,9 @@ export function createGradeAssignmentManager({
       }
     });
 
-    renderProblemList();
+    syncAllVisibleGradeSelections();
+    updateGradeSummaryText();
+    updateGradeListSummary();
     setFeedback(`${from}~${to}번(학습 순서) ${added}개 문제를 선택했습니다.`, "correct");
   }
 
@@ -207,29 +302,28 @@ export function createGradeAssignmentManager({
       state.selectedProblemIds.add(problem.id);
     });
 
-    renderProblemList();
+    syncAllVisibleGradeSelections();
+    updateGradeSummaryText();
+    updateGradeListSummary();
     setFeedback(`표시 중인 ${visible.length}개 문제를 선택했습니다.`, "correct");
   }
 
   function clearSelection() {
     getGradeAssignmentState().selectedProblemIds.clear();
-    renderProblemList();
+    syncAllVisibleGradeSelections();
+    updateGradeSummaryText();
+    updateGradeListSummary();
     setFeedback("급수 배정 선택을 해제했습니다.", "correct");
   }
 
   async function applyGradeToSelection() {
-    console.log("[GradeAssignment] apply clicked");
-
-    if (!requireAdminMode()) {
+    if (!requireAdminMode() || bulkApplying) {
       return;
     }
 
     const rawGradeValue = elements.adminGradeTargetSelect?.value;
     const gradeLevel = normalizeGradeLevelCode(rawGradeValue);
     const problemIds = [...getGradeAssignmentState().selectedProblemIds];
-
-    console.log("[GradeAssignment] selectedProblemIds:", problemIds);
-    console.log("[GradeAssignment] selectedGradeLevel:", gradeLevel, "raw:", rawGradeValue);
 
     if (!gradeLevel) {
       setFeedback("적용할 급수/단수를 선택해 주세요.", "wrong");
@@ -240,6 +334,15 @@ export function createGradeAssignmentManager({
       setFeedback("급수를 적용할 문제를 선택해 주세요.", "wrong");
       return;
     }
+
+    const previousGrades = new Map(
+      problemIds.map((id) => {
+        const problem = problems.find((entry) => entry.id === id);
+        return [id, normalizeGradeLevelCode(problem?.gradeLevel)];
+      }),
+    );
+
+    setBulkApplying(true);
 
     try {
       const result = await problemService.bulkSetGradeLevels({
@@ -256,50 +359,47 @@ export function createGradeAssignmentManager({
         });
       }
 
-      problemIds.forEach((problemId) => {
-        const problem = problems.find((entry) => entry.id === problemId);
-        if (problem) {
-          problem.gradeLevel = gradeLevel;
-        } else {
-          console.warn("[GradeAssignment] problem not in memory", { problemId });
-        }
-      });
-
-      if (reloadProblemsFromStore) {
-        await reloadProblemsFromStore();
-        console.log("[GradeAssignment] refreshed problems");
-      }
+      problemIds.forEach((problemId) => applyGradeToMemory(problemId, gradeLevel));
+      patchGradeCards(problemIds);
 
       setFeedback(
         `${result.updatedCount}개 문제에 ${formatGradeLevelLabel(gradeLevel)}을(를) 적용했습니다.`,
         "correct",
       );
-      renderProblemList();
-      renderGradeAssignmentPanel();
     } catch (error) {
       console.error("[GradeAssignment] apply failed", error);
+      problemIds.forEach((id) => applyGradeToMemory(id, previousGrades.get(id)));
+      patchGradeCards(problemIds);
+
       const message =
         getProblemStoreErrorMessage?.(error, "급수 일괄 적용") ??
         "급수 일괄 적용에 실패했습니다.";
       setFeedback(message, "wrong");
-      window.alert?.(message);
+    } finally {
+      setBulkApplying(false);
     }
   }
 
   async function clearGradeFromSelection() {
-    console.log("[GradeAssignment] clear grade clicked");
-
-    if (!requireAdminMode()) {
+    if (!requireAdminMode() || bulkApplying) {
       return;
     }
 
     const problemIds = [...getGradeAssignmentState().selectedProblemIds];
-    console.log("[GradeAssignment] clear grade problemIds:", problemIds);
 
     if (problemIds.length === 0) {
       setFeedback("급수를 해제할 문제를 선택해 주세요.", "wrong");
       return;
     }
+
+    const previousGrades = new Map(
+      problemIds.map((id) => {
+        const problem = problems.find((entry) => entry.id === id);
+        return [id, normalizeGradeLevelCode(problem?.gradeLevel)];
+      }),
+    );
+
+    setBulkApplying(true);
 
     try {
       const result = await problemService.bulkSetGradeLevels({
@@ -309,31 +409,35 @@ export function createGradeAssignmentManager({
         ProblemStore,
       });
 
-      problemIds.forEach((problemId) => {
-        const problem = problems.find((entry) => entry.id === problemId);
-        if (problem) {
-          delete problem.gradeLevel;
-        }
-      });
-
-      if (reloadProblemsFromStore) {
-        await reloadProblemsFromStore();
-        console.log("[GradeAssignment] refreshed problems after clear");
-      }
+      problemIds.forEach((problemId) => applyGradeToMemory(problemId, null));
+      patchGradeCards(problemIds);
 
       setFeedback(`${result.updatedCount}개 문제의 급수 지정을 해제했습니다.`, "correct");
-      renderProblemList();
-      renderGradeAssignmentPanel();
     } catch (error) {
       console.error("[GradeAssignment] clear grade failed", error);
+      problemIds.forEach((id) => applyGradeToMemory(id, previousGrades.get(id)));
+      patchGradeCards(problemIds);
+
       const message =
         getProblemStoreErrorMessage?.(error, "급수 해제") ?? "급수 해제에 실패했습니다.";
       setFeedback(message, "wrong");
-      window.alert?.(message);
+    } finally {
+      setBulkApplying(false);
+    }
+  }
+
+  function updateGradeSelectionCount() {
+    const count = getGradeAssignmentState().selectedProblemIds.size;
+    const label = `${count}개 선택됨`;
+
+    if (elements.adminGradeSelectionCount) {
+      elements.adminGradeSelectionCount.textContent = label;
     }
   }
 
   function updateGradeSummaryText() {
+    updateGradeSelectionCount();
+
     if (!elements.adminGradeSummary) {
       return;
     }
@@ -418,5 +522,7 @@ export function createGradeAssignmentManager({
     isProblemSelectedForGrade,
     matchesGradeAssignmentListFilter,
     updateGradeSummaryText,
+    applyGradeToMemory,
+    patchGradeCards,
   };
 }

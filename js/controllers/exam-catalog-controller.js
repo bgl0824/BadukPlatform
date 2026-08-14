@@ -330,9 +330,13 @@ function resolveExamCatalogPrimaryAction(set, user, { mockCompleted = false, has
 
   if (set?.type === EXAM_SET_TYPE.mockTest) {
     if (isExamCatalogStaffRole(role)) {
-      return { kind: "preview", label: "문제 열람" };
+      return { kind: "preview", label: "시험지 인쇄" };
     }
     return { kind: "start", label: "모의시험 시작" };
+  }
+
+  if (set?.type === EXAM_SET_TYPE.pastExam && isExamCatalogStaffRole(role)) {
+    return { kind: "preview", label: "시험지 인쇄" };
   }
 
   if (examSetLearningProgressService.isResumableQuestionBankSet(set) && hasLearningProgress) {

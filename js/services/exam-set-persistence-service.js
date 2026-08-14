@@ -7,6 +7,10 @@ import {
 import { normalizeGradeLevelCode } from "./grade-level-service.js";
 import { normalizeLevelGroup } from "./level-group-service.js";
 import { getSupabaseClient, isSupabaseConfigured } from "./supabase-client.js";
+import {
+  isSupabaseAuthError,
+  runSupabaseQueryWithAuthRetry,
+} from "./supabase-auth-retry.js";
 
 export const SUPABASE_EXAM_SETS_TABLE = "exam_sets";
 export const SUPABASE_EXAM_SET_QUESTIONS_TABLE = "exam_set_questions";
@@ -34,6 +38,11 @@ function rowToExamSet(row) {
     availableFrom: row.available_from ?? row.availableFrom ?? null,
     availableUntil: row.available_until ?? row.availableUntil ?? null,
     examDate: row.exam_date ?? null,
+    hostOrganization: row.host_organization ?? "",
+    sponsorOrganization: row.sponsor_organization ?? "",
+    regionProvince: row.region_province ?? "",
+    regionCity: row.region_city ?? "",
+    examVariant: row.exam_variant ?? "",
     sortOrder: Number(row.sort_order ?? 0),
     createdBy: row.created_by ?? "",
     createdAt: row.created_at,
@@ -70,6 +79,11 @@ function examSetToRow(examSet) {
     available_from: examSet.availableFrom ?? null,
     available_until: examSet.availableUntil ?? null,
     exam_date: examSet.examDate ?? null,
+    host_organization: examSet.hostOrganization || null,
+    sponsor_organization: examSet.sponsorOrganization || null,
+    region_province: examSet.regionProvince || null,
+    region_city: examSet.regionCity || null,
+    exam_variant: examSet.examVariant || null,
     sort_order: Number.isFinite(Number(examSet.sortOrder)) ? Number(examSet.sortOrder) : 0,
     created_by: examSet.createdBy ?? null,
     updated_at: new Date().toISOString(),
@@ -100,11 +114,16 @@ export async function fetchExamSetsFromSupabase({ includeDrafts = false } = {}) 
     query = query.eq("status", "published");
   }
 
-  const { data, error } = await query;
+  const { data, error } = await runSupabaseQueryWithAuthRetry(() => query);
 
   if (error) {
     console.error("[ExamSetStore] fetchExamSets error", error);
-    return { ok: false, sets: [], message: error.message };
+    return {
+      ok: false,
+      sets: [],
+      message: error.message,
+      authError: isSupabaseAuthError(error),
+    };
   }
 
   const sets = (data ?? []).map(rowToExamSet).filter(Boolean);

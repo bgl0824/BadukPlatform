@@ -74,14 +74,14 @@ import {
 import { formatCategoryProblemLabel } from "./services/category-problem-number.js";
 import { createProblemReorderController } from "./admin/problem-reorder-manager.js";
 import { createGradeAssignmentManager } from "./admin/grade-assignment-manager.js";
+import { createInlineGradeEditor } from "./admin/inline-grade-editor.js";
 import { createAiResponseQaBatchController } from "./admin/ai-response-qa-batch-controller.js";
 import { createExamSetManager } from "./admin/exam-set-manager.js";
 import { createExamCatalogController } from "./controllers/exam-catalog-controller.js";
 import { examSetService } from "./services/exam-set-service.js";
-import { EXAM_SET_ROLE, EXAM_SET_TYPE } from "./services/exam-set-constants.js";
+import { EXAM_SET_ROLE, EXAM_SET_TYPE, formatExamSetTypeLabel } from "./services/exam-set-constants.js";
 import { mockTestAttemptService } from "./services/mock-test-attempt-service.js";
 import {
-  getGradeLevelFilterOptions,
   getGradeLevelSelectOptions,
   matchesGradeLevelFilter,
   formatGradeLevelLabel,
@@ -132,6 +132,8 @@ import {
   getPersistentReviewOffersForLevel,
 } from "./services/review-service.js";
 import { problemService } from "./services/problem-service.js";
+import { isSupabaseAuthError } from "./services/auth-service.js";
+import { isSupabaseConfigured } from "./services/supabase-client.js";
 import {
   getActivePeriods,
   getClosestActivePeriod,
@@ -176,7 +178,7 @@ import {
   renderTeacherHomeDashboard,
 } from "./views/home-view.js";
 import { renderMockTestResultsTableHtml } from "./views/mock-test-results-view.js";
-import { buildPromotionPaperPagesHtml } from "./views/promotion-paper-view.js";
+import { buildExamPaperPagesHtml } from "./views/exam-paper-view.js";
 import { computeMockTestTiming } from "./utils/mock-test-time.js";
 import { mockTestLeaveGuard } from "./mock-test/mock-test-leave-guard.js";
 import {
@@ -372,7 +374,20 @@ function handleInvalidBoardPlay(point, evaluation) {
 }
 let solveView;
 let problemBankReady = false;
+let problemBankLoading = false;
+let problemBankLoadError = "";
 let ownerMobileNav = null;
+let problemPreviewObserver = null;
+const appBootStartedAt = performance.now();
+
+function logAppBoot(message, details) {
+  const elapsedMs = Math.round(performance.now() - appBootStartedAt);
+  if (details === undefined) {
+    console.info(`[APP] ${message} +${elapsedMs}ms`);
+    return;
+  }
+  console.info(`[APP] ${message} +${elapsedMs}ms`, details);
+}
 
 const setMode = (mode) => {
   solveView.setMode(mode);
@@ -560,6 +575,8 @@ const {
   isProblemSelectedForGrade,
   matchesGradeAssignmentListFilter,
   updateGradeSummaryText,
+  applyGradeToMemory,
+  patchGradeCards,
 } = createGradeAssignmentManager({
   elements,
   adminState,
@@ -575,11 +592,20 @@ const {
   escapeHtml,
   getFilteredProblems: () => getFilteredProblems(),
   renderProblemList: () => renderProblemList(),
-  reloadProblemsFromStore: async () => {
-    const loadedProblems = await ProblemStore.loadProblems({ seedDefaults: false });
-    replaceProblemList(loadedProblems);
-  },
   getProblemStoreErrorMessage,
+});
+
+const inlineGradeEditor = createInlineGradeEditor({
+  problems,
+  problemService,
+  ProblemStore,
+  getCurrentUser,
+  requireAdminMode: requireAdminModeForGrades,
+  setFeedback,
+  getProblemStoreErrorMessage,
+  isGradeAssignmentMode,
+  applyGradeToMemory,
+  patchGradeCards,
 });
 
 const {
@@ -941,15 +967,19 @@ window.BadukAppHooks = {
 startApplication();
 
 async function startApplication() {
+  logAppBoot("startApplication wait authReady");
   try {
     await window.BadukAuth?.authReady;
+    logAppBoot("authReady resolved");
   } catch (error) {
     console.error("Auth initialization failed before app bootstrap.", error);
+    logAppBoot("authReady rejected");
   }
 
   applyInitialListScreen();
   runApplicationBootstrap();
   await initializeApp();
+  logAppBoot("startApplication complete");
 }
 
 function runApplicationBootstrap() {
@@ -982,8 +1012,10 @@ function runApplicationBootstrap() {
     boot.run("bindExamSetEvents", () => bindExamSetEvents());
     boot.run("bindExamSetCardEvents", () => bindExamSetCardEvents());
     boot.run("bindExamCatalogEvents", () => examCatalog.bindExamCatalogEvents());
-    boot.run("bindAdminProblemListControls", () => bindAdminProblemListControls());
     boot.run("populateAdminGradeSelects", () => populateAdminGradeSelects());
+    boot.run("bindInlineGradeEvents", () =>
+      inlineGradeEditor.bindInlineGradeEvents(elements.problemCards),
+    );
     boot.run("bindCategoryManagerEvents", () => bindCategoryManagerEvents());
     boot.runOptional("initPrintBuilder", () => {
       printBuilder.bind();
@@ -1016,51 +1048,64 @@ function runApplicationBootstrap() {
 
 async function initializeApp() {
   const boot = createBootLogger("AppInit");
+  const initStartedAt = performance.now();
+  logAppBoot("initializeApp start");
+
+  problemBankLoading = true;
+  problemBankLoadError = "";
+  showProblemBankLoadingUi();
 
   setStatus("문제 데이터를 불러옵니다.");
   setFeedback("Supabase에서 문제 목록을 불러오는 중입니다.");
 
   try {
-    await boot.runAsync("loadProblems", async () => {
-      try {
-        debugFetch(DEBUG_CHANNELS.problem, "load start", { source: DEBUG_SOURCES.supabase });
-        const migrationResult = await ProblemStore.migrateLegacyProblems();
-        if (migrationResult.migratedCount > 0) {
-          debugSync(DEBUG_CHANNELS.problem, "legacy problems migrated", {
-            source: DEBUG_SOURCES.localCache,
-            count: migrationResult.migratedCount,
-          });
-        }
-        const loadedProblems = await ProblemStore.loadProblems();
-        replaceProblemList(loadedProblems);
-        debugFetch(DEBUG_CHANNELS.problem, `loaded count=${loadedProblems.length}`, {
-          source: DEBUG_SOURCES.supabase,
+    const loadProblemsStartedAt = performance.now();
+    logAppBoot("loadProblems start");
+    logAppBoot("loadCategories start");
+
+    const problemsTask = boot.runAsync("loadProblems", async () => {
+      debugFetch(DEBUG_CHANNELS.problem, "load start", { source: DEBUG_SOURCES.supabase });
+      const migrationResult = await ProblemStore.migrateLegacyProblems();
+      if (migrationResult.migratedCount > 0) {
+        debugSync(DEBUG_CHANNELS.problem, "legacy problems migrated", {
+          source: DEBUG_SOURCES.localCache,
+          count: migrationResult.migratedCount,
         });
-        ProblemStore.subscribe(handleRealtimeProblemUpdate);
-        if (migrationResult.migratedCount > 0) {
-          setFeedback(
-            `기존 로컬 문제 ${migrationResult.migratedCount}개를 Supabase로 이전했습니다.`,
-            "correct",
-          );
-        }
-      } catch (error) {
-        debugError(DEBUG_CHANNELS.problem, "load failed — using defaults", {
-          source: DEBUG_SOURCES.fallback,
-          message: error?.message,
-        });
-        console.error("Failed to load Supabase problems.", error);
-        const defaults = ProblemStore.getDefaultProblems();
-        replaceProblemList(defaults);
-        debugFetch(DEBUG_CHANNELS.problem, `loaded count=${defaults.length}`, {
-          source: DEBUG_SOURCES.fallback,
-        });
-        setFeedback("Supabase 문제 데이터를 불러오지 못해 기본 문제를 표시합니다.", "wrong");
+      }
+      const loadedProblems = await ProblemStore.loadProblems({
+        seedDefaults: !isSupabaseConfigured(),
+      });
+      replaceProblemList(loadedProblems);
+      debugFetch(DEBUG_CHANNELS.problem, `loaded count=${loadedProblems.length}`, {
+        source: DEBUG_SOURCES.supabase,
+      });
+      if (migrationResult.migratedCount > 0) {
+        setFeedback(
+          `기존 로컬 문제 ${migrationResult.migratedCount}개를 Supabase로 이전했습니다.`,
+          "correct",
+        );
       }
     });
 
-    await boot.runAsync("hydrateCategoryRegistry", () => hydrateCategoryRegistry());
-    await boot.runAsync("hydrateStudentProgress", () => refreshStudentProgressFromRemote({ force: true }));
+    const categoriesTask = boot.runAsync("hydrateCategoryRegistry", () => hydrateCategoryRegistry());
+
+    await Promise.all([problemsTask, categoriesTask]);
+
+    logAppBoot("loadProblems end", {
+      count: problems.length,
+      ms: Math.round(performance.now() - loadProblemsStartedAt),
+    });
+    logAppBoot("loadCategories end", {
+      ms: Math.round(performance.now() - loadProblemsStartedAt),
+    });
+
+    // Problem bank can render without waiting for student progress / realtime.
     problemBankReady = true;
+    problemBankLoading = false;
+    logAppBoot("problemBankLoading=false", {
+      initMs: Math.round(performance.now() - initStartedAt),
+    });
+
     boot.run("syncCategoriesFromProblems", () => syncCategoriesFromProblems());
     boot.run("renderCategoryManager", () => renderCategoryManager());
     boot.run("renderCreatorCategoryOptions", () => renderCreatorCategoryOptions());
@@ -1071,24 +1116,68 @@ async function initializeApp() {
     boot.run("updateAdminVisibility", () => updateAdminVisibility());
     boot.run("updatePrintUiVisibility", () => updatePrintUiVisibility());
 
+    const renderStartedAt = performance.now();
+    logAppBoot("showInitialScreen / renderProblemList start");
     boot.run("showInitialScreen", () => {
       showInitialScreenForUser();
     });
+    logAppBoot("showInitialScreen / renderProblemList end", {
+      ms: Math.round(performance.now() - renderStartedAt),
+    });
 
     boot.run("syncBoardPreviewContext", () => syncBoardPreviewContext());
+
+    // Non-blocking follow-up work (must not delay problem bank UI).
+    try {
+      ProblemStore.subscribe(handleRealtimeProblemUpdate);
+      logAppBoot("realtime subscribe scheduled");
+    } catch (subscribeError) {
+      console.warn("[AppInit] Realtime subscribe failed.", subscribeError);
+    }
+
+    void boot
+      .runAsync("hydrateStudentProgress", () => refreshStudentProgressFromRemote({ force: true }))
+      .then(() => logAppBoot("hydrateStudentProgress end"))
+      .catch((progressError) => {
+        console.warn("[AppInit] Student progress hydrate failed.", progressError);
+      });
+
     boot.summary();
+    logAppBoot("initializeApp success", {
+      ms: Math.round(performance.now() - initStartedAt),
+    });
   } catch (error) {
     console.error("[AppInit] App initialization halted.", error);
-    setFeedback("앱 데이터 초기화 중 오류가 발생했습니다. 새로고침 후 다시 시도해 주세요.", "wrong");
+    logAppBoot("initializeApp failed", { message: error?.message });
 
-    try {
-      replaceProblemList(ProblemStore.getDefaultProblems());
-      problemBankReady = true;
-      syncCategoriesFromProblems();
-      showInitialScreenForUser();
-    } catch (recoveryError) {
-      console.error("[AppInit] Recovery render failed.", recoveryError);
+    if (isSupabaseAuthError(error)) {
+      problemBankLoadError = "로그인 세션이 만료되었습니다. 다시 로그인해 주세요.";
+    } else if (isSupabaseConfigured()) {
+      problemBankLoadError =
+        error?.message || "문제은행 데이터를 불러오지 못했습니다. 잠시 후 다시 시도해 주세요.";
+    } else {
+      try {
+        replaceProblemList(ProblemStore.getDefaultProblems());
+        problemBankReady = true;
+        syncCategoriesFromProblems();
+      } catch (recoveryError) {
+        console.error("[AppInit] Local fallback failed.", recoveryError);
+      }
     }
+
+    problemBankLoading = false;
+
+    if (problemBankLoadError) {
+      setFeedback(problemBankLoadError, "wrong");
+    } else {
+      setFeedback("앱 데이터 초기화 중 오류가 발생했습니다. 새로고침 후 다시 시도해 주세요.", "wrong");
+    }
+
+    boot.run("showInitialScreen", () => {
+      showInitialScreenForUser();
+    });
+  } finally {
+    problemBankLoading = false;
   }
 }
 
@@ -1227,13 +1316,7 @@ function bindHomeEvents() {
 }
 
 function ensurePromotionPaperPageStyle() {
-  if (document.querySelector("#promotion-paper-page-style")) {
-    return;
-  }
-  const style = document.createElement("style");
-  style.id = "promotion-paper-page-style";
-  style.textContent = "@media print { @page { size: A4 portrait; margin: 8mm; } }";
-  document.head.append(style);
+  /* 시험지 @page 는 styles/exam-paper.css 의 named page(exam-paper-landscape) 사용 */
 }
 
 function clearPromotionPaperPageStyle() {
@@ -1302,6 +1385,16 @@ function showInitialScreenForUser() {
     return;
   }
 
+  if (problemBankLoading) {
+    showProblemBankLoadingUi();
+    return;
+  }
+
+  if (problemBankLoadError) {
+    refreshProblemBank();
+    return;
+  }
+
   if (problems.length > 0) {
     refreshProblemBank();
   } else {
@@ -1337,6 +1430,9 @@ function applyInitialListScreen() {
     "카테고리별로 문제를 살펴보고 학습할 문제를 선택하세요.";
   elements.description.classList.remove("is-hidden");
   elements.learningObjective.textContent = "학습할 문제를 선택하세요";
+  if (!problemBankReady) {
+    showProblemBankLoadingUi();
+  }
   void renderStudentGradeSummaryCard();
 }
 
@@ -1359,14 +1455,40 @@ function syncProblemLibraryChrome() {
   elements.problemCards?.classList.remove("is-hidden");
   updatePrintUiVisibility();
   updateAdminVisibility();
-  updateAdminProblemListControlsVisibility();
   updateAiResponseQaBatchUi?.();
   if (adminState.listPanel === "grades") {
     renderGradeAssignmentPanel();
   }
 }
 
+function showProblemBankLoadingUi() {
+  ensureProblemLibraryElements();
+  elements.listSummary.textContent = "문제은행을 불러오는 중...";
+  if (elements.problemCards) {
+    elements.problemCards.innerHTML =
+      '<p class="empty-list-message problem-bank-loading-message">문제은행을 불러오는 중...</p>';
+  }
+}
+
+function showProblemBankLoadError(message) {
+  ensureProblemLibraryElements();
+  elements.listSummary.textContent = message;
+  if (elements.problemCards) {
+    elements.problemCards.innerHTML = `<p class="empty-list-message problem-bank-load-error">${escapeHtml(message)}</p>`;
+  }
+}
+
 function renderProblemLibraryScreen() {
+  if (problemBankLoading) {
+    showProblemBankLoadingUi();
+    return;
+  }
+
+  if (problemBankLoadError) {
+    showProblemBankLoadError(problemBankLoadError);
+    return;
+  }
+
   if (!problemBankReady) {
     return;
   }
@@ -1395,6 +1517,18 @@ function refreshProblemBank() {
   ensureDefaultCategorySelection();
   appState.mode = "list";
   setMode("list");
+
+  if (problemBankLoading || problemBankLoadError) {
+    logScreen("renderProblemLibraryScreen");
+    elements.meta.textContent = "Problem Library";
+    elements.title.textContent = "문제은행";
+    elements.description.textContent =
+      "카테고리별로 문제를 살펴보고 학습할 문제를 선택하세요.";
+    elements.description.classList.remove("is-hidden");
+    elements.learningObjective.textContent = "학습할 문제를 선택하세요";
+    renderProblemLibraryScreen();
+    return;
+  }
 
   if (!problemBankReady) {
     return;
@@ -2092,6 +2226,17 @@ function renderPromotionPaperPrintBoard(element, problem, { monochrome = false }
   addPromotionPaperBoardStones(previewBoard, problem);
 }
 
+function getExamPaperBoardNodes(root) {
+  if (!root) {
+    return [];
+  }
+  return [...root.querySelectorAll("[data-exam-paper-problem-id], [data-promotion-paper-problem-id]")];
+}
+
+function getExamPaperProblemId(node) {
+  return node?.dataset?.examPaperProblemId || node?.dataset?.promotionPaperProblemId || "";
+}
+
 let promotionPaperPrintPrepared = false;
 
 function getPromotionPaperBoardCanvases(element) {
@@ -2161,8 +2306,8 @@ function mountPromotionPaperBoards(root = elements.promotionPaperQuestions) {
   if (!root) {
     return;
   }
-  root.querySelectorAll("[data-promotion-paper-problem-id]").forEach((node) => {
-    const problemId = node.dataset.promotionPaperProblemId;
+  getExamPaperBoardNodes(root).forEach((node) => {
+    const problemId = getExamPaperProblemId(node);
     const problem = problems.find((row) => row.id === problemId);
     if (!problem) {
       return;
@@ -2216,7 +2361,7 @@ function flattenPromotionPaperPrintBoards(
     ? PROMOTION_PAPER_BOARD_MONOCHROME_BACKGROUND
     : PROMOTION_PAPER_BOARD_COLOR_BACKGROUND;
 
-  root.querySelectorAll("[data-promotion-paper-problem-id]").forEach((node) => {
+  getExamPaperBoardNodes(root).forEach((node) => {
     flattenPromotionPaperBoardForPrint(node, flattenBackground);
   });
 }
@@ -2229,9 +2374,8 @@ async function preparePromotionPaperPrintBoards(
     return;
   }
 
-  const nodes = [...root.querySelectorAll("[data-promotion-paper-problem-id]")];
-  nodes.forEach((node) => {
-    const problemId = node.dataset.promotionPaperProblemId;
+  getExamPaperBoardNodes(root).forEach((node) => {
+    const problemId = getExamPaperProblemId(node);
     const problem = problems.find((row) => row.id === problemId);
     if (!problem) {
       return;
@@ -2252,9 +2396,8 @@ function preparePromotionPaperPrintBoardsSync(
     return;
   }
 
-  const nodes = [...root.querySelectorAll("[data-promotion-paper-problem-id]")];
-  nodes.forEach((node) => {
-    const problemId = node.dataset.promotionPaperProblemId;
+  getExamPaperBoardNodes(root).forEach((node) => {
+    const problemId = getExamPaperProblemId(node);
     const problem = problems.find((row) => row.id === problemId);
     if (!problem) {
       return;
@@ -2270,13 +2413,14 @@ function isPromotionPaperMonochromePrintEnabled() {
 }
 
 function setPromotionPaperPrintModeClasses({ monochrome = false } = {}) {
-  document.body.classList.add("promotion-paper-print");
+  document.body.classList.add("exam-paper-print", "promotion-paper-print");
+  document.body.classList.toggle("exam-paper-print-monochrome", monochrome);
   document.body.classList.toggle("promotion-paper-print-monochrome", monochrome);
 }
 
 function clearPromotionPaperPrintModeClasses() {
-  document.body.classList.remove("promotion-paper-print");
-  document.body.classList.remove("promotion-paper-print-monochrome");
+  document.body.classList.remove("exam-paper-print", "promotion-paper-print");
+  document.body.classList.remove("exam-paper-print-monochrome", "promotion-paper-print-monochrome");
   promotionPaperPrintPrepared = false;
 }
 
@@ -2285,7 +2429,7 @@ function waitForPromotionPaperPrintImages(root = elements.promotionPaperQuestion
     return Promise.resolve();
   }
 
-  const images = [...root.querySelectorAll(".promotion-paper-board img")];
+  const images = [...root.querySelectorAll(".exam-paper-board img, .promotion-paper-board img")];
   if (images.length === 0) {
     return Promise.resolve();
   }
@@ -2316,22 +2460,23 @@ async function runPromotionPaperPrint() {
   window.print();
 }
 
-function renderPromotionPaperScreen(examSet, detail) {
+function renderExamPaperScreen(examSet, detail) {
   const questions = detail.questions ?? [];
   const gradeLabel = examSet.gradeLevel ? formatGradeLevelLabel(examSet.gradeLevel) : "급수 미지정";
   const examDateLabel = formatPromotionPaperDate(examSet.examDate);
+  const typeLabel = formatExamSetTypeLabel(examSet.type);
 
   if (elements.promotionPaperMeta) {
-    elements.promotionPaperMeta.textContent = "Promotion Paper";
+    elements.promotionPaperMeta.textContent = "Exam Paper";
   }
   if (elements.promotionPaperTitle) {
-    elements.promotionPaperTitle.textContent = examSet.title ?? "승급심사 시험지";
+    elements.promotionPaperTitle.textContent = `${typeLabel} 시험지`;
   }
   if (elements.promotionPaperDescription) {
-    elements.promotionPaperDescription.textContent = `${gradeLabel} · ${examDateLabel} · 총 ${questions.length}문제`;
+    elements.promotionPaperDescription.textContent = `${examSet.title ?? ""} · ${gradeLabel} · ${examDateLabel} · 총 ${questions.length}문제`;
   }
   if (elements.promotionPaperQuestions) {
-    elements.promotionPaperQuestions.innerHTML = buildPromotionPaperPagesHtml({
+    elements.promotionPaperQuestions.innerHTML = buildExamPaperPagesHtml({
       examSet,
       questions,
       problems,
@@ -2339,7 +2484,6 @@ function renderPromotionPaperScreen(examSet, detail) {
       getPrompt: getPromotionPaperPrompt,
       gradeLabel,
       examDateLabel,
-      organizationName: examSet.organizationName ?? examSet.organization_name ?? "",
     });
     window.requestAnimationFrame(() => {
       window.requestAnimationFrame(() => {
@@ -2349,11 +2493,14 @@ function renderPromotionPaperScreen(examSet, detail) {
   }
 
   setMode("paper");
-  elements.meta.textContent = "Promotion Paper";
-  elements.title.textContent = "승급심사 시험지";
+  elements.meta.textContent = "Exam Paper";
+  elements.title.textContent = `${typeLabel} 시험지`;
   elements.description.textContent = "온라인 풀이가 아닌 인쇄/열람 전용 화면입니다.";
   elements.description.classList.remove("is-hidden");
 }
+
+/** @deprecated alias */
+const renderPromotionPaperScreen = renderExamPaperScreen;
 
 function getPromotionPaperPrompt(problem) {
   const candidates = [
@@ -2393,7 +2540,7 @@ async function openExamSetQuestionPreview(examSet) {
       return;
     }
     clearExamSession();
-    renderPromotionPaperScreen(detail.set ?? examSet, detail);
+    renderExamPaperScreen(detail.set ?? examSet, detail);
   } catch (error) {
     console.error("[ExamSet] question preview failed", error);
     setFeedback("시험 문제를 열람하지 못했습니다.", "wrong");
@@ -2462,7 +2609,7 @@ async function startExamSetSession(examSet, { startIndex = 0 } = {}) {
     });
     if ((detail.set?.setRole ?? examSet.setRole) === EXAM_SET_ROLE.promotionPaper) {
       clearExamSession();
-      renderPromotionPaperScreen(detail.set ?? examSet, detail);
+      renderExamPaperScreen(detail.set ?? examSet, detail);
       return;
     }
     const problemIds = (detail.questions ?? []).map((entry) => entry.problemId);
@@ -2525,8 +2672,8 @@ function clearExamSession({ persistProgress = true } = {}) {
   elements.promotionPaperScreen?.classList.add("is-hidden");
   elements.mockTestResultsPanel?.classList.add("is-hidden");
   examCatalog.clearOpenMockResults?.();
-  document.body.classList.remove("promotion-paper-print");
-  document.body.classList.remove("promotion-paper-print-monochrome");
+  document.body.classList.remove("exam-paper-print", "promotion-paper-print");
+  document.body.classList.remove("exam-paper-print-monochrome", "promotion-paper-print-monochrome");
   clearPromotionPaperPageStyle();
 }
 
@@ -3352,12 +3499,15 @@ function syncCreatorCategoriesForLevelGroup() {
 }
 
 function renderProblemList() {
+  const renderStartedAt = performance.now();
   ensureProblemLibraryElements();
 
   if (!elements.problemCards) {
     console.warn("[renderProblemList] missing #problem-cards element");
     return;
   }
+
+  resetProblemPreviewObserver();
 
   const gradeMode = isGradeAssignmentMode?.() ?? false;
   const examSetMode = isExamSetPickerMode?.() ?? false;
@@ -3366,7 +3516,6 @@ function renderProblemList() {
   elements.examSetCatalog?.classList.toggle("is-hidden", hideExamCatalog);
 
   updatePrintUiVisibility();
-  updateAdminProblemListControlsVisibility();
   updateAiResponseQaBatchUi?.();
   updateProblemSortModeUi?.();
   elements.problemListScreen?.classList.toggle("is-grade-assignment-mode", gradeMode);
@@ -3446,16 +3595,32 @@ function renderProblemList() {
       const categoryLabel = escapeHtml(problem.category ?? "");
       const levelLabel = escapeHtml(problem.level ?? "");
       const boardSizeLabel = escapeHtml(getBoardSizeLabel(getProblemBoardSize(problem)));
-      const gradeBadge = gradeMode
-        ? `<span class="problem-card-grade">${escapeHtml(formatGradeLevelLabel(problem.gradeLevel))}</span>`
-        : adminState.isEnabled && isCurrentUserAdmin() && adminState.listPanel === "problems"
+      const gradeBadge =
+        !gradeMode &&
+        adminState.isEnabled &&
+        isCurrentUserAdmin() &&
+        adminState.listPanel === "problems"
           ? `<span class="problem-card-grade">${escapeHtml(formatGradeLevelLabel(problem.gradeLevel))}</span>`
           : "";
+      const gradeSelectHtml = gradeMode
+        ? inlineGradeEditor.renderProblemCardGradeSelectHtml(problem, escapeHtml)
+        : "";
       const isGradeSelected = gradeMode && isProblemSelectedForGrade?.(problem.id);
+      const gradeCheckboxHtml = gradeMode
+        ? `
+              <label class="problem-grade-assign-select problem-grade-assign-select--lead">
+                <input
+                  type="checkbox"
+                  data-grade-assign-select="${escapeHtml(problem.id)}"
+                  ${isGradeSelected ? "checked" : ""}
+                  aria-label="급수 배정 선택"
+                />
+              </label>`
+        : "";
       const alreadyInExamSet = examSetMode && isProblemInExamSet?.(problem.id);
       const isExamSetSelected =
         examSetMode && isProblemSelectedForExamSetAdd?.(problem.id);
-      const hasStatusRow = Boolean(levelLabel || gradeBadge || progressView.badge);
+      const hasStatusRow = Boolean(levelLabel || gradeBadge || gradeSelectHtml || progressView.badge);
 
       if (gradeMode) {
         card.classList.toggle("is-grade-assign-selected", isGradeSelected);
@@ -3488,22 +3653,13 @@ function renderProblemList() {
           <div class="problem-card-header">
             <div class="problem-card-meta-row">
               <div class="problem-card-meta-primary">
+                ${gradeCheckboxHtml}
                 <span class="problem-card-number">${problemNumberLabel}</span>
                 <span class="problem-category-badge">${categoryLabel}</span>
                 <span class="problem-board-size-badge">${boardSizeLabel}</span>
               </div>
               ${
-                gradeMode
-                  ? `
-              <label class="problem-grade-assign-select">
-                <input
-                  type="checkbox"
-                  data-grade-assign-select="${escapeHtml(problem.id)}"
-                  ${isGradeSelected ? "checked" : ""}
-                />
-                <span>급수 선택</span>
-              </label>`
-                  : examSetMode
+                examSetMode
                     ? alreadyInExamSet
                       ? `
               <span class="problem-exam-set-included-badge">이미 추가됨</span>`
@@ -3527,6 +3683,7 @@ function renderProblemList() {
               hasStatusRow
                 ? `
             <div class="problem-card-status">
+              ${gradeSelectHtml}
               ${gradeBadge}
               ${levelLabel ? `<span class="problem-card-level">${levelLabel}</span>` : ""}
               ${progressView.badge}
@@ -3585,7 +3742,6 @@ function renderProblemList() {
         adminState.isEnabled &&
         isCurrentUserAdmin() &&
         !isProblemSortMode &&
-        !gradeMode &&
         !examSetMode
       ) {
         const actions = document.createElement("div");
@@ -3604,7 +3760,7 @@ function renderProblemList() {
       }
 
       elements.problemCards.append(card);
-      renderProblemPreviewBoard(card.querySelector(".problem-preview-board"), problem);
+      scheduleProblemPreviewBoard(card.querySelector(".problem-preview-board"), problem);
     } catch (error) {
       console.error(`[renderProblemList] Failed to render problem card: ${problem?.id ?? index}`, error);
     }
@@ -3617,6 +3773,11 @@ function renderProblemList() {
   if (gradeMode) {
     updateGradeSummaryText?.();
   }
+
+  logAppBoot("renderProblemList cards mounted", {
+    filteredCount: filteredProblems.length,
+    ms: Math.round(performance.now() - renderStartedAt),
+  });
 }
 
 function selectProblemById(problemId) {
@@ -3791,6 +3952,67 @@ function chunkArray(items, chunkSize) {
   return chunks;
 }
 
+function resetProblemPreviewObserver() {
+  if (problemPreviewObserver) {
+    problemPreviewObserver.disconnect();
+    problemPreviewObserver = null;
+  }
+}
+
+function ensureProblemPreviewObserver() {
+  if (problemPreviewObserver) {
+    return problemPreviewObserver;
+  }
+
+  problemPreviewObserver = new IntersectionObserver(
+    (entries) => {
+      entries.forEach((entry) => {
+        if (!entry.isIntersecting) {
+          return;
+        }
+
+        const element = entry.target;
+        problemPreviewObserver?.unobserve(element);
+        const problemId = element.dataset.previewProblemId;
+        if (!problemId) {
+          return;
+        }
+
+        const problem = problems.find((entryProblem) => entryProblem.id === problemId);
+        if (!problem) {
+          return;
+        }
+
+        renderProblemPreviewBoard(element, problem);
+      });
+    },
+    {
+      root: null,
+      rootMargin: "200px 0px",
+      threshold: 0.01,
+    },
+  );
+
+  return problemPreviewObserver;
+}
+
+function scheduleProblemPreviewBoard(element, problem) {
+  if (!element || !problem?.id) {
+    return;
+  }
+
+  element.dataset.previewProblemId = problem.id;
+
+  if (typeof IntersectionObserver !== "function") {
+    window.requestAnimationFrame(() => {
+      renderProblemPreviewBoard(element, problem);
+    });
+    return;
+  }
+
+  ensureProblemPreviewObserver().observe(element);
+}
+
 function renderProblemPreviewBoard(element, problem, options = {}) {
   if (!element || !window.WGo || !Array.isArray(problem?.stones)) {
     return;
@@ -3877,11 +4099,7 @@ function getFilteredProblems() {
           return false;
         }
 
-        if (!matchesGradeAssignmentListFilter?.(problem)) {
-          return false;
-        }
-
-        return matchesGradeLevelFilter(problem, appState.problemGradeFilter);
+        return matchesGradeAssignmentListFilter?.(problem);
       }
 
       if (!appState.selectedCategory || appState.selectedCategory === "전체") {
@@ -3902,8 +4120,6 @@ function getFilteredProblems() {
   return sortFilteredProblemEntries(filtered, { sortMode });
 }
 
-let adminProblemListControlsBound = false;
-
 function populateAdminGradeSelects() {
   if (elements.adminGradeTargetSelect) {
     elements.adminGradeTargetSelect.innerHTML = getGradeLevelSelectOptions({ includeUnassigned: false })
@@ -3913,52 +4129,6 @@ function populateAdminGradeSelects() {
       )
       .join("");
   }
-
-  if (elements.problemGradeFilter) {
-    elements.problemGradeFilter.innerHTML = getGradeLevelFilterOptions()
-      .map(
-        (option) =>
-          `<option value="${escapeHtml(option.value)}">${escapeHtml(option.label)}</option>`,
-      )
-      .join("");
-    elements.problemGradeFilter.value = appState.problemGradeFilter;
-  }
-
-  if (elements.problemListSort) {
-    elements.problemListSort.value = appState.problemListSort;
-  }
-}
-
-function bindAdminProblemListControls() {
-  if (adminProblemListControlsBound) {
-    return;
-  }
-
-  adminProblemListControlsBound = true;
-
-  elements.problemListSort?.addEventListener("change", () => {
-    appState.problemListSort = elements.problemListSort.value;
-    renderProblemList();
-    if (isGradeAssignmentMode?.()) {
-      updateGradeSummaryText?.();
-    }
-  });
-
-  elements.problemGradeFilter?.addEventListener("change", () => {
-    appState.problemGradeFilter = elements.problemGradeFilter.value;
-    renderProblemList();
-    if (isGradeAssignmentMode?.()) {
-      updateGradeSummaryText?.();
-    }
-  });
-}
-
-function updateAdminProblemListControlsVisibility() {
-  const visible =
-    adminState.isEnabled &&
-    isCurrentUserAdmin() &&
-    (adminState.listPanel === "problems" || adminState.listPanel === "grades");
-  elements.adminProblemListControls?.classList.toggle("is-hidden", !visible);
 }
 
 function getCategoryCount(category) {

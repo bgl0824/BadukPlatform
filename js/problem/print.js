@@ -148,8 +148,8 @@ export function createProblemPrintController({
       "correct",
     );
 
-    document.body.classList.remove("promotion-paper-print");
-    document.body.classList.remove("promotion-paper-print-monochrome");
+    document.body.classList.remove("exam-paper-print", "promotion-paper-print");
+    document.body.classList.remove("exam-paper-print-monochrome", "promotion-paper-print-monochrome");
     document.body.classList.remove("print-builder-print--textbook");
     document.body.classList.remove("print-builder-print--detailed");
     document.querySelector("#promotion-paper-page-style")?.remove();

@@ -3,45 +3,222 @@
   <head>
     <meta charset="UTF-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-    <title>바둑 문제풀이 로그인</title>
+    <title>브랜치바둑 로그인</title>
     <link rel="icon" href="./favicon.svg" type="image/svg+xml" />
     <link rel="alternate icon" href="./favicon.svg" />
     <link rel="stylesheet" href="./styles.css" />
+    <link rel="stylesheet" href="./styles/auth-landing.css" />
     <link rel="dns-prefetch" href="https://cdn.jsdelivr.net" />
     <script defer src="./js/runtime-config.js"></script>
     <script defer src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
     <script type="module" src="./js/auth.js"></script>
   </head>
-  <body data-page="auth">
-    <main class="auth-page">
-      <section class="auth-entry-card" aria-labelledby="auth-entry-title">
-        <p class="eyebrow">Baduk Learning</p>
-        <h1 id="auth-entry-title">바둑 문제풀이</h1>
-        <p>기록 저장을 위해 로그인하거나 새 아이디를 만들어 주세요.</p>
-        <div id="auth-status-bar" class="auth-status-bar auth-entry-actions" aria-live="polite"></div>
-        <button id="admin-entry" class="secondary-button admin-entry-button is-hidden" type="button" aria-hidden="true" hidden>
-          관리자 입장
-        </button>
+  <body data-page="auth" class="auth-landing-body">
+    <main class="login-landing">
+      <section class="login-hero" aria-label="브랜치바둑 로그인">
+        <div class="login-hero__visual" aria-hidden="true">
+          <img
+            class="login-hero__image"
+            src="./assets/auth/login-hero.png"
+            alt=""
+            width="1536"
+            height="1024"
+            decoding="async"
+            fetchpriority="high"
+          />
+        </div>
+
+        <div class="login-hero__content">
+          <!-- 향후 정식 BI 영역 (11시). 현재는 비워 둠 -->
+          <div class="login-hero__brand-slot" data-brand-slot aria-hidden="true"></div>
+
+          <div class="login-hero__panel">
+            <div class="login-hero__copy">
+              <h1 class="login-hero__headline">
+                <span class="login-hero__headline-accent">한 수 한 수,</span><br />
+                <span class="login-hero__headline-rest">성장하는 우리</span>
+              </h1>
+              <p class="login-hero__subcopy">
+                바둑을 통해 생각하고, 배우고,<br />
+                함께 성장하는 브랜치바둑의 세계로 초대합니다.
+              </p>
+            </div>
+
+            <div class="login-card-shell">
+              <form id="login-form" class="login-card" aria-labelledby="login-title">
+                <h2 id="login-title" class="login-card__title">브랜치바둑 로그인</h2>
+
+                <label class="login-field">
+                  <span class="login-field__label">아이디</span>
+                  <span class="login-field__control">
+                    <span class="login-field__icon" aria-hidden="true">
+                      <svg viewBox="0 0 24 24" width="18" height="18" fill="none">
+                        <circle cx="12" cy="8" r="3.5" stroke="currentColor" stroke-width="1.8" />
+                        <path
+                          d="M5 19c1.8-3.2 4.2-4.8 7-4.8s5.2 1.6 7 4.8"
+                          stroke="currentColor"
+                          stroke-width="1.8"
+                          stroke-linecap="round"
+                        />
+                      </svg>
+                    </span>
+                    <input
+                      id="login-username"
+                      name="username"
+                      type="text"
+                      autocomplete="username"
+                      placeholder="아이디"
+                      required
+                    />
+                  </span>
+                </label>
+
+                <label class="login-field">
+                  <span class="login-field__label">비밀번호</span>
+                  <span class="login-field__control">
+                    <span class="login-field__icon" aria-hidden="true">
+                      <svg viewBox="0 0 24 24" width="18" height="18" fill="none">
+                        <rect
+                          x="5"
+                          y="10"
+                          width="14"
+                          height="10"
+                          rx="2"
+                          stroke="currentColor"
+                          stroke-width="1.8"
+                        />
+                        <path
+                          d="M8 10V8a4 4 0 0 1 8 0v2"
+                          stroke="currentColor"
+                          stroke-width="1.8"
+                          stroke-linecap="round"
+                        />
+                      </svg>
+                    </span>
+                    <input
+                      id="login-password"
+                      name="password"
+                      type="password"
+                      autocomplete="current-password"
+                      placeholder="비밀번호"
+                      required
+                    />
+                  </span>
+                </label>
+
+                <label class="login-remember">
+                  <input id="login-remember-username" type="checkbox" />
+                  <span>아이디 저장</span>
+                </label>
+
+                <p id="login-message" class="auth-message login-card__message" aria-live="polite"></p>
+
+                <button class="login-card__submit" type="submit">로그인</button>
+
+                <a class="login-card__signup" href="./signup.html">
+                  <span class="login-card__signup-prefix">처음이신가요?</span>
+                  <span class="login-card__signup-action">회원가입 →</span>
+                </a>
+              </form>
+            </div>
+          </div>
+        </div>
       </section>
 
-      <div id="login-modal" class="auth-modal is-hidden" role="dialog" aria-modal="true" aria-labelledby="login-title">
-        <form id="login-form" class="auth-modal-card">
-          <button class="auth-close" type="button" data-auth-close aria-label="로그인 창 닫기">×</button>
-          <p class="eyebrow">Login</p>
-          <h2 id="login-title">로그인</h2>
-          <label>
-            아이디
-            <input id="login-username" name="username" type="text" autocomplete="username" placeholder="예: 내친구바둑" required />
-          </label>
-          <label>
-            비밀번호
-            <input id="login-password" name="password" type="password" autocomplete="current-password" placeholder="비밀번호 6자리 이상" required />
-          </label>
-          <p id="login-message" class="auth-message" aria-live="polite"></p>
-          <button class="primary-button" type="submit">로그인</button>
-        </form>
-      </div>
+      <section class="login-features" aria-label="브랜치바둑 주요 기능">
+        <div class="login-features__inner">
+          <p class="login-features__intro">브랜치바둑에서 만날 수 있어요!</p>
+          <ul class="login-features__list">
+            <li class="login-feature">
+              <span class="login-feature__icon" aria-hidden="true">
+                <svg viewBox="0 0 48 48" width="48" height="48">
+                  <rect x="4" y="4" width="40" height="40" rx="10" fill="#E8F2EA" />
+                  <path d="M12 14h24v20H12z" fill="#fff" stroke="#2F6B3A" stroke-width="1.6" />
+                  <path d="M17 19h14M17 24h14M17 29h9" stroke="#2F6B3A" stroke-width="1.5" />
+                  <circle cx="31" cy="29" r="2.4" fill="#2F6B3A" />
+                </svg>
+              </span>
+              <span class="login-feature__body">
+                <strong>문제은행</strong>
+                <span>다양한 난이도의 문제를 풀어요</span>
+              </span>
+            </li>
+            <li class="login-feature">
+              <span class="login-feature__icon" aria-hidden="true">
+                <svg viewBox="0 0 48 48" width="48" height="48">
+                  <rect x="4" y="4" width="40" height="40" rx="10" fill="#E8F2EA" />
+                  <path d="M14 13h14l6 6v16H14z" fill="#fff" stroke="#2F6B3A" stroke-width="1.6" />
+                  <path d="M28 13v6h6" stroke="#2F6B3A" stroke-width="1.6" />
+                  <path d="M19 26h10M19 31h8" stroke="#2F6B3A" stroke-width="1.5" />
+                </svg>
+              </span>
+              <span class="login-feature__body">
+                <strong>오답 복습</strong>
+                <span>틀린 문제를 다시 풀며 실력을 완성해요</span>
+              </span>
+            </li>
+            <li class="login-feature">
+              <span class="login-feature__icon" aria-hidden="true">
+                <svg viewBox="0 0 48 48" width="48" height="48">
+                  <rect x="4" y="4" width="40" height="40" rx="10" fill="#E8F2EA" />
+                  <path d="M14 34V22h5v12zm8 0V16h5v18zm8 0V24h5v10z" fill="#2F6B3A" />
+                </svg>
+              </span>
+              <span class="login-feature__body">
+                <strong>성장 리포트</strong>
+                <span>나의 성장 과정을 한눈에 확인해요</span>
+              </span>
+            </li>
+            <li class="login-feature">
+              <span class="login-feature__icon" aria-hidden="true">
+                <svg viewBox="0 0 48 48" width="48" height="48">
+                  <rect x="4" y="4" width="40" height="40" rx="10" fill="#E8F2EA" />
+                  <path
+                    d="M24 12l2.8 6.2 6.6.7-4.9 4.5 1.4 6.6L24 26.8l-5.9 3.2 1.4-6.6-4.9-4.5 6.6-.7z"
+                    fill="#D4A017"
+                    stroke="#B8860B"
+                    stroke-width="0.8"
+                  />
+                </svg>
+              </span>
+              <span class="login-feature__body">
+                <strong>급수 시험</strong>
+                <span>실력에 맞는 급수에 도전해요</span>
+              </span>
+            </li>
+            <li class="login-feature">
+              <span class="login-feature__icon" aria-hidden="true">
+                <svg viewBox="0 0 48 48" width="48" height="48">
+                  <rect x="4" y="4" width="40" height="40" rx="10" fill="#E8F2EA" />
+                  <rect x="13" y="14" width="22" height="20" rx="3" fill="#fff" stroke="#2F6B3A" stroke-width="1.6" />
+                  <path d="M18 12v5M30 12v5M13 21h22" stroke="#2F6B3A" stroke-width="1.5" />
+                  <path d="M19 28l2.6 2.6L29 23.2" stroke="#2F6B3A" stroke-width="1.8" fill="none" />
+                </svg>
+              </span>
+              <span class="login-feature__body">
+                <strong>출결 관리</strong>
+                <span>출석 체크와 수업 관리까지</span>
+              </span>
+            </li>
+          </ul>
+        </div>
+      </section>
 
+      <footer class="login-landing__footer">
+        <p>© 2025 브랜치바둑. All rights reserved.</p>
+      </footer>
+
+      <!-- auth.js 호환용: 로그인 페이지에서는 미사용 -->
+      <div id="auth-status-bar" class="is-hidden" aria-hidden="true"></div>
+      <button
+        id="admin-entry"
+        class="secondary-button admin-entry-button is-hidden"
+        type="button"
+        aria-hidden="true"
+        hidden
+      >
+        관리자 입장
+      </button>
     </main>
   </body>
 </html>

@@ -7,6 +7,7 @@
     <link rel="icon" href="./favicon.svg" type="image/svg+xml" />
     <link rel="alternate icon" href="./favicon.svg" />
     <link rel="stylesheet" href="./styles.css" />
+    <link rel="stylesheet" href="./styles/exam-paper.css" />
     <link rel="dns-prefetch" href="https://cdn.jsdelivr.net" />
     <script defer src="./vendor/wgo.min.js"></script>
     <script defer src="./js/runtime-config.js"></script>
@@ -333,19 +334,6 @@
           <div class="category-filter-stack">
             <div id="level-group-filters" class="level-group-filters" aria-label="단계 필터"></div>
             <div id="category-filters" class="category-filters" aria-label="카테고리 필터"></div>
-            <div id="admin-problem-list-controls" class="admin-problem-list-controls is-hidden" aria-label="문제 목록 정렬">
-              <label>
-                정렬
-                <select id="problem-list-sort">
-                  <option value="learning">학습순 (카테고리 흐름 → 번호)</option>
-                  <option value="grade">급수별 + 학습순 (카테고리 → 급수 → 번호)</option>
-                </select>
-              </label>
-              <label>
-                급수 필터
-                <select id="problem-grade-filter"></select>
-              </label>
-            </div>
           </div>
           <div id="admin-workspace" class="admin-workspace is-hidden" aria-label="관리자 작업 영역">
             <nav id="admin-panel-tabs" class="admin-panel-tabs" aria-label="관리자 메뉴">
@@ -432,12 +420,13 @@
                   </label>
                   <button id="admin-grade-select-range" class="secondary-button" type="button">범위 선택</button>
                 </div>
-                <div class="admin-grades-apply">
+                <div class="admin-grades-apply admin-grades-bulk-bar">
+                  <span id="admin-grade-selection-count" class="admin-grade-selection-count">0개 선택됨</span>
                   <label>
-                    적용 급수
+                    급수
                     <select id="admin-grade-target-select"></select>
                   </label>
-                  <button id="admin-grade-apply" class="primary-button" type="button">선택에 적용</button>
+                  <button id="admin-grade-apply" class="primary-button" type="button">선택 문제 급수 적용</button>
                   <button id="admin-grade-clear" class="secondary-button" type="button">급수 해제</button>
                 </div>
                 <div class="admin-grades-selection-actions">
@@ -1267,21 +1256,29 @@
             학원명 또는 방과후선생님 성함
             <input id="signup-academy-name" name="academy_name" type="text" />
           </label>
-          <div class="auth-inline-field">
+          <div id="signup-address-fields" class="signup-address-fields is-hidden">
+            <div class="auth-inline-field">
+              <label>
+                우편번호
+                <input id="signup-postcode" name="postcode" type="text" readonly />
+              </label>
+              <button id="search-address" class="secondary-button" type="button">주소 검색</button>
+            </div>
             <label>
-              우편번호
-              <input id="signup-postcode" name="postcode" type="text" readonly />
+              주소
+              <input
+                id="signup-address"
+                name="address"
+                type="text"
+                readonly
+                placeholder="학원 주소 또는 활동 지역의 주소를 입력해 주세요."
+              />
             </label>
-            <button id="search-address" class="secondary-button" type="button">주소 검색</button>
+            <label>
+              상세주소
+              <input id="signup-address-detail" name="address_detail" type="text" />
+            </label>
           </div>
-          <label>
-            주소
-            <input id="signup-address" name="address" type="text" readonly />
-          </label>
-          <label>
-            상세주소
-            <input id="signup-address-detail" name="address_detail" type="text" />
-          </label>
           <p id="signup-message" class="auth-message" aria-live="polite"></p>
           <button class="primary-button" type="submit">회원가입</button>
         </form>

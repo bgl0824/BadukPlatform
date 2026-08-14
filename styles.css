@@ -679,6 +679,15 @@ body.category-complete-modal-open .board-overlay-layer {
   align-items: start;
 }
 
+.signup-address-fields {
+  display: grid;
+  gap: 14px;
+}
+
+.signup-address-fields.is-hidden {
+  display: none;
+}
+
 .auth-inline-field > .secondary-button {
   margin-top: 27px;
 }
@@ -1582,6 +1591,106 @@ h2 {
 
 .attendance-sms-logs-status.is-failed {
   background: rgba(198, 40, 40, 0.12);
+  color: #a32020;
+}
+
+.attendance-sms-test-panel {
+  display: grid;
+  gap: 12px;
+  padding: 14px;
+  border: 1px solid var(--line);
+  border-radius: 14px;
+  background: rgba(255, 255, 255, 0.72);
+  margin-bottom: 14px;
+}
+
+.attendance-sms-test-header {
+  display: grid;
+  gap: 8px;
+}
+
+.attendance-sms-test-header h4 {
+  margin: 0;
+  color: var(--primary-dark);
+}
+
+.attendance-sms-test-header p {
+  margin: 0;
+  color: var(--muted);
+  font-size: 0.86rem;
+  font-weight: 700;
+}
+
+.attendance-sms-test-config {
+  margin: 0;
+  font-size: 0.84rem;
+  font-weight: 800;
+}
+
+.attendance-sms-test-config.is-ready {
+  color: var(--primary-dark);
+}
+
+.attendance-sms-test-config.is-missing {
+  color: #a32020;
+}
+
+.attendance-sms-test-form {
+  display: grid;
+  gap: 10px;
+}
+
+.attendance-sms-test-field {
+  display: grid;
+  gap: 6px;
+  font-size: 0.86rem;
+  font-weight: 800;
+  color: var(--muted);
+}
+
+.attendance-sms-test-field input {
+  width: 100%;
+  min-height: 44px;
+  border: 1px solid rgba(47, 111, 78, 0.18);
+  border-radius: 10px;
+  padding: 10px 12px;
+  font-size: 1rem;
+  font-variant-numeric: tabular-nums;
+}
+
+.attendance-sms-test-preview {
+  margin: 0;
+  white-space: pre-wrap;
+  padding: 12px;
+  border-radius: 10px;
+  background: rgba(47, 111, 78, 0.06);
+  color: var(--text);
+  font-size: 0.9rem;
+  font-weight: 700;
+  line-height: 1.45;
+}
+
+.attendance-sms-test-actions {
+  display: flex;
+  justify-content: flex-start;
+}
+
+.attendance-sms-test-result {
+  margin: 0;
+  min-height: 1.4em;
+  font-size: 0.92rem;
+  font-weight: 800;
+}
+
+.attendance-sms-test-result.is-pending {
+  color: var(--muted);
+}
+
+.attendance-sms-test-result.is-success {
+  color: var(--primary-dark);
+}
+
+.attendance-sms-test-result.is-error {
   color: #a32020;
 }
 
@@ -4154,6 +4263,188 @@ body.attendance-period-settings-open {
 .student-guardian-form-footer {
   display: flex;
   justify-content: flex-end;
+}
+
+.student-payment-profile-form {
+  display: grid;
+  gap: 12px;
+  margin-top: 8px;
+}
+
+.student-payment-field {
+  display: grid;
+  gap: 6px;
+}
+
+.student-payment-field-label {
+  font-size: 0.84rem;
+  font-weight: 800;
+  color: var(--muted);
+}
+
+.student-payment-field-input-wrap {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.student-payment-field-input-wrap input {
+  flex: 1;
+  min-width: 0;
+  border: 1px solid rgba(47, 111, 78, 0.18);
+  border-radius: 10px;
+  padding: 10px 12px;
+  font-size: 0.95rem;
+  font-variant-numeric: tabular-nums;
+}
+
+.student-payment-field-prefix,
+.student-payment-field-suffix {
+  flex-shrink: 0;
+  color: var(--muted);
+  font-size: 0.88rem;
+  font-weight: 800;
+}
+
+.student-payment-form-footer {
+  display: flex;
+  justify-content: flex-end;
+}
+
+.student-payment-history {
+  margin-top: 16px;
+  padding-top: 14px;
+  border-top: 1px solid var(--line);
+}
+
+.student-payment-history-title {
+  margin: 0 0 10px;
+  font-size: 0.92rem;
+  color: var(--primary-dark);
+}
+
+.student-payment-history-list {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: grid;
+  gap: 0;
+}
+
+.student-payment-history-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  padding: 10px 0;
+  border-bottom: 1px solid color-mix(in srgb, var(--line) 80%, transparent);
+}
+
+.student-payment-history-row:last-child {
+  border-bottom: none;
+}
+
+.student-payment-history-row__month {
+  font-weight: 800;
+  color: var(--primary-dark);
+  font-variant-numeric: tabular-nums;
+}
+
+.student-payment-history-empty {
+  margin: 0;
+  color: var(--muted);
+  font-size: 0.86rem;
+  font-weight: 700;
+}
+
+.student-payment-status-badge {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  font-size: 0.86rem;
+  font-weight: 800;
+  color: var(--muted);
+}
+
+.student-payment-status-badge__dot {
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  background: rgba(120, 120, 120, 0.55);
+}
+
+.student-payment-status-badge.is-unpaid {
+  color: color-mix(in srgb, var(--danger, #c0392b) 82%, var(--text) 18%);
+}
+
+.student-payment-status-badge.is-unpaid .student-payment-status-badge__dot {
+  background: color-mix(in srgb, var(--danger, #c0392b) 88%, #fff 12%);
+}
+
+.student-payment-status-badge.is-requested {
+  color: color-mix(in srgb, #c9a227 78%, var(--text) 22%);
+}
+
+.student-payment-status-badge.is-requested .student-payment-status-badge__dot {
+  background: #c9a227;
+}
+
+.student-payment-status-badge.is-paid {
+  color: var(--primary-dark);
+}
+
+.student-payment-status-badge.is-paid .student-payment-status-badge__dot {
+  background: var(--primary);
+}
+
+.student-card-payment-row {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  min-width: 0;
+  padding: 2px 0;
+}
+
+.student-card-payment-row__label {
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-size: 0.9rem;
+  font-weight: 800;
+  color: var(--primary-dark);
+}
+
+.student-card-payment-row__paid-date {
+  flex-shrink: 0;
+  font-size: 0.86rem;
+  font-weight: 800;
+  font-variant-numeric: tabular-nums;
+  color: var(--muted);
+}
+
+.student-card-payment-row__paid-date.is-empty {
+  opacity: 0.6;
+}
+
+.student-card-payment-action-button {
+  flex-shrink: 0;
+  width: auto;
+  min-height: 36px;
+  padding: 6px 10px;
+  font-size: 0.8rem;
+  white-space: nowrap;
+}
+
+.student-card-payment-row .student-payment-status-badge {
+  flex-shrink: 0;
+  white-space: nowrap;
+}
+
+.academy-student-mobile-row--operations .student-card-payment-row {
+  width: 100%;
+  margin-top: 2px;
 }
 
 .student-academy-profile-section-note {
@@ -7094,6 +7385,57 @@ body.attendance-period-settings-open {
   font-weight: 700;
 }
 
+.admin-grades-bulk-bar {
+  align-items: center;
+}
+
+.admin-grade-selection-count {
+  display: inline-flex;
+  align-items: center;
+  min-height: 38px;
+  padding: 0 10px;
+  border-radius: 999px;
+  background: rgba(47, 111, 237, 0.1);
+  color: var(--primary-dark);
+  font-size: 0.88rem;
+  font-weight: 800;
+}
+
+.problem-grade-assign-select--lead {
+  padding: 4px;
+  background: transparent;
+  border: none;
+}
+
+.problem-card-grade-select {
+  min-width: 88px;
+  max-width: 120px;
+  padding: 4px 8px;
+  border: 1px solid rgba(47, 111, 237, 0.35);
+  border-radius: 8px;
+  background: rgba(255, 255, 255, 0.95);
+  color: var(--primary-dark);
+  font-size: 0.82rem;
+  font-weight: 700;
+}
+
+.problem-card-grade-select.is-saving {
+  opacity: 0.65;
+}
+
+.problem-card-grade-select:disabled {
+  cursor: wait;
+}
+
+.problem-bank-loading-message,
+.problem-bank-load-error {
+  font-weight: 700;
+}
+
+.problem-bank-load-error {
+  color: var(--danger, #b42318);
+}
+
 .problem-card-grade {
   display: inline-flex;
   padding: 2px 8px;
@@ -8350,6 +8692,32 @@ body.attendance-period-settings-open {
   flex: 1 1 160px;
 }
 
+.admin-exam-set-fieldset {
+  margin: 0;
+  padding: 10px 12px;
+  border: 1px solid var(--border-color, #d8dee8);
+  border-radius: 8px;
+}
+
+.admin-exam-set-fieldset legend {
+  padding: 0 6px;
+  font-size: 0.85rem;
+  font-weight: 600;
+  color: var(--muted-text, #5c6678);
+}
+
+.admin-exam-set-variant-readonly {
+  margin: 0 0 8px;
+  font-size: 0.85rem;
+  color: var(--muted-text, #5c6678);
+  line-height: 1.45;
+}
+
+.admin-exam-set-badge.is-variant {
+  background: #e8f0fe;
+  color: #1a4a8a;
+}
+
 .admin-exam-set-form-actions {
   display: flex;
   gap: 8px;
@@ -8759,308 +9127,9 @@ body.attendance-period-settings-open {
   color: var(--muted, #5c5348);
 }
 
-.promotion-paper-screen {
-  display: grid;
-  gap: 14px;
-  margin-bottom: 20px;
-  padding: 18px;
-  border-radius: 16px;
-  border: 1px solid rgba(47, 111, 78, 0.14);
-  background: rgba(255, 255, 255, 0.95);
-}
-
-.promotion-paper-screen-bar {
-  display: flex;
-  align-items: flex-start;
-  justify-content: space-between;
-  gap: 12px;
-}
-
-.promotion-paper-description {
-  margin: 4px 0 0;
-  color: var(--muted, #5c5348);
-  font-size: 0.9rem;
-}
-
-.promotion-paper-actions {
-  display: flex;
-  flex-wrap: wrap;
-  align-items: center;
-  gap: 8px 12px;
-}
-
-.promotion-paper-print-option {
-  display: inline-flex;
-  align-items: center;
-  gap: 6px;
-  margin: 0;
-  font-size: 0.88rem;
-  color: var(--muted, #5c5348);
-  cursor: pointer;
-  user-select: none;
-}
-
-.promotion-paper-print-option input {
-  margin: 0;
-  cursor: pointer;
-}
-
-.promotion-paper-print-area {
-  width: 100%;
-  overflow-x: auto;
-  background: #fff;
-}
-
-.promotion-paper-pages {
-  display: block;
-  --pp-cell-height: 228px;
-  --pp-cell-padding-y: 3px;
-  --pp-cell-padding-x: 4px;
-  --pp-caption-max-height: 26px;
-  --pp-board-size: calc(
-    var(--pp-cell-height) - var(--pp-caption-max-height) - (var(--pp-cell-padding-y) * 2) - 2px
-  );
-}
-
-.promotion-paper-page {
-  background: #fff;
-  border: 1px solid #111;
-  padding: 8px;
-  box-sizing: border-box;
-  max-width: 210mm;
-  margin-left: auto;
-  margin-right: auto;
-}
-
-.promotion-paper-page + .promotion-paper-page {
-  margin-top: 20px;
-}
-
-.promotion-paper-exam-header {
-  margin-bottom: 0;
-}
-
-.promotion-paper-exam-top {
-  display: table;
-  width: 100%;
-  table-layout: fixed;
-  border-collapse: collapse;
-}
-
-.promotion-paper-exam-title-box,
-.promotion-paper-exam-organization-box {
-  display: table-cell;
-  border: 1px solid #111;
-  vertical-align: middle;
-  padding: 8px 10px;
-  min-height: 48px;
-  box-sizing: border-box;
-}
-
-.promotion-paper-exam-organization-box {
-  width: 38%;
-  border-left: none;
-  text-align: center;
-}
-
-.promotion-paper-exam-organization-name {
-  margin: 0;
-  min-height: 1.2em;
-  font-size: 0.95rem;
-  font-weight: 700;
-  line-height: 1.35;
-  word-break: keep-all;
-}
-
-.promotion-paper-exam-organization-name:empty::before {
-  content: "\00a0";
-}
-
-.promotion-paper-exam-grade-main {
-  margin: 0;
-  font-size: 1rem;
-  font-weight: 700;
-}
-
-.promotion-paper-exam-grade-sub {
-  margin: 4px 0 0;
-  font-size: 0.9rem;
-}
-
-.promotion-paper-info-table {
-  width: 100%;
-  border-collapse: collapse;
-  table-layout: fixed;
-}
-
-.promotion-paper-info-table th,
-.promotion-paper-info-table td {
-  border: 1px solid #111;
-  padding: 4px 8px;
-  font-size: 0.8rem;
-  text-align: left;
-  vertical-align: middle;
-  height: 26px;
-}
-
-.promotion-paper-info-table th {
-  width: 56px;
-  background: #f5f5f5;
-  font-weight: 700;
-  text-align: center;
-}
-
-.promotion-paper-exam-notice {
-  margin: 0;
-  padding: 5px 8px;
-  border: 1px solid #111;
-  border-top: none;
-  font-size: 0.8rem;
-  background: #fafafa;
-}
-
-.promotion-paper-problem-table {
-  width: 100%;
-  border-collapse: collapse;
-  table-layout: fixed;
-  border: 1px solid #111;
-  border-top: none;
-}
-
-.promotion-paper-problem-table tr + tr .promotion-paper-problem-cell {
-  border-top: 1px solid #111;
-}
-
-.promotion-paper-problem-cell {
-  width: 33.333%;
-  height: var(--pp-cell-height);
-  min-height: var(--pp-cell-height);
-  max-height: var(--pp-cell-height);
-  padding: 0;
-  vertical-align: top;
-  border-right: 1px solid #111;
-  background: #fff;
-  box-sizing: border-box;
-  overflow: hidden;
-}
-
-.promotion-paper-problem-cell:last-child {
-  border-right: none;
-}
-
-.promotion-paper-cell-wrap {
-  display: flex;
-  flex-direction: column;
-  height: var(--pp-cell-height);
-  min-height: var(--pp-cell-height);
-  max-height: var(--pp-cell-height);
-  padding: var(--pp-cell-padding-y) var(--pp-cell-padding-x);
-  box-sizing: border-box;
-  overflow: hidden;
-}
-
-.promotion-paper-cell-caption {
-  flex: 0 0 auto;
-  max-height: var(--pp-caption-max-height);
-  margin: 0;
-  padding: 0 0 2px;
-  overflow: hidden;
-  font-size: 0.68rem;
-  line-height: 1.25;
-  display: -webkit-box;
-  -webkit-box-orient: vertical;
-  -webkit-line-clamp: 2;
-  line-clamp: 2;
-  word-break: break-word;
-  overflow-wrap: break-word;
-}
-
-.promotion-paper-cell-num {
-  font-size: 0.72rem;
-  font-weight: 700;
-}
-
-.promotion-paper-cell-num::after {
-  content: "\00a0";
-}
-
-.promotion-paper-cell-prompt {
-  font-weight: 400;
-}
-
-.promotion-paper-cell-body {
-  display: flex;
-  flex: 1 1 auto;
-  align-items: center;
-  justify-content: center;
-  min-height: 0;
-  overflow: hidden;
-}
-
-.promotion-paper-board {
-  position: relative;
-  display: block;
-  width: var(--pp-board-size);
-  height: var(--pp-board-size);
-  min-width: var(--pp-board-size);
-  min-height: var(--pp-board-size);
-  max-width: 100%;
-  max-height: 100%;
-  flex: 0 0 auto;
-  margin: 0;
-  overflow: hidden;
-  background: #f3d08a;
-  border: none;
-  box-sizing: border-box;
-  print-color-adjust: exact;
-  -webkit-print-color-adjust: exact;
-}
-
-.promotion-paper-board img {
-  display: block;
-  width: 100%;
-  height: 100%;
-  max-width: 100%;
-  max-height: 100%;
-  object-fit: contain;
-  print-color-adjust: exact;
-  -webkit-print-color-adjust: exact;
-}
-
-.promotion-paper-cell-wrap--closing {
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  height: 100%;
-}
-
-.promotion-paper-closing-text {
-  text-align: center;
-  font-size: 0.92rem;
-  line-height: 1.55;
-}
-
-.promotion-paper-closing-text p {
-  margin: 0;
-}
-
-.promotion-paper-problem-cell--empty {
-  background: #fff;
-}
-
-.promotion-paper-empty {
-  margin: 0;
-  font-size: 0.9rem;
-  color: var(--muted, #5c5348);
-}
-
 @media (max-width: 900px) {
   .admin-exam-sets-layout {
     grid-template-columns: 1fr;
-  }
-
-  .promotion-paper-screen-bar {
-    flex-direction: column;
   }
 }
 
@@ -9342,11 +9411,12 @@ body.attendance-period-settings-open {
     border-bottom: none;
   }
 
-  #academy-students-panel .academy-student-entry--operations .academy-student-mobile-row {
+  #academy-students-panel .academy-student-entry--operations .academy-student-mobile-row,
+  #academy-students-panel .academy-student-mobile-row--operations {
     display: flex;
-    align-items: center;
-    justify-content: space-between;
-    gap: 12px;
+    flex-direction: column;
+    align-items: stretch;
+    gap: 10px;
   }
 
   #academy-students-panel .academy-student-mobile-row--learning {
@@ -9365,10 +9435,6 @@ body.attendance-period-settings-open {
     margin: 0;
   }
 
-  #academy-students-panel .academy-student-entry--operations .academy-student-mobile-row .student-card-actions {
-    width: auto;
-  }
-
   #academy-students-panel .academy-student-mobile-row .student-card-actions .secondary-button {
     min-height: 44px;
     width: auto;
@@ -9377,7 +9443,8 @@ body.attendance-period-settings-open {
     white-space: nowrap;
   }
 
-  #academy-students-panel .academy-student-mobile-row--learning .student-card-actions .secondary-button {
+  #academy-students-panel .academy-student-mobile-row--learning .student-card-actions .secondary-button,
+  #academy-students-panel .academy-student-mobile-row--operations .student-card-actions .secondary-button {
     width: 100%;
   }
 }
@@ -9610,8 +9677,14 @@ body.attendance-period-settings-open {
     width: auto;
   }
 
-  body.is-academy-owner-ui #academy-students-panel .academy-student-mobile-row--learning .student-card-actions .secondary-button {
+  body.is-academy-owner-ui #academy-students-panel .academy-student-mobile-row--learning .student-card-actions .secondary-button,
+  body.is-academy-owner-ui #academy-students-panel .academy-student-mobile-row--operations .student-card-actions .secondary-button {
     width: 100%;
+  }
+
+  body.is-academy-owner-ui .student-card-payment-action-button {
+    min-height: 40px;
+    font-size: 0.84rem;
   }
 
   body.is-academy-owner-ui .student-assign-teacher-select select {
@@ -9673,6 +9746,123 @@ body.attendance-period-settings-open {
   body.is-academy-owner-ui .attendance-summary-strip {
     grid-template-columns: 1fr;
     gap: 6px;
+  }
+
+  body.is-academy-owner-ui .attendance-today-panel {
+    display: grid;
+    gap: 16px;
+  }
+
+  body.is-academy-owner-ui .attendance-today-header {
+    display: grid;
+    gap: 4px;
+  }
+
+  body.is-academy-owner-ui .attendance-today-title {
+    margin: 0;
+    font-size: 1.25rem;
+    color: var(--primary-dark);
+  }
+
+  body.is-academy-owner-ui .attendance-today-date {
+    margin: 0;
+    color: var(--muted);
+    font-size: 0.92rem;
+    font-weight: 700;
+  }
+
+  body.is-academy-owner-ui .attendance-today-period-list {
+    display: flex;
+    flex-direction: column;
+    gap: 0;
+  }
+
+  body.is-academy-owner-ui .attendance-today-period-row {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 12px;
+    padding: 16px 0;
+    border-bottom: 1px solid var(--line);
+  }
+
+  body.is-academy-owner-ui .attendance-today-period-row:last-child {
+    border-bottom: none;
+  }
+
+  body.is-academy-owner-ui .attendance-today-period-row__info {
+    display: flex;
+    align-items: baseline;
+    gap: 8px;
+    min-width: 0;
+  }
+
+  body.is-academy-owner-ui .attendance-today-period-row__name {
+    color: var(--primary-dark);
+    font-size: 1.05rem;
+  }
+
+  body.is-academy-owner-ui .attendance-today-period-row__count {
+    color: var(--muted);
+    font-size: 0.95rem;
+    font-weight: 800;
+  }
+
+  body.is-academy-owner-ui .attendance-today-view-button,
+  body.is-academy-owner-ui .attendance-open-monthly-button,
+  body.is-academy-owner-ui .attendance-mobile-back-button {
+    min-height: 48px;
+    min-width: 88px;
+    flex-shrink: 0;
+  }
+
+  body.is-academy-owner-ui .attendance-today-footer {
+    padding-top: 8px;
+  }
+
+  body.is-academy-owner-ui .attendance-open-monthly-button {
+    width: 100%;
+  }
+
+  body.is-academy-owner-ui .attendance-mobile-nav-bar {
+    margin-bottom: 4px;
+  }
+
+  body.is-academy-owner-ui .attendance-mobile-back-button {
+    width: 100%;
+  }
+
+  body.is-academy-owner-ui .attendance-today-student-list {
+    list-style: none;
+    margin: 0;
+    padding: 0;
+  }
+
+  body.is-academy-owner-ui .attendance-today-student-row {
+    display: flex;
+    align-items: center;
+    gap: 10px;
+    padding: 14px 0;
+    border-bottom: 1px solid var(--line);
+  }
+
+  body.is-academy-owner-ui .attendance-today-student-row:last-child {
+    border-bottom: none;
+  }
+
+  body.is-academy-owner-ui .attendance-today-student-row__status-dot {
+    flex-shrink: 0;
+    width: 10px;
+    height: 10px;
+    border-radius: 50%;
+    background: var(--primary);
+  }
+
+  body.is-academy-owner-ui .attendance-today-student-row__name {
+    color: var(--primary-dark);
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
   }
 
   body.is-academy-owner-ui .academy-menu-card,
@@ -9844,115 +10034,8 @@ body.attendance-period-settings-open {
     page-break-after: always;
   }
 
-  body.promotion-paper-print .app-shell {
-    display: block !important;
-    max-width: none !important;
-    width: 100% !important;
-    padding: 0 !important;
-    margin: 0 !important;
-  }
-
-  body.promotion-paper-print .app-shell > *:not(#promotion-paper-screen) {
-    display: none !important;
-  }
-
-  body.promotion-paper-print .promotion-paper-screen-bar,
-  body.promotion-paper-print .promotion-paper-actions {
-    display: none !important;
-  }
-
-  body.promotion-paper-print .promotion-paper-screen {
-    display: block !important;
-    width: 100% !important;
-    box-sizing: border-box;
-    margin: 0;
-    padding: 0;
-    border: none;
-    border-radius: 0;
-    background: #fff;
-  }
-
-  body.promotion-paper-print .promotion-paper-print-area {
-    width: 100%;
-    overflow: visible;
-  }
-
-  body.promotion-paper-print .promotion-paper-pages {
-    margin: 0;
-    --pp-cell-height: 66mm;
-    --pp-cell-padding-y: 1mm;
-    --pp-cell-padding-x: 1.5mm;
-    --pp-caption-max-height: 8mm;
-    --pp-board-size: calc(
-      var(--pp-cell-height) - var(--pp-caption-max-height) - (var(--pp-cell-padding-y) * 2) -
-        1mm
-    );
-  }
-
-  body.promotion-paper-print .promotion-paper-page {
-    border: none;
-    padding: 0;
-    box-sizing: border-box;
-    width: 100%;
-    min-height: 281mm;
-  }
-
-  body.promotion-paper-print .promotion-paper-page + .promotion-paper-page {
-    margin-top: 0;
-  }
-
-  body.promotion-paper-print .promotion-paper-page--1 {
-    break-after: page;
-    page-break-after: always;
-  }
-
-  body.promotion-paper-print .promotion-paper-problem-table {
-    width: 100%;
-    table-layout: fixed;
-  }
-
-  body.promotion-paper-print .promotion-paper-problem-cell,
-  body.promotion-paper-print .promotion-paper-cell-wrap {
-    height: var(--pp-cell-height);
-    min-height: var(--pp-cell-height);
-    max-height: var(--pp-cell-height);
-  }
-
-  body.promotion-paper-print .promotion-paper-problem-cell,
-  body.promotion-paper-print .promotion-paper-exam-title-box,
-  body.promotion-paper-print .promotion-paper-exam-organization-box,
-  body.promotion-paper-print .promotion-paper-info-table th,
-  body.promotion-paper-print .promotion-paper-info-table td,
-  body.promotion-paper-print .promotion-paper-exam-notice,
-  body.promotion-paper-print .promotion-paper-problem-table {
-    border-color: #000 !important;
-  }
-
-  body.promotion-paper-print .promotion-paper-board,
-  body.promotion-paper-print .promotion-paper-board canvas,
-  body.promotion-paper-print .promotion-paper-board img {
-    visibility: visible !important;
-    print-color-adjust: exact;
-    -webkit-print-color-adjust: exact;
-  }
-
-  body.promotion-paper-print .promotion-paper-board {
-    overflow: hidden;
-    background: #f3d08a !important;
-    border: none !important;
-  }
-
-  body.promotion-paper-print-monochrome .promotion-paper-board {
-    background: #fff !important;
-    border: none !important;
-  }
-
-  body.promotion-paper-print .promotion-paper-board img {
-    display: block !important;
-    width: 100% !important;
-    height: 100% !important;
-    max-width: 100%;
-    max-height: 100%;
-    object-fit: contain;
+  /* ── 기본 인쇄 페이지: 교재용/상세용 (A4 세로) ── */
+  @page {
+    size: A4 portrait;
   }
 }

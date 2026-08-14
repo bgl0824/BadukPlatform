@@ -6,6 +6,10 @@ import {
   debugWarn,
 } from "../bootstrap/debug-logs.js";
 import { getSupabaseClient, isSupabaseConfigured } from "./supabase-client.js";
+import {
+  isSupabaseAuthError,
+  runSupabaseQueryWithAuthRetry,
+} from "./supabase-auth-retry.js";
 
 const CATEGORY = DEBUG_CHANNELS.category;
 
@@ -45,19 +49,26 @@ export async function fetchCategoriesFromSupabase() {
   debugFetch(CATEGORY, "categories fetch start", { source: DEBUG_SOURCES.supabase });
 
   const client = getSupabaseClient();
-  const { data, error } = await client
-    .from(SUPABASE_CURRICULUM_CATEGORIES_TABLE)
-    .select("*")
-    .eq("status", "active")
-    .order("level_group", { ascending: true })
-    .order("sort_order", { ascending: true });
+  const { data, error } = await runSupabaseQueryWithAuthRetry(() =>
+    client
+      .from(SUPABASE_CURRICULUM_CATEGORIES_TABLE)
+      .select("*")
+      .eq("status", "active")
+      .order("level_group", { ascending: true })
+      .order("sort_order", { ascending: true }),
+  );
 
   if (error) {
     debugWarn(CATEGORY, "categories fetch failed", {
       source: DEBUG_SOURCES.fallback,
       message: error.message,
     });
-    return { ok: false, categories: [], message: error.message };
+    return {
+      ok: false,
+      categories: [],
+      message: error.message,
+      authError: isSupabaseAuthError(error),
+    };
   }
 
   const categories = (data ?? []).map(rowToCategory).filter(Boolean);

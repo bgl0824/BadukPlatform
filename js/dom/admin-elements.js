@@ -36,6 +36,8 @@ export const adminElements = {
 
   adminGradeSummary: document.querySelector("#admin-grade-summary"),
 
+  adminGradeSelectionCount: document.querySelector("#admin-grade-selection-count"),
+
   adminGradeRangeFrom: document.querySelector("#admin-grade-range-from"),
 
   adminGradeRangeTo: document.querySelector("#admin-grade-range-to"),

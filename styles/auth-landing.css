@@ -1,0 +1,590 @@
+/* =============================================================================
+   브랜치바둑 로그인 랜딩 (auth.html)
+   - PC: Hero + 하단 기능 = 100vh (세로 스크롤 없이 한 화면)
+   - 하단 기능 높이를 먼저 확보하고, 나머지 높이를 Hero가 사용
+   - 작은 높이에서는 카피/카드/여백을 단계적으로 축소 (overflow:hidden 강제 잘림 지양)
+   ============================================================================= */
+
+html:has(.auth-landing-body) {
+  height: 100%;
+}
+
+.auth-landing-body {
+  margin: 0;
+  height: 100%;
+  min-height: 100vh;
+  min-height: 100dvh;
+  color: #1f2a1f;
+  background: #eef3f0;
+  font-family: "Pretendard", "Apple SD Gothic Neo", "Noto Sans KR", system-ui, sans-serif;
+  overflow-x: hidden;
+}
+
+.auth-landing-body .login-landing {
+  display: flex;
+  flex-direction: column;
+  height: 100vh;
+  height: 100dvh;
+  max-height: 100vh;
+  max-height: 100dvh;
+  min-height: 0;
+}
+
+/* ---------------------------------------------------------------------------
+   Hero: 남은 세로 공간을 모두 사용
+   --------------------------------------------------------------------------- */
+.login-hero {
+  position: relative;
+  isolation: isolate;
+  flex: 1 1 auto;
+  width: 100%;
+  min-height: 0;
+  overflow: hidden;
+  background: #d7e8f2;
+}
+
+.login-hero__visual {
+  position: absolute;
+  inset: 0;
+  z-index: 0;
+  line-height: 0;
+}
+
+.login-hero__image {
+  display: block;
+  width: 100%;
+  height: 100%;
+  max-width: none;
+  object-fit: cover;
+  /* 고해상도 에셋(1536x1024): 캐릭터·바둑돌 길·정자 유지용 최소 조정 */
+  object-position: 46% 62%;
+}
+
+.login-hero__content {
+  position: absolute;
+  inset: 0;
+  z-index: 1;
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) minmax(300px, min(468px, 32vw));
+  align-items: start;
+  gap: clamp(16px, 3vw, 48px);
+  width: min(1120px, calc(100% - 64px));
+  margin: 0 auto;
+  padding: clamp(16px, 3.5vh, 56px) 0;
+  pointer-events: none;
+}
+
+/* 향후 정식 BI 자리 (좌측 상단). 현재는 빈 공간만 확보 */
+.login-hero__brand-slot {
+  min-height: clamp(40px, 6vh, 72px);
+  pointer-events: none;
+}
+
+.login-hero__panel {
+  justify-self: end;
+  display: grid;
+  align-content: start;
+  gap: clamp(16px, 3.8vh, 56px);
+  width: min(100%, 468px);
+  margin-top: clamp(12px, 5.5vh, 88px);
+  text-align: left;
+  pointer-events: auto;
+}
+
+.login-hero__copy {
+  max-width: 34rem;
+  margin: 0;
+  padding: 0;
+  text-align: left;
+}
+
+.login-hero__headline {
+  margin: 0 0 clamp(8px, 1.6vh, 18px);
+  font-size: clamp(1.85rem, 2.2vh + 1.2vw, 3.7rem);
+  line-height: 1.26;
+  letter-spacing: -0.03em;
+  font-weight: 900;
+  text-shadow: 0 1px 0 rgba(255, 255, 255, 0.35);
+}
+
+.login-hero__headline-accent {
+  color: #2f6b3a;
+}
+
+.login-hero__headline-rest {
+  color: #1c241c;
+}
+
+.login-hero__subcopy {
+  margin: 0;
+  max-width: 28.5rem;
+  color: #2a342a;
+  font-size: clamp(0.95rem, 1.1vh + 0.35vw, 1.35rem);
+  font-weight: 650;
+  line-height: 1.65;
+  text-shadow: 0 1px 0 rgba(255, 255, 255, 0.4);
+}
+
+.login-card-shell {
+  width: 100%;
+  margin: 0;
+  min-width: 0;
+}
+
+.login-card {
+  display: grid;
+  gap: clamp(10px, 1.5vh, 18px);
+  padding: clamp(18px, 3vh, 36px) clamp(20px, 2.2vw, 34px) clamp(16px, 2.6vh, 31px);
+  border-radius: clamp(18px, 2.2vh, 28px);
+  background: rgba(255, 255, 255, 0.96);
+  box-shadow:
+    0 22px 48px rgba(40, 55, 40, 0.16),
+    0 2px 0 rgba(255, 255, 255, 0.8) inset;
+  border: 1px solid rgba(255, 255, 255, 0.75);
+  backdrop-filter: blur(8px);
+}
+
+.login-card__title {
+  margin: 0 0 clamp(2px, 0.5vh, 6px);
+  color: #2f6b3a;
+  font-size: clamp(1.25rem, 1.4vh + 0.4vw, 1.66rem);
+  font-weight: 900;
+  text-align: center;
+  letter-spacing: -0.02em;
+}
+
+.login-field {
+  display: grid;
+  gap: clamp(5px, 0.8vh, 9px);
+  margin: 0;
+  color: #5b675b;
+  font-size: clamp(0.92rem, 1vh + 0.2vw, 1.12rem);
+  font-weight: 800;
+}
+
+.login-field__label {
+  padding-left: 2px;
+}
+
+.login-field__control {
+  position: relative;
+  display: block;
+}
+
+.login-field__icon {
+  position: absolute;
+  top: 50%;
+  left: clamp(14px, 1.2vw, 18px);
+  z-index: 1;
+  display: grid;
+  place-items: center;
+  color: #7a877a;
+  transform: translateY(-50%) scale(1.3);
+  transform-origin: center;
+  pointer-events: none;
+}
+
+.login-field__control input {
+  width: 100%;
+  border: 1px solid #d7ddd7;
+  border-radius: 15px;
+  padding: clamp(11px, 1.5vh, 17px) 18px clamp(11px, 1.5vh, 17px) clamp(44px, 4vw, 52px);
+  color: #1f2a1f;
+  background: #fff;
+  font: inherit;
+  font-size: clamp(0.95rem, 1vh + 0.15vw, 1.08rem);
+  font-weight: 600;
+  transition: border-color 0.15s ease, box-shadow 0.15s ease;
+}
+
+.login-field__control input::placeholder {
+  color: #9aa49a;
+  font-weight: 600;
+}
+
+.login-field__control input:focus {
+  outline: none;
+  border-color: #2f6b3a;
+  box-shadow: 0 0 0 3px rgba(47, 107, 58, 0.16);
+}
+
+.login-remember {
+  display: inline-flex;
+  align-items: center;
+  gap: 10px;
+  margin: 0;
+  color: #4a554a;
+  font-size: clamp(0.95rem, 1.05vh + 0.2vw, 1.15rem);
+  font-weight: 700;
+  cursor: pointer;
+  user-select: none;
+}
+
+.login-remember input {
+  width: clamp(18px, 2vh, 22px);
+  height: clamp(18px, 2vh, 22px);
+  margin: 0;
+  accent-color: #2f6b3a;
+  cursor: pointer;
+}
+
+.login-card__message {
+  min-height: 1.1em;
+  margin: 0;
+  text-align: center;
+  font-size: clamp(0.9rem, 1vh + 0.15vw, 1.1rem);
+  font-weight: 700;
+}
+
+.login-card__submit {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 100%;
+  min-height: clamp(44px, 5.2vh, 62px);
+  margin-top: 0;
+  border: 0;
+  border-radius: 15px;
+  padding: clamp(10px, 1.4vh, 16px) 20px;
+  color: #fff;
+  background: #2f6b3a;
+  font: inherit;
+  font-size: clamp(1.05rem, 1.2vh + 0.25vw, 1.3rem);
+  font-weight: 900;
+  letter-spacing: -0.01em;
+  cursor: pointer;
+  transition: background 0.15s ease, transform 0.12s ease;
+}
+
+.login-card__submit:hover {
+  background: #24552e;
+}
+
+.login-card__submit:active {
+  transform: translateY(1px);
+}
+
+.login-card__submit:disabled {
+  opacity: 0.7;
+  cursor: wait;
+}
+
+.login-card__signup {
+  display: inline-flex;
+  flex-wrap: wrap;
+  justify-content: center;
+  align-items: baseline;
+  gap: 0.35em;
+  margin-top: 0;
+  text-decoration: none;
+}
+
+.login-card__signup-prefix {
+  color: #7a877a;
+  font-size: clamp(0.95rem, 1.05vh + 0.15vw, 1.15rem);
+  font-weight: 650;
+}
+
+.login-card__signup-action {
+  color: #2f6b3a;
+  font-size: clamp(0.95rem, 1.05vh + 0.15vw, 1.15rem);
+  font-weight: 800;
+}
+
+.login-card__signup:hover .login-card__signup-action,
+.login-card__signup:focus-visible .login-card__signup-action {
+  text-decoration: underline;
+}
+
+/* ---------------------------------------------------------------------------
+   하단 기능 영역: 먼저 높이 확보 (flex-shrink: 0)
+   --------------------------------------------------------------------------- */
+.login-features {
+  position: relative;
+  z-index: 2;
+  flex: 0 0 auto;
+  padding: clamp(14px, 2.2vh, 28px) 24px clamp(10px, 1.6vh, 20px);
+  background: #f5f2eb;
+  border-top: 1px solid rgba(210, 200, 180, 0.75);
+}
+
+.login-features__inner {
+  display: grid;
+  gap: clamp(10px, 1.6vh, 22px);
+  width: min(1120px, 100%);
+  margin: 0 auto;
+}
+
+.login-features__intro {
+  margin: 0;
+  color: #2f6b3a;
+  font-size: clamp(0.92rem, 1vh + 0.15vw, 1.05rem);
+  font-weight: 900;
+}
+
+.login-features__list {
+  display: grid;
+  grid-template-columns: repeat(5, minmax(0, 1fr));
+  gap: clamp(10px, 1.5vh, 18px) 20px;
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+.login-feature {
+  display: flex;
+  align-items: flex-start;
+  gap: 12px;
+  min-width: 0;
+}
+
+.login-feature__icon {
+  flex: 0 0 auto;
+  display: grid;
+}
+
+.login-feature__icon svg {
+  width: clamp(36px, 4.2vh, 48px);
+  height: clamp(36px, 4.2vh, 48px);
+}
+
+.login-feature__body {
+  display: grid;
+  gap: 4px;
+  min-width: 0;
+  padding-top: 2px;
+}
+
+.login-feature__body strong {
+  color: #1f2a1f;
+  font-size: clamp(0.88rem, 0.95vh + 0.15vw, 1.02rem);
+  font-weight: 900;
+}
+
+.login-feature__body span {
+  color: #6a746a;
+  font-size: clamp(0.75rem, 0.85vh + 0.1vw, 0.86rem);
+  font-weight: 650;
+  line-height: 1.45;
+}
+
+.login-landing__footer {
+  flex: 0 0 auto;
+  padding: clamp(2px, 0.6vh, 6px) 16px clamp(8px, 1.2vh, 14px);
+  text-align: center;
+  background: #f5f2eb;
+}
+
+.login-landing__footer p {
+  margin: 0;
+  color: #8a928a;
+  font-size: 0.75rem;
+  font-weight: 600;
+}
+
+/* ---------------------------------------------------------------------------
+   너비 반응형
+   --------------------------------------------------------------------------- */
+@media (max-width: 1100px) {
+  .login-hero__content {
+    width: min(960px, calc(100% - 40px));
+    grid-template-columns: minmax(0, 1fr) minmax(280px, 420px);
+    gap: 18px;
+  }
+
+  .login-hero__panel {
+    width: min(100%, 420px);
+  }
+
+  .login-features__list {
+    grid-template-columns: repeat(3, minmax(0, 1fr));
+  }
+}
+
+/* ---------------------------------------------------------------------------
+   높이 반응형: 노트북 등 낮은 viewport
+   --------------------------------------------------------------------------- */
+@media (max-height: 860px) {
+  .login-hero__image {
+    object-position: 46% 68%;
+  }
+
+  .login-hero__panel {
+    margin-top: clamp(8px, 3vh, 36px);
+  }
+
+  .login-features {
+    padding-top: 12px;
+    padding-bottom: 8px;
+  }
+}
+
+@media (max-height: 780px) {
+  .login-hero__content {
+    padding-top: 10px;
+    padding-bottom: 10px;
+  }
+
+  .login-hero__brand-slot {
+    min-height: 28px;
+  }
+
+  .login-hero__panel {
+    margin-top: clamp(4px, 2vh, 20px);
+    gap: clamp(10px, 2.2vh, 24px);
+  }
+
+  .login-hero__headline {
+    margin-bottom: 6px;
+  }
+
+  .login-hero__subcopy {
+    line-height: 1.45;
+  }
+
+  .login-card {
+    gap: 8px;
+    padding: 14px 18px 12px;
+  }
+
+  .login-card__submit {
+    min-height: 42px;
+  }
+
+  .login-features {
+    padding-top: 10px;
+    padding-bottom: 6px;
+  }
+
+  .login-feature__body span {
+    display: -webkit-box;
+    -webkit-line-clamp: 2;
+    -webkit-box-orient: vertical;
+    overflow: hidden;
+  }
+}
+
+/* ---------------------------------------------------------------------------
+   모바일: 세로 스크롤 허용 (강제 잘림 없음)
+   --------------------------------------------------------------------------- */
+@media (max-width: 900px) {
+  .auth-landing-body {
+    height: auto;
+    min-height: 100vh;
+    min-height: 100dvh;
+    overflow-x: hidden;
+    overflow-y: auto;
+  }
+
+  .auth-landing-body .login-landing {
+    height: auto;
+    max-height: none;
+    min-height: 100vh;
+    min-height: 100dvh;
+  }
+
+  .login-hero {
+    display: flex;
+    flex-direction: column;
+    flex: 0 0 auto;
+    min-height: auto;
+    overflow: visible;
+    background: #eef3f0;
+  }
+
+  .login-hero__visual {
+    position: relative;
+    inset: auto;
+    order: 1;
+    width: 100%;
+    height: clamp(220px, 52vw, 320px);
+    overflow: hidden;
+  }
+
+  .login-hero__image {
+    width: 100%;
+    height: 100%;
+    object-fit: cover;
+    object-position: 18% 62%;
+  }
+
+  .login-hero__content {
+    position: relative;
+    inset: auto;
+    order: 2;
+    display: flex;
+    flex-direction: column;
+    align-items: stretch;
+    gap: 0;
+    width: min(100% - 32px, 420px);
+    margin: 0 auto;
+    padding: 18px 0 8px;
+  }
+
+  .login-hero__brand-slot {
+    display: none;
+  }
+
+  .login-hero__panel {
+    justify-self: stretch;
+    width: 100%;
+    margin-top: 0;
+    gap: 22px;
+  }
+
+  .login-hero__copy {
+    max-width: none;
+    text-align: left;
+  }
+
+  .login-hero__headline {
+    font-size: clamp(1.9rem, 6.5vw, 2.6rem);
+  }
+
+  .login-hero__subcopy {
+    max-width: none;
+    font-size: 1rem;
+  }
+
+  .login-card {
+    padding: 28px 24px 24px;
+    gap: 14px;
+  }
+
+  .login-card-shell {
+    width: 100%;
+    margin: 0;
+  }
+
+  .login-features {
+    padding: 28px 20px 20px;
+  }
+
+  .login-features__inner {
+    gap: 18px;
+  }
+
+  .login-features__list {
+    grid-template-columns: 1fr;
+    gap: 16px;
+  }
+
+  .login-feature {
+    align-items: center;
+  }
+
+  .login-feature__icon svg {
+    width: 44px;
+    height: 44px;
+  }
+
+  .login-feature__body span {
+    display: block;
+    -webkit-line-clamp: unset;
+    overflow: visible;
+  }
+
+  .login-landing__footer {
+    padding: 4px 16px 18px;
+  }
+}

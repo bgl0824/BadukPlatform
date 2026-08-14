@@ -140,6 +140,66 @@ export function getExamSetRoleOptions() {
   return Object.entries(EXAM_SET_ROLE_LABELS).map(([value, label]) => ({ value, label }));
 }
 
+/** 주최 기관 (승급심사 시험지 출력용) */
+export const EXAM_HOST_ORGANIZATION = {
+  koreaBadukFoundation: "korea_baduk_foundation",
+  koreaBadukAssociation: "korea_baduk_association",
+};
+
+export const EXAM_HOST_ORGANIZATION_LABELS = {
+  [EXAM_HOST_ORGANIZATION.koreaBadukFoundation]: "재단법인 한국기원",
+  [EXAM_HOST_ORGANIZATION.koreaBadukAssociation]: "사단법인 대한바둑협회",
+};
+
+/** 시험형 A/B (승급심사 — 유형=승급시험 과 별개, C형 미사용) */
+export const EXAM_VARIANT = {
+  A: "A",
+  B: "B",
+};
+
+export const EXAM_VARIANT_LABELS = {
+  [EXAM_VARIANT.A]: "A형",
+  [EXAM_VARIANT.B]: "B형",
+};
+
+/** 승급심사 시험지 — 급수별 자동 생성 대상 */
+export const PROMOTION_EXAM_VARIANTS = [EXAM_VARIANT.A, EXAM_VARIANT.B];
+
+export function normalizeExamHostOrganization(value) {
+  const raw = String(value ?? "").trim();
+  return Object.values(EXAM_HOST_ORGANIZATION).includes(raw) ? raw : "";
+}
+
+export function normalizeExamVariant(value) {
+  const raw = String(value ?? "").trim().toUpperCase();
+  if (raw === "A형") return EXAM_VARIANT.A;
+  if (raw === "B형") return EXAM_VARIANT.B;
+  return Object.values(EXAM_VARIANT).includes(raw) ? raw : "";
+}
+
+export function formatExamHostOrganizationLabel(value) {
+  return EXAM_HOST_ORGANIZATION_LABELS[normalizeExamHostOrganization(value)] ?? "";
+}
+
+export function formatExamVariantLabel(value) {
+  const normalized = normalizeExamVariant(value);
+  return normalized ? (EXAM_VARIANT_LABELS[normalized] ?? normalized) : "";
+}
+
+export function getExamHostOrganizationOptions() {
+  return Object.entries(EXAM_HOST_ORGANIZATION_LABELS).map(([value, label]) => ({
+    value,
+    label,
+  }));
+}
+
+export function getExamVariantOptions() {
+  return PROMOTION_EXAM_VARIANTS.map((value) => ({
+    value,
+    label: EXAM_VARIANT_LABELS[value],
+  }));
+}
+
 export function createExamSetId() {
   if (typeof crypto !== "undefined" && crypto.randomUUID) {
     return `exam-${crypto.randomUUID()}`;
