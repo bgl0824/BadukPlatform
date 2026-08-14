@@ -402,9 +402,9 @@ html:has(.auth-landing-body) {
 }
 
 /* ---------------------------------------------------------------------------
-   높이 반응형: 노트북 등 낮은 viewport
+   높이 반응형: 노트북 등 낮은 viewport (PC only — 모바일과 분리)
    --------------------------------------------------------------------------- */
-@media (max-height: 860px) {
+@media (max-height: 860px) and (min-width: 901px) {
   .login-hero__image {
     object-position: 46% 68%;
   }
@@ -419,7 +419,7 @@ html:has(.auth-landing-body) {
   }
 }
 
-@media (max-height: 780px) {
+@media (max-height: 780px) and (min-width: 901px) {
   .login-hero__content {
     padding-top: 10px;
     padding-bottom: 10px;
@@ -465,15 +465,19 @@ html:has(.auth-landing-body) {
 }
 
 /* ---------------------------------------------------------------------------
-   모바일: 세로 스크롤 허용 (강제 잘림 없음)
+   모바일: 시안 기준 레이아웃 (PC 100vh / 배경 / 카드 위치 비변경)
+   - Hero 위 카피 오버레이(5시) → 바로 로그인 카드 → 기능 5열
    --------------------------------------------------------------------------- */
 @media (max-width: 900px) {
   .auth-landing-body {
+    --login-mobile-hero-h: clamp(240px, 46vh, 320px);
+
     height: auto;
     min-height: 100vh;
     min-height: 100dvh;
     overflow-x: hidden;
     overflow-y: auto;
+    background: #f5f2eb;
   }
 
   .auth-landing-body .login-landing {
@@ -484,107 +488,289 @@ html:has(.auth-landing-body) {
   }
 
   .login-hero {
-    display: flex;
-    flex-direction: column;
+    display: grid;
+    grid-template-rows: var(--login-mobile-hero-h) auto;
     flex: 0 0 auto;
     min-height: auto;
     overflow: visible;
+    isolation: auto;
     background: #eef3f0;
   }
 
   .login-hero__visual {
     position: relative;
     inset: auto;
-    order: 1;
+    grid-row: 1;
+    grid-column: 1;
+    z-index: 0;
     width: 100%;
-    height: clamp(220px, 52vw, 320px);
+    height: var(--login-mobile-hero-h);
     overflow: hidden;
   }
 
   .login-hero__image {
+    position: absolute;
+    inset: 0;
     width: 100%;
     height: 100%;
+    max-width: none;
     object-fit: cover;
-    object-position: 18% 62%;
+    /* 캐릭터·바둑돌 길 우선. 정자·산은 일부 크롭 허용 */
+    object-position: 24% 66%;
+  }
+
+  /* 카피 가독성: 우측 하단만 은은한 어두운 그radient */
+  .login-hero__visual::after {
+    content: "";
+    position: absolute;
+    inset: 0;
+    z-index: 1;
+    background: linear-gradient(
+      155deg,
+      rgba(0, 0, 0, 0) 42%,
+      rgba(16, 34, 22, 0.38) 100%
+    );
+    pointer-events: none;
   }
 
   .login-hero__content {
     position: relative;
     inset: auto;
-    order: 2;
+    grid-row: 1 / 3;
+    grid-column: 1;
+    z-index: 2;
     display: flex;
     flex-direction: column;
-    align-items: stretch;
-    gap: 0;
-    width: min(100% - 32px, 420px);
-    margin: 0 auto;
-    padding: 18px 0 8px;
+    width: 100%;
+    margin: 0;
+    padding: 0;
+    pointer-events: none;
   }
 
+  /* 향후 BI (11시). 현재는 빈 공간만 */
   .login-hero__brand-slot {
-    display: none;
+    display: block;
+    position: absolute;
+    top: clamp(10px, 2.5vw, 16px);
+    left: clamp(14px, 4vw, 20px);
+    width: clamp(72px, 20vw, 110px);
+    height: clamp(32px, 7vw, 44px);
+    min-height: unset;
+    pointer-events: none;
   }
 
   .login-hero__panel {
-    justify-self: stretch;
+    display: flex;
+    flex-direction: column;
     width: 100%;
-    margin-top: 0;
-    gap: 22px;
+    margin: 0;
+    gap: 0;
+    text-align: left;
+    pointer-events: none;
   }
 
+  /* 별도 카피 영역 없음 — Hero 이미지 위 오버레이 */
   .login-hero__copy {
+    height: var(--login-mobile-hero-h);
     max-width: none;
-    text-align: left;
+    margin: 0;
+    padding: 0 clamp(12px, 3.5vw, 18px) clamp(12px, 3vw, 16px);
+    display: flex;
+    flex-direction: column;
+    justify-content: flex-end;
+    align-items: flex-end;
+    text-align: right;
+    pointer-events: none;
   }
 
   .login-hero__headline {
-    font-size: clamp(1.9rem, 6.5vw, 2.6rem);
+    margin: 0 0 4px;
+    font-size: clamp(1.05rem, 4.6vw, 1.42rem);
+    line-height: 1.24;
+    font-weight: 800;
+    letter-spacing: -0.02em;
+    text-shadow: 0 1px 10px rgba(0, 0, 0, 0.28);
+  }
+
+  .login-hero__headline-accent,
+  .login-hero__headline-rest {
+    color: #fff;
   }
 
   .login-hero__subcopy {
-    max-width: none;
-    font-size: 1rem;
+    max-width: min(54%, 12rem);
+    margin: 0;
+    color: rgba(255, 255, 255, 0.94);
+    font-size: clamp(0.62rem, 2.6vw, 0.76rem);
+    font-weight: 600;
+    line-height: 1.45;
+    text-shadow: 0 1px 8px rgba(0, 0, 0, 0.22);
+  }
+
+  /* Hero 하단과 바로 연결 — 살짝 겹침 */
+  .login-card-shell {
+    width: 100%;
+    margin: clamp(-16px, -3.5vw, -10px) 0 0;
+    padding: 0 clamp(14px, 4vw, 18px);
+    pointer-events: auto;
   }
 
   .login-card {
-    padding: 28px 24px 24px;
-    gap: 14px;
+    gap: 10px;
+    padding: 18px 18px 16px;
+    border-radius: 18px;
+    box-shadow:
+      0 12px 32px rgba(40, 55, 40, 0.12),
+      0 2px 0 rgba(255, 255, 255, 0.8) inset;
   }
 
-  .login-card-shell {
-    width: 100%;
+  .login-card__title {
+    margin: 0 0 2px;
+    font-size: 1.32rem;
+  }
+
+  .login-field {
+    gap: 6px;
+    font-size: 0.96rem;
+  }
+
+  .login-field__control input {
+    padding: 13px 16px 13px 46px;
+    font-size: 1rem;
+  }
+
+  .login-field__icon {
+    left: 14px;
+    transform: translateY(-50%) scale(1.15);
+  }
+
+  .login-remember {
     margin: 0;
+    gap: 8px;
+    font-size: 0.96rem;
   }
 
+  .login-remember input {
+    width: 20px;
+    height: 20px;
+  }
+
+  .login-card__message {
+    min-height: 1em;
+    font-size: 0.94rem;
+  }
+
+  .login-card__submit {
+    min-height: 50px;
+    margin-top: 0;
+    padding: 12px 18px;
+    font-size: 1.1rem;
+  }
+
+  .login-card__signup {
+    margin-top: 2px;
+  }
+
+  .login-card__signup-prefix,
+  .login-card__signup-action {
+    font-size: 0.96rem;
+  }
+
+  /* 하단 기능: 5열 가로 한 줄 */
   .login-features {
-    padding: 28px 20px 20px;
+    padding: 16px 8px 10px;
   }
 
   .login-features__inner {
-    gap: 18px;
+    gap: 10px;
+  }
+
+  .login-features__intro {
+    padding: 0 8px;
+    font-size: 0.88rem;
   }
 
   .login-features__list {
-    grid-template-columns: 1fr;
-    gap: 16px;
+    grid-template-columns: repeat(5, minmax(0, 1fr));
+    gap: 6px 4px;
+    margin: 0;
   }
 
   .login-feature {
+    flex-direction: column;
     align-items: center;
+    gap: 4px;
+    text-align: center;
   }
 
   .login-feature__icon svg {
-    width: 44px;
-    height: 44px;
+    width: clamp(28px, 8vw, 36px);
+    height: clamp(28px, 8vw, 36px);
+  }
+
+  .login-feature__body {
+    gap: 2px;
+    padding-top: 0;
+  }
+
+  .login-feature__body strong {
+    font-size: clamp(0.62rem, 2.4vw, 0.72rem);
+    line-height: 1.25;
   }
 
   .login-feature__body span {
-    display: block;
-    -webkit-line-clamp: unset;
-    overflow: visible;
+    display: -webkit-box;
+    font-size: clamp(0.52rem, 2vw, 0.62rem);
+    line-height: 1.3;
+    -webkit-line-clamp: 3;
+    -webkit-box-orient: vertical;
+    overflow: hidden;
   }
 
   .login-landing__footer {
-    padding: 4px 16px 18px;
+    padding: 2px 12px 14px;
+  }
+}
+
+/* 아주 좁은 폰: Hero·카피·기능 미세 조정 */
+@media (max-width: 400px) {
+  .auth-landing-body {
+    --login-mobile-hero-h: clamp(220px, 44vh, 280px);
+  }
+
+  .login-hero__image {
+    object-position: 20% 68%;
+  }
+
+  .login-hero__headline {
+    font-size: 1rem;
+  }
+
+  .login-hero__subcopy {
+    max-width: 56%;
+    font-size: 0.6rem;
+  }
+
+  .login-card {
+    padding: 16px 16px 14px;
+    gap: 9px;
+  }
+
+  .login-features__intro {
+    font-size: 0.82rem;
+  }
+
+  .login-feature__icon svg {
+    width: 26px;
+    height: 26px;
+  }
+
+  .login-feature__body strong {
+    font-size: 0.58rem;
+  }
+
+  .login-feature__body span {
+    font-size: 0.5rem;
+    -webkit-line-clamp: 2;
   }
 }
